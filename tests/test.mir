@@ -1,0 +1,9 @@
+def digit_to_place(digit, idx) -> n {
+  n <- mul(digit, exp(10, sub(dlen(), add(idx, 1))))
+}
+
+a <- b
+
+if eq(dlen(), 0) {
+  trap(1)
+}

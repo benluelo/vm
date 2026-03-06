@@ -1,0 +1,12 @@
+counter <- 0x00
+
+loop :a {
+  counter <- add(counter, 1)
+  if eq(counter, 1) {
+    break :a
+  }
+}
+
+alloc(1)
+write1(0, counter)
+exit(0, 1)

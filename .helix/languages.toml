@@ -1,0 +1,13 @@
+[[language]]
+name = "mir"
+scope = "source.mir"
+injection-regex = "mir"
+file-types = ["mir"]
+comment-tokens = "#"
+indent = { tab-width = 2, unit = "  " }
+# formatter = { command = "mir-formatter" , args = ["--stdin"] }
+# language-servers = [ "mir-lsp" ]
+
+[[grammar]]
+name = "mir"
+source = { path = "/home/ben/projects/benluelo/vm/tree-sitter-mir" }

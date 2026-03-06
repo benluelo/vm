@@ -1,0 +1,56 @@
+/target
+
+tree-sitter-mir/bindings/
+
+## from the tree-sitter-mir/.gitignore file
+
+# Rust artifacts
+tree-sitter-mir/target/
+tree-sitter-mir/Cargo.lock
+
+# Node artifacts
+tree-sitter-mir/build/
+tree-sitter-mir/prebuilds/
+tree-sitter-mir/node_modules/
+tree-sitter-mir/package-lock.json
+
+# Swift artifacts
+tree-sitter-mir/.build/
+tree-sitter-mir/Package.resolved
+
+# Go artifacts
+tree-sitter-mir/_obj/
+
+# Python artifacts
+tree-sitter-mir/.venv/
+tree-sitter-mir/dist/
+tree-sitter-mir/*.egg-info
+tree-sitter-mir/*.whl
+
+# C artifacts
+tree-sitter-mir/*.a
+tree-sitter-mir/*.so
+tree-sitter-mir/*.so.*
+tree-sitter-mir/*.dylib
+tree-sitter-mir/*.dll
+tree-sitter-mir/*.pc
+tree-sitter-mir/*.exp
+tree-sitter-mir/*.lib
+
+# Zig artifacts
+tree-sitter-mir/.zig-cache/
+tree-sitter-mir/zig-cache/
+tree-sitter-mir/zig-out/
+
+# Example dirs
+tree-sitter-mir/examples/*/
+
+# Grammar volatiles
+tree-sitter-mir/*.wasm
+tree-sitter-mir/*.obj
+tree-sitter-mir/*.o
+
+# Archives
+tree-sitter-mir/*.tar.gz
+tree-sitter-mir/*.tgz
+tree-sitter-mir/*.zip
