@@ -230,26 +230,54 @@ mod arithmetic {
             after_stack: vec![0],
         };
 
-        // not_0 {
-        //     code: ops_to_code([Op::NOT]),
-        //     before_stack: vec![0],
-        //     after_pc: 1,
-        //     after_stack: vec![u64::MAX],
-        // };
+        neg_0 {
+            code: ops_to_code([Op::NEG]),
+            before_stack: vec![0],
+            after_pc: 1,
+            after_stack: vec![u64::MAX],
+        };
 
-        // not_1 {
-        //     code: ops_to_code([Op::NOT]),
-        //     before_stack: vec![1],
-        //     after_pc: 1,
-        //     after_stack: vec![u64::MAX - 1],
-        // };
+        neg_1 {
+            code: ops_to_code([Op::NEG]),
+            before_stack: vec![1],
+            after_pc: 1,
+            after_stack: vec![u64::MAX - 1],
+        };
 
-        // not_gt_1 {
-        //     code: ops_to_code([Op::NOT]),
-        //     before_stack: vec![123456789],
-        //     after_pc: 1,
-        //     after_stack: vec![!123456789],
-        // };
+        neg_gt_1 {
+            code: ops_to_code([Op::NEG]),
+            before_stack: vec![123456789],
+            after_pc: 1,
+            after_stack: vec![!123456789],
+        };
+
+        shr {
+            code: ops_to_code([Op::SHR]),
+            before_stack: vec![1, 100],
+            after_pc: 1,
+            after_stack: vec![100 >> 1],
+        };
+
+        shr_saturating {
+            code: ops_to_code([Op::SHR]),
+            before_stack: vec![64, u64::MAX],
+            after_pc: 1,
+            after_stack: vec![0],
+        };
+
+        shl {
+            code: ops_to_code([Op::SHL]),
+            before_stack: vec![1, 100],
+            after_pc: 1,
+            after_stack: vec![100 << 1],
+        };
+
+        shl_saturating {
+            code: ops_to_code([Op::SHL]),
+            before_stack: vec![64, u64::MAX],
+            after_pc: 1,
+            after_stack: vec![0],
+        };
     }
 }
 

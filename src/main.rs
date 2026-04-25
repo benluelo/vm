@@ -356,8 +356,8 @@ impl Vm {
 
             Op::DCOPY => {
                 trace!("dcopy");
-                let ptr = pop()? as usize;
                 let len = pop()? as usize;
+                let ptr = pop()? as usize;
                 self.memory
                     .get_mut(ptr..ptr + len)
                     .ok_or(Error::Segfault)?
@@ -442,6 +442,26 @@ impl Vm {
                 let a = pop()?;
                 self.stack.push((a == 0) as u64);
             }
+            Op::SHL => {
+                trace!("shl");
+                let a = pop()?;
+                let shift = pop()?;
+                self.stack
+                    .push(a.unbounded_shl(shift.try_into().unwrap_or(u32::MAX)));
+            }
+            Op::SHR => {
+                trace!("shr");
+                let a = pop()?;
+                let shift = pop()?;
+                self.stack
+                    .push(a.unbounded_shr(shift.try_into().unwrap_or(u32::MAX)));
+            }
+            Op::NEG => {
+                trace!("neg");
+                let a = pop()?;
+                self.stack.push(!a);
+            }
+
             Op::JUMP => {
                 trace!("jump");
                 let dst = pop()?;
@@ -559,6 +579,9 @@ impl Vm {
             raw::LT => Op::LT,
             raw::GT => Op::GT,
             raw::NOT => Op::NOT,
+            raw::SHL => Op::SHL,
+            raw::SHR => Op::SHR,
+            raw::NEG => Op::NEG,
             raw::JUMP => Op::JUMP,
             raw::JNZ => Op::JNZ,
             raw::CALL => Op::CALL,
@@ -586,6 +609,9 @@ macro_rules! op {
         }
 
         pub mod raw {
+            #[cfg(doc)]
+            use super::Op;
+
             $($(#[$meta])* pub const $Variant: u8 = $value;)+
         }
     };
@@ -616,22 +642,39 @@ op! {
         /// Push 7 bytes to the stack.
         PUSH7([u8; 7]) = 0x07,
 
-        /// Push 8 bytes (full word) to the stack.
+        /// Push 8 bytes (a full word) to the stack.
         PUSH8([u8; 8]) = 0x08,
 
         /// Pop the item on the top of the stack as N and duplicate the Nth stack item.
+        ///
+        /// | Stack Input | Stack Output  |
+        /// | ----------- | ------------- |
+        /// | `[..., a]`  | `[..., a, a]` |
         DUP = 0x09,
 
-        /// Pop the item on the top of the stack as N and swap the first and Nth stack items.
+        /// Pop the item on the top of the stack as N and swap the first and (N-1)th stack items.
+        ///
+        /// | Stack Input                  | Stack Output                 |
+        /// | ---------------------------- | ---------------------------- |
+        /// | `[..., a, (...{n-1}), b, n]` | `[..., b, (...{n-1}), a, n]` |
+        ///
+        ///
         SWAP = 0x0a,
 
         /// Pop the top of the stack, returning an error if the stack is empty.
+        ///
+        /// | Stack Input | Stack Output |
+        /// | ----------- | ------------ |
+        /// | `[..., a]`  | `[...]`      |
         POP = 0x0b,
 
         // MEMORY OPERATIONS (0x20-0x3f)
 
-        /// Grow the memory by the value on the top of the stack specified number of
-        /// bytes.
+        /// Pop the top of the stack anad grow the memory by that number of bytes.
+        ///
+        /// | Stack Input   | Stack Output |
+        /// | ------------- | ------------ |
+        /// | `[..., size]` | `[...]`      |
         ALLOC = 0x20,
 
         WRITE1 = 0x21,
@@ -689,10 +732,21 @@ op! {
         /// Read the full value at the memory location specified by the top value on the
         /// stack to the top of the stack.
         ///
-        /// Unwritten memory is read as zero.
+        /// Data read beyond the data length is read as zero.
         DREAD8 = 0x38,
 
+        /// Copy a portion of data delimited by ptr..ptr+len to memory.
+        ///
+        /// | Stack Input       | Stack Output           |
+        /// | ----------------- | ---------------------- |
+        /// | `[..., ptr, len]` | `<program terminates>` |
         DCOPY = 0x39,
+
+        /// Push the length of the data to the stack.
+        ///
+        /// | Stack Input | Stack Output |
+        /// | ----------- | ------------ |
+        /// | `[...]`     | `[..., len]` |
         DLEN = 0x3a,
 
         // ARITHMETIC OPERATIONS (0x40-0x4f)
@@ -720,8 +774,8 @@ op! {
 
         /// Floor division.
         ///
-        /// | Stack Input   | Stack Output   |
-        /// | ------------- | -------------- |
+        /// | Stack Input   | Stack Output    |
+        /// | ------------- | --------------- |
         /// | `[..., b, a]` | `[..., b // a]` |
         ///
         /// This operation will return an error if the divisor is zero.
@@ -736,8 +790,8 @@ op! {
 
         /// Modulus (remainder).
         ///
-        /// | Stack Input   | Stack Output    |
-        /// | ------------- | --------------- |
+        /// | Stack Input   | Stack Output   |
+        /// | ------------- | -------------- |
         /// | `[..., b, a]` | `[..., b % a]` |
         MOD = 0x45,
 
@@ -748,20 +802,24 @@ op! {
         /// | `[..., b, a]` | `[..., b == a]` |
         EQ = 0x4a,
 
-        // TODO: Remove in favour of NOT opcode?
+        /// Inequality.
+        ///
+        /// | Stack Input   | Stack Output    |
+        /// | ------------- | --------------- |
+        /// | `[..., b, a]` | `[..., b != a]` |
         NEQ = 0x4b,
 
         /// Less-than comparison.
         ///
-        /// | Stack Input   | Stack Output    |
-        /// | ------------- | --------------- |
+        /// | Stack Input   | Stack Output   |
+        /// | ------------- | -------------- |
         /// | `[..., b, a]` | `[..., b < a]` |
         LT = 0x4c,
 
         /// Greater-than comparison.
         ///
-        /// | Stack Input   | Stack Output    |
-        /// | ------------- | --------------- |
+        /// | Stack Input   | Stack Output   |
+        /// | ------------- | -------------- |
         /// | `[..., b, a]` | `[..., b > a]` |
         GT = 0x4d,
 
@@ -771,28 +829,73 @@ op! {
         /// | ----------- | ------------ |
         /// | `[..., a]`  | `[..., !a]`  |
         ///
-        /// Note that this is not bitwise negation (see [`Op::BNOT`]). The value is treated as a boolean, and value pushed back to the stack will only ever be 0 or 1.
+        /// Note that this is not bitwise negation (see [`Op::NEG`]). The value is treated as a boolean, and value pushed back to the stack will only ever be 0 or 1.
         NOT = 0x4e,
 
-        // CONTROL FLOW OPERATIONS (0x50-0x5a)
+        /// Left shift.
+        ///
+        /// | Stack Input   | Stack Output    |
+        /// | ------------- | --------------- |
+        /// | `[..., b, a]` | `[..., a << b]` |
+        ///
+        /// The shift is "unbounded", and as such will always return 0 if the shift value is >= 64.
+        SHL = 0x4f,
+
+        /// Right shift.
+        ///
+        /// | Stack Input   | Stack Output    |
+        /// | ------------- | --------------- |
+        /// | `[..., b, a]` | `[..., a >> b]` |
+        ///
+        /// The shift is "unbounded", and as such will always return 0 if the shift value is >= 64.
+        SHR = 0x50,
+
+        /// Bitwise negation.
+        ///
+        /// | Stack Input | Stack Output |
+        /// | ----------- | ------------ |
+        /// | `[..., a]`  | `[..., ~a]`  |
+        NEG = 0x51,
+
+        // CONTROL FLOW OPERATIONS (0xa0-0xaf)
 
         /// Pop an instruction pointer off the stack and jump to the address.
-        JUMP = 0x50,
+        ///
+        /// | Stack Input   | Stack Output |
+        /// | ------------- | ------------ |
+        /// | `[..., addr]` | `[...]`      |
+        JUMP = 0xa0,
 
         /// Pop the top value off of the stack and jump to the contained address
         /// if the value is non-zero.
-        JNZ = 0x51,
+        ///
+        /// | Stack Input         | Stack Output |
+        /// | ------------------- | ------------ |
+        /// | `[..., addr, cond]` | `[...]`      |
+        JNZ = 0xa1,
 
         /// Pop an instruction pointer off the stack, push the current address to the stack, and then jump to the previously popped address.
-        CALL = 0x52,
+        ///
+        /// | Stack Input   | Stack Output |
+        /// | ------------- | ------------ |
+        /// | `[..., addr]` | `[..., ret]` |
+        CALL = 0xa2,
 
         /// Terminate execution with a payload. The top two values of the stack will
         /// be read as the pointer to and length of the return data.
-        EXIT = 0x54,
+        ///
+        /// | Stack Input       | Stack Output           |
+        /// | ----------------- | ---------------------- |
+        /// | `[..., ptr, len]` | `<program terminates>` |
+        EXIT = 0xa4,
 
         /// Terminate execution with an error code. The top value of the stack is
         /// used as the error code.
-        TRAP = 0x55,
+        ///
+        /// | Stack Input   | Stack Output           |
+        /// | ------------- | ---------------------- |
+        /// | `[..., code]` | `<program terminates>` |
+        TRAP = 0xa5,
     }
 }
 
@@ -848,6 +951,9 @@ impl Op {
             Op::LT => vec![raw::LT],
             Op::GT => vec![raw::GT],
             Op::NOT => vec![raw::NOT],
+            Op::SHL => vec![raw::SHL],
+            Op::SHR => vec![raw::SHR],
+            Op::NEG => vec![raw::NEG],
             Op::JUMP => vec![raw::JUMP],
             Op::JNZ => vec![raw::JNZ],
             Op::CALL => vec![raw::CALL],
