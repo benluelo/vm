@@ -31,8 +31,6 @@
           crane = {
             lib = (inputs.crane.mkLib pkgs).overrideToolchain (_: self'.packages.rust-nightly);
           };
-
-          packageVersion = builtins.elemAt (pkgs.lib.strings.splitString "+" (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version) 1;
         in
         {
           _module.args.pkgs = import nixpkgs {
