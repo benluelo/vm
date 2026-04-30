@@ -1,13 +1,13 @@
 :start
         ; init counter
-        push1 0x00
+        push0
         ; begin loop
 :loop
         ; add 1
         push1 0x01
         add
         ; loop check
-        push1 0x00
+        push0
         dup
         push1 0x03
         sub
@@ -20,8 +20,8 @@
         push1 0x01
         alloc
         ; update value in memory
-        push1 0x00
+        push0
         write1
         push1 0x01 ; len
-        push1 0x00 ; ptr
+        push0      ; ptr
         exit

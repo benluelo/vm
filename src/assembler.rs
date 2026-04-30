@@ -58,6 +58,7 @@ impl<'a> Object<'a> {
         for (_, asm) in &self.0 {
             for op in asm {
                 let op = match op {
+                    AsmOp::PUSH0 => Op::PUSH0,
                     AsmOp::PUSH1(v) => Op::PUSH1(*v),
                     AsmOp::PUSH2(v) => Op::PUSH2(*v),
                     AsmOp::PUSH3(v) => Op::PUSH3(*v),
@@ -111,6 +112,8 @@ impl<'a> Object<'a> {
                     AsmOp::SHL => Op::SHL,
                     AsmOp::SHR => Op::SHR,
                     AsmOp::NEG => Op::NEG,
+                    AsmOp::OR => Op::OR,
+                    AsmOp::AND => Op::AND,
                     AsmOp::JUMP => Op::JUMP,
                     AsmOp::JNZ => Op::JNZ,
                     AsmOp::CALL => Op::CALL,
@@ -128,6 +131,7 @@ impl<'a> Object<'a> {
 
 #[derive(Clone, PartialEq)]
 pub enum AsmOp<'a> {
+    PUSH0,
     PUSH1([u8; 1]),
     PUSH2([u8; 2]),
     PUSH3([u8; 3]),
@@ -181,6 +185,8 @@ pub enum AsmOp<'a> {
     SHL,
     SHR,
     NEG,
+    OR,
+    AND,
     JUMP,
     JNZ,
     CALL,
@@ -193,6 +199,7 @@ impl<'a> AsmOp<'a> {
         let bz = n.to_be_bytes();
 
         match bz {
+            [0, 0, 0, 0, 0, 0, 0, 0] => Self::PUSH0,
             [0, 0, 0, 0, 0, 0, 0, ..] => Self::PUSH1(bz[7..].try_into().unwrap()),
             [0, 0, 0, 0, 0, 0, ..] => Self::PUSH2(bz[6..].try_into().unwrap()),
             [0, 0, 0, 0, 0, ..] => Self::PUSH3(bz[5..].try_into().unwrap()),
@@ -208,6 +215,7 @@ impl<'a> AsmOp<'a> {
 impl<'a> Display for AsmOp<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AsmOp::PUSH0 => write!(f, "push0"),
             AsmOp::PUSH1([a]) => write!(f, "push1 0x{a:0>2x}"),
             AsmOp::PUSH2([a, b]) => write!(f, "push2 0x{a:0>2x}{b:0>2x}"),
             AsmOp::PUSH3([a, b, c]) => write!(f, "push3 0x{a:0>2x}{b:0>2x}{c:0>2x}"),
@@ -276,6 +284,8 @@ impl<'a> Display for AsmOp<'a> {
             AsmOp::SHL => write!(f, "shl"),
             AsmOp::SHR => write!(f, "shr"),
             AsmOp::NEG => write!(f, "neg"),
+            AsmOp::OR => write!(f, "or"),
+            AsmOp::AND => write!(f, "and"),
             AsmOp::JUMP => write!(f, "jump"),
             AsmOp::JNZ => write!(f, "jnz"),
             AsmOp::CALL => write!(f, "call"),
@@ -288,6 +298,7 @@ impl<'a> Display for AsmOp<'a> {
 impl<'a> fmt::Debug for AsmOp<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::PUSH0 => f.write_fmt(format_args!("PUSH0")),
             Self::PUSH1([n]) => f.write_fmt(format_args!("PUSH1({n})")),
             Self::PUSH2(n) => f.debug_tuple("PUSH2").field(n).finish(),
             Self::PUSH3(n) => f.debug_tuple("PUSH3").field(n).finish(),
@@ -341,6 +352,8 @@ impl<'a> fmt::Debug for AsmOp<'a> {
             Self::SHL => write!(f, "SHL"),
             Self::SHR => write!(f, "SHR"),
             Self::NEG => write!(f, "NEG"),
+            Self::OR => write!(f, "OR"),
+            Self::AND => write!(f, "AND"),
             Self::JUMP => write!(f, "JUMP"),
             Self::JNZ => write!(f, "JNZ"),
             Self::CALL => write!(f, "CALL"),
@@ -405,6 +418,7 @@ fn lit<'a, const N: usize>() -> impl Parser<'a, &'a str, [u8; N], extra::Err<Ric
 fn parse_op<'a>() -> impl Parser<'a, &'a str, AsmOp<'a>, extra::Err<Rich<'a, char>>> {
     choice((
         choice((
+            keyword("push0").padded().to(AsmOp::PUSH0),
             keyword("push1")
                 .padded()
                 .ignore_then(lit().map(AsmOp::PUSH1)),
@@ -484,6 +498,8 @@ fn parse_op<'a>() -> impl Parser<'a, &'a str, AsmOp<'a>, extra::Err<Rich<'a, cha
             keyword("shl").padded().to(AsmOp::SHL),
             keyword("shr").padded().to(AsmOp::SHR),
             keyword("neg").padded().to(AsmOp::NEG),
+            keyword("or").padded().to(AsmOp::OR),
+            keyword("and").padded().to(AsmOp::AND),
         )),
         keyword("jnz").padded().to(AsmOp::JNZ),
         keyword("jump").padded().to(AsmOp::JUMP),
@@ -559,6 +575,7 @@ mod tests {
     #[test]
     fn test_parse_op() {
         for (i, o) in [
+            ("push0", AsmOp::PUSH0),
             ("push1 0x00", AsmOp::PUSH1([0])),
             ("push2 0x0001", AsmOp::PUSH2([0, 1])),
             ("pushl @label", AsmOp::PUSHL("label".into())),
@@ -572,14 +589,14 @@ mod tests {
         let asm = r"
 :start
         ; init counter
-        push1 0x00
+        push0
         ; begin loop
 :loop
         ; add 1
         push1 0x01
         add
         ; loop check
-        push1 0x00
+        push0
         dup
         push1 0x03
         sub
@@ -592,12 +609,12 @@ mod tests {
         push1 0x01
         alloc
         ; update value in memory
-        push1 0x00
+        push0
         ; write ops take the value first then the pointer to write that value to in memory
-        push1 0x00
+        push0
         swap
         write1
-        push1 0x00 ; ptr
+        push0 ; ptr
         push1 0x01 ; len
         exit
         ";

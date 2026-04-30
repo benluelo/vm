@@ -282,6 +282,10 @@ impl Vm {
         trace!("");
 
         match op {
+            Op::PUSH0 => {
+                trace!("push0");
+                self.stack.push(0);
+            }
             Op::PUSH1(v) => push_n!(1, v),
             Op::PUSH2(v) => push_n!(2, v),
             Op::PUSH3(v) => push_n!(3, v),
@@ -461,6 +465,18 @@ impl Vm {
                 let a = pop()?;
                 self.stack.push(!a);
             }
+            Op::OR => {
+                trace!("or");
+                let a = pop()?;
+                let b = pop()?;
+                self.stack.push(b | a);
+            }
+            Op::AND => {
+                trace!("and");
+                let a = pop()?;
+                let b = pop()?;
+                self.stack.push(b & a);
+            }
 
             Op::JUMP => {
                 trace!("jump");
@@ -530,6 +546,7 @@ impl Vm {
         *pc += 1;
 
         Ok(Some(match *op {
+            raw::PUSH0 => Op::PUSH0,
             raw::PUSH1 => Op::PUSH1(push_n(pc, &self.code)?),
             raw::PUSH2 => Op::PUSH2(push_n(pc, &self.code)?),
             raw::PUSH3 => Op::PUSH3(push_n(pc, &self.code)?),
@@ -582,6 +599,8 @@ impl Vm {
             raw::SHL => Op::SHL,
             raw::SHR => Op::SHR,
             raw::NEG => Op::NEG,
+            raw::OR => Op::OR,
+            raw::AND => Op::AND,
             raw::JUMP => Op::JUMP,
             raw::JNZ => Op::JNZ,
             raw::CALL => Op::CALL,
@@ -619,7 +638,8 @@ macro_rules! op {
 
 op! {
     pub enum Op {
-        // STACK OPERATIONS (0x01-0x1f)
+        // STACK OPERATIONS (0x00-0x1f)
+        PUSH0 = 0x00,
 
         /// Push a single byte to to the stack.
         PUSH1([u8; 1]) = 0x01,
@@ -857,6 +877,20 @@ op! {
         /// | `[..., a]`  | `[..., ~a]`  |
         NEG = 0x51,
 
+        /// Bitwise OR.
+        ///
+        /// | Stack Input   | Stack Output   |
+        /// | ------------- | -------------- |
+        /// | `[..., b, a]` | `[..., b | a]` |
+        OR = 0x52,
+
+        /// Bitwise AND.
+        ///
+        /// | Stack Input   | Stack Output   |
+        /// | ------------- | -------------- |
+        /// | `[..., b, a]` | `[..., b & a]` |
+        AND = 0x53,
+
         // CONTROL FLOW OPERATIONS (0xa0-0xaf)
 
         /// Pop an instruction pointer off the stack and jump to the address.
@@ -902,6 +936,7 @@ op! {
 impl Op {
     pub fn to_bytes(self) -> Vec<u8> {
         match self {
+            Op::PUSH0 => vec![raw::PUSH0],
             Op::PUSH1(v) => [raw::PUSH1].into_iter().chain(v).collect(),
             Op::PUSH2(v) => [raw::PUSH2].into_iter().chain(v).collect(),
             Op::PUSH3(v) => [raw::PUSH3].into_iter().chain(v).collect(),
@@ -954,6 +989,8 @@ impl Op {
             Op::SHL => vec![raw::SHL],
             Op::SHR => vec![raw::SHR],
             Op::NEG => vec![raw::NEG],
+            Op::OR => vec![raw::OR],
+            Op::AND => vec![raw::AND],
             Op::JUMP => vec![raw::JUMP],
             Op::JNZ => vec![raw::JNZ],
             Op::CALL => vec![raw::CALL],

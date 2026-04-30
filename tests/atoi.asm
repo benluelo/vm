@@ -11,9 +11,9 @@
 ; assumptions: dlen is not zero
 :atoi                             ; []
         ; i
-        push1 0x00                ; [i]
+        push0                     ; [i]
         ; n
-        push1 0x00                ; [i, n]
+        push0                     ; [i, n]
 
         :loop                     ; [i, n]
                 ; read i'th byte
@@ -50,7 +50,7 @@
                 add               ; [i, n, i + 1]
 
                 ; dup new i
-                push1 0x00        ; [i, n, i + 1, 0]
+                push0             ; [i, n, i + 1, 0]
                 dup               ; [i, n, i + 1, i + 1]
 
                 ; update i with i + 1
@@ -73,11 +73,11 @@
                 alloc             ; [i, n]
 
                 ; write n to memory
-                push1 0x00        ; [i, n, 0]
+                push0             ; [i, n, 0]
                 write8            ; [i, n]
 
                 push1 0x08        ; [i, n, 8]
-                push1 0x00        ; [i, n, 8, 0]
+                push0             ; [i, n, 8, 0]
                 exit
 
 ; converts from the ascii representation of a digit to it's value
@@ -103,7 +103,7 @@
                                   ;                    (0x30 >= ascii >= 0x39)
 
         ; check if above checks are false
-        push1 0x00                ; [..., ascii, @ret, (0x30 >= ascii >= 0x39), 0]
+        push0                     ; [..., ascii, @ret, (0x30 >= ascii >= 0x39), 0]
         eq                        ; [..., ascii, @ret, !(0x30 >= ascii >= 0x39)]
 
         pushl @digit_atoi_ret     ; [..., ascii, @ret, !(0x30 >= ascii >= 0x39), @digit_atoi_ret]
@@ -112,11 +112,11 @@
         trap
 
         :digit_atoi_ret           ; [..., ascii, @ret]
-                push1 0x00        ; [..., ascii, @ret, 0]
+                push0             ; [..., ascii, @ret, 0]
                 swap              ; [..., @ret, ascii]
                 push1 0x30        ; [..., @ret, ascii, 0x30]
                 sub               ; [..., @ret, ascii - 0x30]
                                   ;             digit
-                push1 0x00        ; [..., @ret, digit, 0]
+                push0             ; [..., @ret, digit, 0]
                 swap              ; [..., ascii, @ret]
                 jump              ; [..., ascii]

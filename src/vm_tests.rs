@@ -71,7 +71,10 @@ macro_rules! test_cases {
                     after_pc,
                     after_stack,
                     after_memory,
-                } = Case {$($tt)* ..Default::default()};
+                } = Case {
+                    $($tt)*
+                    ..Default::default()
+                };
                 let mut vm = Vm::new(code, data);
                 vm.stack = before_stack;
                 vm.memory = before_memory;
@@ -278,6 +281,20 @@ mod arithmetic {
             after_pc: 1,
             after_stack: vec![0],
         };
+
+        or {
+            code: ops_to_code([Op::OR]),
+            before_stack: vec![1, 2],
+            after_pc: 1,
+            after_stack: vec![1 | 2],
+        };
+
+        and {
+            code: ops_to_code([Op::AND]),
+            before_stack: vec![1, 2],
+            after_pc: 1,
+            after_stack: vec![1 & 2],
+        };
     }
 }
 
@@ -286,6 +303,62 @@ mod stack {
     use super::*;
 
     test_cases! {
+        push1 {
+            code: ops_to_code([Op::PUSH1([1])]),
+            before_stack: vec![],
+            after_pc: 2,
+            after_stack: vec![1],
+        };
+
+        push2 {
+            code: ops_to_code([Op::PUSH2([1, 2])]),
+            before_stack: vec![],
+            after_pc: 3,
+            after_stack: vec![0x0102],
+        };
+
+        push3 {
+            code: ops_to_code([Op::PUSH3([1, 2, 3])]),
+            before_stack: vec![],
+            after_pc: 4,
+            after_stack: vec![0x010203],
+        };
+
+        push4 {
+            code: ops_to_code([Op::PUSH4([1, 2, 3, 4])]),
+            before_stack: vec![],
+            after_pc: 5,
+            after_stack: vec![0x01020304],
+        };
+
+        push5 {
+            code: ops_to_code([Op::PUSH5([1, 2, 3, 4, 5])]),
+            before_stack: vec![],
+            after_pc: 6,
+            after_stack: vec![0x0102030405],
+        };
+
+        push6 {
+            code: ops_to_code([Op::PUSH6([1, 2, 3, 4, 5, 6])]),
+            before_stack: vec![],
+            after_pc: 7,
+            after_stack: vec![0x010203040506],
+        };
+
+        push7 {
+            code: ops_to_code([Op::PUSH7([1, 2, 3, 4, 5, 6, 7])]),
+            before_stack: vec![],
+            after_pc: 8,
+            after_stack: vec![0x01020304050607],
+        };
+
+        push8 {
+            code: ops_to_code([Op::PUSH8([1, 2, 3, 4, 5, 6, 7, 8])]),
+            before_stack: vec![],
+            after_pc: 9,
+            after_stack: vec![0x0102030405060708],
+        };
+
         swap_0 {
             code: ops_to_code([Op::SWAP]),
             before_stack: vec![3, 2, 0],
