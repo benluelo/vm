@@ -289,6 +289,13 @@ mod arithmetic {
             after_stack: vec![1 | 2],
         };
 
+        xor {
+            code: ops_to_code([Op::XOR]),
+            before_stack: vec![1, 2],
+            after_pc: 1,
+            after_stack: vec![1 ^ 2],
+        };
+
         and {
             code: ops_to_code([Op::AND]),
             before_stack: vec![1, 2],
@@ -399,6 +406,22 @@ mod stack {
             before_stack: vec![1000, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
             after_pc: 1,
             after_stack: vec![1000, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1000],
+        };
+    }
+}
+
+#[cfg(test)]
+mod data {
+    use super::*;
+
+    test_cases! {
+        read8 {
+            code: ops_to_code([Op::READ8]),
+            before_stack: vec![0],
+            after_pc: 1,
+            after_stack: vec![0x0102030405060708],
+            before_memory: vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            after_memory: vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
         };
     }
 }

@@ -7,6 +7,7 @@ wants:
 - type inference
 - generics
 - functions as first class types
+- currying
 - "const"/compile time code, basically a fully fleshed out version of rust's const evaluation; see also zig's comptime
 - pattern matching
 - some kind of type classes?
@@ -150,3 +151,7 @@ syntax:
     None: {}
     Some(t): {}
   ```
+
+  - module system: essentially mirror rust, most logical
+
+  - narrowing functions, aka predicates or refinements (see: https://www.typescriptlang.org/docs/handbook/2/narrowing.html#using-type-predicates)

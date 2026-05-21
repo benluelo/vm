@@ -11,7 +11,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     assembler::parse_asm,
-    mir::{Ctx, compile},
+    mir::{Ctx, compile, parse::print_ast},
 };
 
 pub mod assembler;
@@ -50,7 +50,7 @@ struct Args {
     pub input_hex: bool,
 
     /// what to emit. defaults to object.
-    #[argh(option)]
+    #[argh(option, default = "Emit::Object")]
     pub emit: Emit,
 
     /// the file to compile.
@@ -93,6 +93,7 @@ fn main() -> anyhow::Result<()> {
     } else {
         match mir::parse::grammar().block.parse(&file).into_result() {
             Ok(obj) => {
+                println!("{}", print_ast(&obj));
                 let mut ctx = Ctx::new_root();
                 compile(&mut ctx, &obj)?;
                 match args.emit {
@@ -245,6 +246,7 @@ impl Vm {
                 trace!("write{}", $n);
                 let value = pop()?;
                 let ptr = pop()? as usize;
+                trace!("{value:x} @ {ptr:x}");
                 let bytes = value.to_be_bytes();
                 self.memory
                     .get_mut(ptr..ptr + $n)
@@ -258,9 +260,10 @@ impl Vm {
             ($n:literal) => {{
                 trace!("read{}", $n);
                 let ptr = pop()? as usize;
+                trace!("ptr: {ptr:x}");
                 let res = self
                     .memory
-                    .get(ptr..ptr + (8 - $n))
+                    .get(ptr..((ptr + 8) - (8 - $n)))
                     .ok_or(Error::Segfault)?;
                 let value = u64_from_bytes(res);
                 self.stack.push(value);
@@ -272,6 +275,7 @@ impl Vm {
             ($n:literal) => {{
                 trace!("dread{}", $n);
                 let ptr = pop()? as usize;
+                trace!("ptr: {ptr:x}");
                 let res = self.data.get(ptr..ptr + $n).ok_or(Error::Segfault)?;
                 let value = u64_from_bytes(res);
                 self.stack.push(value);
@@ -361,11 +365,13 @@ impl Vm {
             Op::DCOPY => {
                 trace!("dcopy");
                 let len = pop()? as usize;
-                let ptr = pop()? as usize;
+                let dst = pop()? as usize;
+                let src = pop()? as usize;
+                trace!("len: {len:x}, dst: {dst:x}, src: {src:x}");
                 self.memory
-                    .get_mut(ptr..ptr + len)
+                    .get_mut(dst..dst + len)
                     .ok_or(Error::Segfault)?
-                    .copy_from_slice(self.data.get(ptr..ptr + len).ok_or(Error::Segfault)?);
+                    .copy_from_slice(self.data.get(src..src + len).ok_or(Error::Segfault)?);
             }
 
             Op::DLEN => {
@@ -389,6 +395,7 @@ impl Vm {
                 trace!("mul");
                 let a = pop()?;
                 let b = pop()?;
+                trace!("{a:x} * {b:x}");
                 self.stack.push(b.wrapping_mul(a));
             }
             Op::DIV => {
@@ -448,15 +455,16 @@ impl Vm {
             }
             Op::SHL => {
                 trace!("shl");
-                let a = pop()?;
                 let shift = pop()?;
+                let a = pop()?;
                 self.stack
                     .push(a.unbounded_shl(shift.try_into().unwrap_or(u32::MAX)));
             }
             Op::SHR => {
                 trace!("shr");
-                let a = pop()?;
                 let shift = pop()?;
+                let a = pop()?;
+                trace!("a: {a:x}, shift: {shift:x}");
                 self.stack
                     .push(a.unbounded_shr(shift.try_into().unwrap_or(u32::MAX)));
             }
@@ -470,6 +478,12 @@ impl Vm {
                 let a = pop()?;
                 let b = pop()?;
                 self.stack.push(b | a);
+            }
+            Op::XOR => {
+                trace!("xor");
+                let a = pop()?;
+                let b = pop()?;
+                self.stack.push(b ^ a);
             }
             Op::AND => {
                 trace!("and");
@@ -600,6 +614,7 @@ impl Vm {
             raw::SHR => Op::SHR,
             raw::NEG => Op::NEG,
             raw::OR => Op::OR,
+            raw::XOR => Op::XOR,
             raw::AND => Op::AND,
             raw::JUMP => Op::JUMP,
             raw::JNZ => Op::JNZ,
@@ -755,11 +770,11 @@ op! {
         /// Data read beyond the data length is read as zero.
         DREAD8 = 0x38,
 
-        /// Copy a portion of data delimited by ptr..ptr+len to memory.
+        /// Copy a portion of data delimited by src..src+len to memory at dst.
         ///
-        /// | Stack Input       | Stack Output           |
-        /// | ----------------- | ---------------------- |
-        /// | `[..., ptr, len]` | `<program terminates>` |
+        /// | Stack Input            | Stack Output           |
+        /// | ---------------------- | ---------------------- |
+        /// | `[..., src, dst, len]` | `[...]`                |
         DCOPY = 0x39,
 
         /// Push the length of the data to the stack.
@@ -884,12 +899,19 @@ op! {
         /// | `[..., b, a]` | `[..., b | a]` |
         OR = 0x52,
 
+        /// Bitwise XOR.
+        ///
+        /// | Stack Input   | Stack Output   |
+        /// | ------------- | -------------- |
+        /// | `[..., b, a]` | `[..., b ^ a]` |
+        XOR = 0x53,
+
         /// Bitwise AND.
         ///
         /// | Stack Input   | Stack Output   |
         /// | ------------- | -------------- |
         /// | `[..., b, a]` | `[..., b & a]` |
-        AND = 0x53,
+        AND = 0x54,
 
         // CONTROL FLOW OPERATIONS (0xa0-0xaf)
 
@@ -990,6 +1012,7 @@ impl Op {
             Op::SHR => vec![raw::SHR],
             Op::NEG => vec![raw::NEG],
             Op::OR => vec![raw::OR],
+            Op::XOR => vec![raw::XOR],
             Op::AND => vec![raw::AND],
             Op::JUMP => vec![raw::JUMP],
             Op::JNZ => vec![raw::JNZ],

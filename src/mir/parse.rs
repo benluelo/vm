@@ -72,17 +72,25 @@ pub fn grammar<'a>() -> Grammar<
     }
 
     fn val<'a>() -> Parser!['a, Val] {
-        just("0x")
-            .ignore_then(
+        choice((
+            just("0x").ignore_then(
                 digits(16)
                     .to_slice()
                     .map(|s| u64::from_str_radix(s, 16))
                     .unwrapped(),
-            )
-            .or(digits(10).to_slice().from_str().unwrapped())
-            .spanned()
-            .padded()
-            .map(Val)
+            ),
+            just("0b").ignore_then(
+                digits(2)
+                    .to_slice()
+                    .map(|s| u64::from_str_radix(s, 2))
+                    .unwrapped(),
+            ),
+            digits(10).to_slice().from_str().unwrapped(),
+        ))
+        .spanned()
+        .padded_by(comment().repeated())
+        .padded()
+        .map(Val)
     }
 
     fn expr<'a>() -> Parser!['a, Expr<'a>] {
@@ -93,6 +101,7 @@ pub fn grammar<'a>() -> Grammar<
                     .then(
                         ident().then(
                             tree.padded()
+                                .padded_by(comment().repeated())
                                 .separated_by(just(','))
                                 .collect::<Vec<_>>()
                                 .delimited_by(just('('), just(')')),
@@ -108,6 +117,7 @@ pub fn grammar<'a>() -> Grammar<
             ))
         })
         .padded()
+        .padded_by(comment().repeated())
         .labelled("arg expression")
     }
 
@@ -119,6 +129,7 @@ pub fn grammar<'a>() -> Grammar<
             .then_ignore(just("<-").padded())
             .then(expr())
             .map(|(lhs, rhs)| Assignment(lhs, rhs))
+            .padded_by(comment().repeated())
             .labelled("assignment")
     }
 
@@ -185,6 +196,8 @@ pub fn grammar<'a>() -> Grammar<
             assignment().map(Statement::Assignment),
             expr().map(Statement::Expr),
         ))
+        .padded()
+        .padded_by(comment().repeated())
         .labelled("statement"),
     );
 
@@ -222,6 +235,8 @@ pub fn grammar<'a>() -> Grammar<
                 rets: ret,
                 body,
             })
+            .padded()
+            .padded_by(comment().repeated())
             .labelled("def"),
     );
 
@@ -415,7 +430,7 @@ pub struct Def<'a> {
     pub body: Block<'a>,
 }
 
-fn print_ast(ast: &Block<'_>) -> String {
+pub fn print_ast(ast: &Block<'_>) -> String {
     fn go(depth: usize, out: &mut String, ast: &Block<'_>) {
         for s in &ast.0.inner {
             match s {

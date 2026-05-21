@@ -1,0 +1,32 @@
+def ROTL64(a, offset) -> n {
+  # (a << offset) | (a >> (64-offset))
+  or(shl(a, offset), shr(a, sub(64, offset)))
+}
+
+# state is at addr 0
+mem <- 0
+
+# alloc state (1600 bits)
+alloc(200)
+
+# alloc blocks
+
+input_len <- dlen()
+block_count <- add(1, div(input_len, 136))
+x <- mod(input_len, 136)
+alloc(mul(136, block_count))
+
+# temp array[5] space (C during theta step, temp during chi step)
+alloc(40)
+
+x <- 0
+
+# Compute the θ effect for a given column
+D <- xor(
+  read8(0),
+  ROTL64(0, 1)
+)
+x <- add(x, 1)
+y <- 0
+
+exit(0, 200)

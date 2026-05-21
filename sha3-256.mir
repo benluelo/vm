@@ -1,0 +1,266 @@
+def ROTL64(a, offset) -> n {
+  # (a << offset) | (a >> (64-offset))
+  or(shl(a, offset), shr(a, sub(64, offset)))
+}
+def i(x, y) -> n {
+  # (x+5y)
+  n <- add(x, mul(5, y))
+}
+
+# Function that computes the linear feedback shift register (LFSR) used to
+# define the round constants (see [Keccak Reference, Section 1.2]).
+def LFSR86540(LFSR) -> new_LFSR, result {
+    result <- not(eq(and(LFSR, 0x01), 0))
+    if not(eq(and(LFSR, 0x80), 0)) {
+      # Primitive polynomial over GF(2): x^8+x^6+x^5+x^4+1
+      new_LFSR <- xor(shl(LFSR, 1), 0x71)
+     } else {
+      new_LFSR <- shl(LFSR, 1)
+    }
+}
+
+def readLane(x, y) -> n {
+  # state[i(x, y)]
+  read8(i(x, y))
+}
+
+
+# state is at addr 0
+mem <- 0
+
+# alloc state (1600 bits)
+alloc(200)
+
+# alloc blocks
+
+input_len <- dlen()
+block_count <- add(1, div(input_len, 136))
+x <- mod(input_len, 136)
+alloc(mul(136, block_count))
+
+# temp array[5] space (C during theta step, temp during chi step)
+alloc(40)
+
+temp_arr_ptr <- add(200, mul(136, block_count))
+
+# copy data to memory
+# dcopy(0, 200, dlen())
+i <- 0
+loop :a {
+  b <- dread1(i)
+  # (b * 0x0202020202ULL & 0x010884422010ULL) % 1023
+  # from https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
+  b <- mod(and(mul(b, 0x0202020202), 0x010884422010), 1023)
+  write1(add(i, 200), b)
+  i <- add(i, 1)
+
+  if or(gt(i, dlen()), eq(i, dlen())) {
+    break :a
+  }
+}
+
+# bits(input) + bits(0b01) + bits(0b1) + bits(0b1) + bits(n) + bits(0b1)
+# write padding byte at the end of the copied input
+write1(add(dlen(), 200), 0b01100000)
+# write trailing 1 bit to end of blocks
+write1(add(mul(136, block_count), 199), or(read1(add(mul(136, block_count), 199)), 0b00000001))
+
+block_number <- 0
+loop :blocks {
+  if lt(block_number, block_count) {
+    i <- 0
+    loop :a {
+      # 17 words per block
+      if lt(i, 17) {
+        state_word <- read8(mul(i, 8))
+        # start of blocks (200) + block offset + word offset
+        block_word <- read8(add(200, add(mul(block_number, 136), mul(i, 8))))
+        write8(
+          mul(i, 8),
+          xor(state_word, block_word)
+        )
+        i <- add(i, 1)
+      } else {
+        break :a
+      }
+    }
+
+    round <- 0
+    x <- 0
+    y <- 0
+    j <- 0
+    t <- 0
+    LFSRstate <- 0x01
+    loop :permute {
+      if lt(round, 24) {
+        # === θ step (see [Keccak Reference, Section 2.3.2]) ===
+        # tKeccakLane C[5], D;
+
+        # Compute the parity of the columns
+        x <- 0
+        loop :a {
+          if lt(x, 5) {
+            write8(
+              add(temp_arr_ptr, mul(x, 8)),
+              xor(
+                xor(
+                  xor(
+                    xor(
+                      read8(i(x, 0)),
+                      read8(i(x, 1))
+                    ),
+                    read8(i(x, 2))
+                  ),
+                  read8(i(x, 3))
+                ),
+                read8(i(x, 4))
+              )
+            )
+            x <- add(x, 1)
+          } else {
+            break :a
+          }
+        }
+
+        x <- 0
+        loop :theta {
+          if lt(x, 5) {
+            # Compute the θ effect for a given column
+            D <- xor(
+              read8(add(temp_arr_ptr, mul(mod(add(x, 4), 5), 8))),
+              ROTL64(read8(add(temp_arr_ptr, mul(mod(add(x, 1), 5), 8))), 1)
+            )
+            x <- add(x, 1)
+            y <- 0
+            # Add the θ effect to the whole column
+            loop :theta {
+              if lt(y, 5) {
+                # XORLane(x, y, D)
+                write8(i(x, y), xor(read8(i(x, y)), D))
+                y <- add(y, 1)
+              } else {
+                break :theta
+              }
+            }
+          } else {
+            break :theta
+          }
+        }
+
+        exit(0, 200)
+
+        # === ρ and π steps (see [Keccak Reference, Sections 2.3.3 and 2.3.4]) ===
+        current <- 0
+        temp <- 0
+        # Start at coordinates (1 0)
+        x <- 1
+        y <- 0
+        current <- read8(i(x, y))
+        # Iterate over ((0 1)(2 3))^t * (1 0) for 0 ≤ t ≤ 23
+        t <- 0
+        loop :a {
+          if lt(t, 24) {
+            # Compute the rotation constant r = (t+1)(t+2)/2
+            r <- mod(div(mul(add(t, 1), add(t, 2)), 2), 64)
+            # # Compute ((0 1)(2 3)) * (x y)
+            Y <- mod(add(mul(2, x), mul(3, y)), 5)
+            x <- y
+            y <- Y
+            # Swap current and state(x,y), and rotate
+            temp <- read8(i(x, y))
+            write8(
+              i(x, y),
+              # ((((uint64_t)a) << offset) ^ (((uint64_t)a) >> (64-offset)))
+              ROTL64(current, r)
+            )
+            current <- temp
+            t <- add(t, 1)
+          } else {
+            break :a
+          }
+        }
+
+        # === χ step (see [Keccak Reference, Section 2.3.1]) ===
+        y <- 0
+        loop :chi {
+          if lt(y, 5) {
+            # Take a copy of the plane
+            x <- 0
+            loop :chi {
+              if lt(x, 5) {
+                write8(
+                  add(temp_arr_ptr, mul(x, 8)),
+                  read8(i(x, y))
+                )
+                x <- add(x, 1)
+              } else {
+                break :chi
+              }
+            }
+            # Compute χ on the plane
+            x <- 0
+            loop :chi {
+              if lt(x, 5) {
+                write8(
+                  i(x, y),
+                  xor(
+                    read8(add(temp_arr_ptr, mul(x, 8))),
+                    and(
+                      neg(read8(add(temp_arr_ptr, mul(mod(add(x, 1), 5), 8)))),
+                          read8(add(temp_arr_ptr, mul(mod(add(x, 2), 5), 8)))
+                    )
+                  )
+                )
+                x <- add(x, 1)
+              } else {
+                break :chi
+              }
+            }
+            y <- add(y, 1)
+          } else {
+            break :chi
+          }
+        }
+
+        # === ι step (see [Keccak Reference, Section 2.3.5]) ===
+        j <- 0
+        loop :iota {
+          if lt(j, 7) {
+            bitPosition <- sub(shl(1, j), 1) # 2^j-1
+            ok, LFSRstate <- LFSR86540(LFSRstate)
+            if ok {
+                # XORLane(0, 0, (tKeccakLane)1<<bitPosition);
+                write8(i(0, 0), xor(read8(i(0, 0)), shl(1, bitPosition)))
+            }
+            j <- add(j, 1)
+          } else {
+            break :iota
+          }
+        }
+        round <- add(round, 1)
+      } else {
+        break :permute
+      }
+    }
+  } else {
+    break :blocks
+  }
+  block_number <- add(block_number, 1)
+}
+
+# mirror bits in output bytes
+i <- 0
+loop :output {
+  if lt(i, 32) {
+    b <- read1(i)
+    # (b * 0x0202020202ULL & 0x010884422010ULL) % 1023
+    # from https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
+    b <- mod(and(mul(b, 0x0202020202), 0x010884422010), 1023)
+    write1(i, b)
+    i <- add(i, 1)
+  } else {
+    break :output
+  }
+}
+
+exit(0, 32)

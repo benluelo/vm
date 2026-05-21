@@ -162,7 +162,7 @@ impl<'a> Ctx<'a> {
         });
     }
 
-    fn pop_scope(&mut self, label: Option<Label<'a>>) -> CompileResult {
+    fn pop_scope(&mut self, label: Option<Label<'a>>, cleanup_asm: bool) -> CompileResult {
         trace!(
             "pop_scope {}",
             label.map_or("<none>", |label| label.0.inner)
@@ -175,6 +175,9 @@ impl<'a> Ctx<'a> {
                         "popping scope {}",
                         scope.label.map_or("<none>", |label| label.0.inner)
                     );
+                    if cleanup_asm {
+                        self.current_section().extend(scope.drop_asm());
+                    }
                     for (var, _) in scope.vars {
                         trace!("popping var '{var}'");
                         self.dec_stack();
@@ -318,7 +321,7 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
                     // loop
                     ctx.cleanup_scopes_to_label(*label, &format!("loop_exit_[{}]", label.0.span));
                     // exit scope
-                    ctx.pop_scope(Some(*label))?;
+                    ctx.pop_scope(Some(*label), false)?;
                     ctx.current_section()
                         // force non-zero jump
                         .extend_from_slice(&[AsmOp::PUSHL(loop_start_label.into()), AsmOp::JUMP]);
@@ -406,7 +409,7 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
 
                         ctx.push_scope(None);
                         go(ctx, depth + 1, &block)?;
-                        ctx.pop_scope(None)?;
+                        ctx.pop_scope(None, true)?;
 
                         if let Some(end_label) = end_label_if_tail {
                             ctx.current_section()
@@ -619,7 +622,39 @@ fn expr_arity<'a>(ctx: &Ctx<'a>, depth: usize, expr: &Expr<'_>) -> CompileResult
             args: _,
         } if matches!(
             builtin.0.inner,
-            "add" | "mul" | "sub" | "exp" | "mod" | "eq" | "lt" | "gt" | "dread1" | "dlen"
+            "add"
+                | "sub"
+                | "mul"
+                | "div"
+                | "exp"
+                | "mod"
+                | "eq"
+                | "lt"
+                | "gt"
+                | "shl"
+                | "shr"
+                | "or"
+                | "xor"
+                | "and"
+                | "not"
+                | "neg"
+                | "dread1"
+                | "dread2"
+                | "dread3"
+                | "dread4"
+                | "dread5"
+                | "dread6"
+                | "dread7"
+                | "dread8"
+                | "dlen"
+                | "read1"
+                | "read2"
+                | "read3"
+                | "read4"
+                | "read5"
+                | "read6"
+                | "read7"
+                | "read8"
         ) =>
         {
             if depth > 0 && *spread {
@@ -636,7 +671,17 @@ fn expr_arity<'a>(ctx: &Ctx<'a>, depth: usize, expr: &Expr<'_>) -> CompileResult
             args: _,
         } if matches!(
             builtin.0.inner,
-            "alloc" | "write1" | "write2" | "write8" | "exit" | "trap"
+            "alloc"
+                | "write1"
+                | "write2"
+                | "write3"
+                | "write4"
+                | "write5"
+                | "write6"
+                | "write7"
+                | "write8"
+                | "exit"
+                | "trap"
         ) =>
         {
             if *spread {
@@ -773,6 +818,11 @@ fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<Asm
                         ops.push(AsmOp::SUB);
                         ctx.dec_stack();
                     }
+                    "div" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "div", 2, exprs)?;
+                        ops.push(AsmOp::DIV);
+                        ctx.dec_stack();
+                    }
                     "exp" => {
                         ensure_arity_and_eval_args(ctx, depth, ops, "exp", 2, exprs)?;
                         ops.push(AsmOp::EXP);
@@ -798,6 +848,39 @@ fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<Asm
                         ops.push(AsmOp::GT);
                         ctx.dec_stack();
                     }
+                    "shl" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "shl", 2, exprs)?;
+                        ops.push(AsmOp::SHL);
+                        ctx.dec_stack();
+                    }
+                    "shr" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "shr", 2, exprs)?;
+                        ops.push(AsmOp::SHR);
+                        ctx.dec_stack();
+                    }
+                    "or" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "or", 2, exprs)?;
+                        ops.push(AsmOp::OR);
+                        ctx.dec_stack();
+                    }
+                    "xor" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "xor", 2, exprs)?;
+                        ops.push(AsmOp::XOR);
+                        ctx.dec_stack();
+                    }
+                    "and" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "and", 2, exprs)?;
+                        ops.push(AsmOp::AND);
+                        ctx.dec_stack();
+                    }
+                    "not" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "not", 1, exprs)?;
+                        ops.push(AsmOp::NOT);
+                    }
+                    "neg" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "neg", 1, exprs)?;
+                        ops.push(AsmOp::NEG);
+                    }
                     "alloc" => {
                         ensure_arity_and_eval_args(ctx, depth, ops, "alloc", 1, exprs)?;
                         ops.push(AsmOp::ALLOC);
@@ -821,9 +904,24 @@ fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<Asm
                         ctx.dec_stack();
                         ctx.dec_stack();
                     }
+                    "read1" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "read1", 1, exprs)?;
+                        ops.push(AsmOp::READ1);
+                    }
+                    "read8" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "read8", 1, exprs)?;
+                        ops.push(AsmOp::READ8);
+                    }
                     "dread1" => {
                         ensure_arity_and_eval_args(ctx, depth, ops, "dread1", 1, exprs)?;
                         ops.push(AsmOp::DREAD1);
+                    }
+                    "dcopy" => {
+                        ensure_arity_and_eval_args(ctx, depth, ops, "dcopy", 3, exprs)?;
+                        ops.push(AsmOp::DCOPY);
+                        ctx.dec_stack();
+                        ctx.dec_stack();
+                        ctx.dec_stack();
                     }
                     "dlen" => {
                         ensure_arity_and_eval_args(ctx, depth, ops, "dlen", 0, exprs)?;
@@ -870,7 +968,7 @@ fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<Asm
                         }
 
                         // all args are dropped from the stack
-                        ctx.pop_scope(None)?;
+                        ctx.pop_scope(None, false)?;
 
                         ops.extend([AsmOp::PUSHL(def_label.into()), AsmOp::CALL]);
 
@@ -1865,5 +1963,47 @@ L82
         let res = vm.run().unwrap();
 
         assert_eq!(res, Some(3_u64.to_be_bytes().to_vec()))
+    }
+
+    #[test]
+    fn broken() {
+        init();
+
+        let raw = "
+x <- 1
+y <- 0
+t <- 0
+loop :a {
+  if lt(t, 24) {
+    Y <- mod(add(mul(2, x), mul(3, y)), 5)
+    t <- add(t, 1)
+  } else {
+    break :a
+  }
+}
+alloc(8)
+write8(0, t)
+exit(0, 8)
+";
+
+        let ast = grammar().block.parse(raw).unwrap();
+
+        let mut ctx = Ctx::new_root();
+
+        compile(&mut ctx, &ast).unwrap();
+
+        let obj = ctx.into_object();
+
+        println!("{obj}");
+
+        // panic!();
+
+        let asm = obj.assemble();
+
+        let mut vm = Vm::new(asm, b"".into());
+
+        let res = vm.run().unwrap();
+
+        assert_eq!(res, Some(24_u64.to_be_bytes().to_vec()))
     }
 }
