@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, iter};
 
 use chumsky::span::Spanned;
 use indexmap::IndexMap;
@@ -307,8 +307,11 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
             match s {
                 Statement::Expr(expr) => {
                     trace!("expr");
+                    let arity = expr_arity(ctx, 0, expr, false)?;
                     let expr_ops = compile_expr(ctx, expr)?;
                     ctx.current_section().extend_from_slice(&expr_ops);
+                    ctx.current_section()
+                        .extend(iter::repeat_n(AsmOp::POP, arity));
                 }
                 Statement::Loop(Loop(label, block)) => {
                     trace!("loop");
@@ -446,7 +449,7 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
                     go_if(ctx, if_.clone(), depth)?;
                 }
                 Statement::Assignment(Assignment(vars, expr)) => {
-                    let arity = expr_arity(ctx, 0, expr)?;
+                    let arity = expr_arity(ctx, 0, expr, true)?;
                     assert_eq!(vars.len(), arity);
 
                     // def f() -> a, b, c {}
@@ -606,14 +609,24 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
     go(ctx, 0, block)
 }
 
-fn exprs_arity<'a>(ctx: &Ctx<'a>, depth: usize, exprs: &[Expr<'_>]) -> CompileResult<usize> {
+fn exprs_arity<'a>(
+    ctx: &Ctx<'a>,
+    depth: usize,
+    exprs: &[Expr<'_>],
+    ensure_expr: bool,
+) -> CompileResult<usize> {
     exprs
         .iter()
-        .map(|expr| expr_arity(ctx, depth, expr))
+        .map(|expr| expr_arity(ctx, depth, expr, ensure_expr))
         .sum::<CompileResult<usize>>()
 }
 
-fn expr_arity<'a>(ctx: &Ctx<'a>, depth: usize, expr: &Expr<'_>) -> CompileResult<usize> {
+fn expr_arity<'a>(
+    ctx: &Ctx<'a>,
+    depth: usize,
+    expr: &Expr<'_>,
+    ensure_expr: bool,
+) -> CompileResult<usize> {
     match expr {
         Expr::Val(_) | Expr::Var(_) => Ok(1),
         Expr::Call {
@@ -680,6 +693,7 @@ fn expr_arity<'a>(ctx: &Ctx<'a>, depth: usize, expr: &Expr<'_>) -> CompileResult
                 | "write6"
                 | "write7"
                 | "write8"
+                | "dcopy"
                 | "exit"
                 | "trap"
         ) =>
@@ -688,10 +702,12 @@ fn expr_arity<'a>(ctx: &Ctx<'a>, depth: usize, expr: &Expr<'_>) -> CompileResult
                 Err(CompileError::InvalidSpread {
                     def: builtin.0.inner.to_owned(),
                 })
-            } else {
+            } else if depth > 0 || ensure_expr {
                 Err(CompileError::StatementBuiltin {
                     builtin: builtin.0.inner.to_owned(),
                 })
+            } else {
+                Ok(0)
             }
         }
         Expr::Call {
@@ -708,18 +724,21 @@ fn expr_arity<'a>(ctx: &Ctx<'a>, depth: usize, expr: &Expr<'_>) -> CompileResult
                 .rets
                 .len();
 
-            match (depth, spread, arity) {
-                (_, _, 0) => Err(CompileError::StatementDef {
+            match (ensure_expr, depth, spread, arity) {
+                // statement def, invalid at top level if ensuring expression, invalid at any depth
+                // greater than top level, arity zero otherwise
+                (true, _, _, 0) | (_, 1.., _, 0) => Err(CompileError::StatementDef {
                     def: def.0.inner.to_owned(),
                 }),
+                (false, _, _, 0) => Ok(0),
                 // '...' provided at top level, always invalid
-                (0, true, _) => Err(CompileError::SpreadTopLevel {}),
+                (_, 0, true, _) => Err(CompileError::SpreadTopLevel {}),
                 // '...' provided but only 1 return value
-                (1.., true, 1) => Err(CompileError::InvalidSpread {
+                (_, 1.., true, 1) => Err(CompileError::InvalidSpread {
                     def: def.0.inner.to_owned(),
                 }),
                 // '...' not provided but more than 1 return value
-                (1.., false, 2..) => Err(CompileError::SpreadRequired {
+                (_, 1.., false, 2..) => Err(CompileError::SpreadRequired {
                     def: def.0.inner.to_owned(),
                 }),
                 _ => Ok(arity),
@@ -787,7 +806,7 @@ fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<Asm
                     exprs: &[Expr<'a>],
                 ) -> CompileResult {
                     trace!("{builtin}");
-                    let arity = exprs_arity(ctx, depth + 1, exprs)?;
+                    let arity = exprs_arity(ctx, depth + 1, exprs, true)?;
                     if arity != expected {
                         Err(CompileError::InvalidArgCountBuiltin {
                             builtin,
@@ -944,7 +963,7 @@ fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<Asm
 
                         let (def, def_label) = ctx.get_def(*f).expect("def not found").clone();
 
-                        if exprs_arity(ctx, depth + 1, exprs)? != def.args.len() {
+                        if exprs_arity(ctx, depth + 1, exprs, true)? != def.args.len() {
                             return Err(CompileError::InvalidArgCountDef {
                                 def: def.ident.0.inner.to_owned(),
                                 expected: def.args.len(),
@@ -957,8 +976,8 @@ fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<Asm
                         args.reverse();
                         for expr in exprs.iter() {
                             #[allow(clippy::unwrap_in_result)]
-                            for _ in
-                                0..expr_arity(ctx, depth + 1, expr).expect("checked above; qed;")
+                            for _ in 0..expr_arity(ctx, depth + 1, expr, true)
+                                .expect("checked above; qed;")
                             {
                                 let arg = args.pop().expect("checked above; qed;");
                                 trace!("arg init '{arg}'");
