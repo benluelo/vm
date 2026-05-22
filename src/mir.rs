@@ -483,8 +483,7 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
                             // stack position
                             None => {
                                 trace!("var decl '{var}' (i: {i})");
-                                let idx =
-                                    ctx.init_var_with_depth_offset(*var, dbg!(-((i + 1) as isize)));
+                                let idx = ctx.init_var_with_depth_offset(*var, -((i + 1) as isize));
                                 trace!("idx = {idx}");
                             }
                             // var already declared, update it's value by evaluating the expression

@@ -101,17 +101,12 @@ def LFSR86540(LFSR) -> new_LFSR, result {
     }
 }
 
-# state is at addr 0
-mem <- 0
-
 # alloc state (1600 bits)
 alloc(200)
 
 # alloc blocks
 
-input_len <- dlen()
-block_count <- add(1, div(input_len, 136))
-x <- mod(input_len, 136)
+block_count <- add(1, div(dlen(), 136))
 alloc(mul(136, block_count))
 
 # temp array[5] space (C during theta step, temp during chi step)
@@ -121,19 +116,6 @@ temp_arr_ptr <- add(200, mul(136, block_count))
 
 # copy data to memory
 dcopy(0, 200, dlen())
-# i <- 0
-# loop :a {
-#   b <- dread1(i)
-#   # (b * 0x0202020202ULL & 0x010884422010ULL) % 1023
-#   # from https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
-#   b <- mod(and(mul(b, 0x0202020202), 0x010884422010), 1023)
-#   write1(add(i, 200), b)
-#   i <- add(i, 1)
-
-#   if or(gt(i, dlen()), eq(i, dlen())) {
-#     break :a
-#   }
-# }
 
 # bits(input) + bits(0b01) + bits(0b1) + bits(0b1) + bits(n) + bits(0b1)
 # write padding byte at the end of the copied input
@@ -170,9 +152,6 @@ loop :blocks {
     loop :permute {
       if lt(round, 24) {
         # === θ step (see [Keccak Reference, Section 2.3.2]) ===
-        # tKeccakLane C[5], D;
-
-        # exit(0, 200)
 
         C <- temp_arr_ptr
 
@@ -186,22 +165,15 @@ loop :blocks {
             r2 <- readLane(x, 2)
             r3 <- readLane(x, 3)
             r4 <- readLane(x, 4)
-            # trap(r0)
-            # trap(r1)
-            # trap(xor(r0, r1))
             write8(
               add(C, mul(x, 8)),
               xor(xor(xor(xor(r0, r1), r2), r3), r4)
             )
             x <- add(x, 1)
-
-            # exit(C, 40)
           } else {
             break :theta_parity
           }
         }
-
-        # exit(0, 200)
 
         x <- 0
         loop :theta_effect_x {
@@ -212,15 +184,7 @@ loop :blocks {
             # C[(x+1)%5]
             C_x_1_5 <- read8(add(C, mul(mod(add(x, 1), 5), 8)))
 
-            # trap(C_x_4_5)
-            # trap(C_x_1_5)
-            # exit(C, 40)
-
             D <- xor(C_x_4_5, ROTL64(C_x_1_5, 1))
-
-            # exit(0, 200)
-            # trap(D)
-
 
             # Add the θ effect to the whole column
             y <- 0
@@ -238,8 +202,6 @@ loop :blocks {
             break :theta_effect_x
           }
         }
-
-        # exit(0, 200)
 
         # === ρ and π steps (see [Keccak Reference, Sections 2.3.3 and 2.3.4]) ===
         current <- 0
@@ -260,22 +222,13 @@ loop :blocks {
             y <- Y
             # Swap current and state(x,y), and rotate
             temp <- readLane(x, y)
-            # trap(temp)
-            # trap(ROTL64(current, r))
-            writeLane(
-              x, y,
-              # ((((uint64_t)a) << offset) ^ (((uint64_t)a) >> (64-offset)))
-              ROTL64(current, r)
-            )
+            writeLane(x, y, ROTL64(current, r))
             current <- temp
             t <- add(t, 1)
           } else {
             break :rho_and_pi
           }
         }
-
-        # WORKS UP TO HERE! PROBABLY!
-        # exit(0, 200)
 
         # === χ step (see [Keccak Reference, Section 2.3.1]) ===
         y <- 0
@@ -319,8 +272,6 @@ loop :blocks {
           }
         }
 
-        # exit(0, 200)
-
         # === ι step (see [Keccak Reference, Section 2.3.5]) ===
         j <- 0
         loop :iota {
@@ -337,8 +288,6 @@ loop :blocks {
           }
         }
         round <- add(round, 1)
-
-        # exit(0, 200)
       } else {
         break :permute
       }
@@ -348,20 +297,5 @@ loop :blocks {
   }
   block_number <- add(block_number, 1)
 }
-
-# mirror bits in output bytes
-# i <- 0
-# loop :output {
-#   if lt(i, 32) {
-#     b <- read1(i)
-#     # (b * 0x0202020202ULL & 0x010884422010ULL) % 1023
-#     # from https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
-#     b <- mod(and(mul(b, 0x0202020202), 0x010884422010), 1023)
-#     write1(i, b)
-#     i <- add(i, 1)
-#   } else {
-#     break :output
-#   }
-# }
 
 exit(0, 32)

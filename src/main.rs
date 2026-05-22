@@ -93,7 +93,7 @@ fn main() -> anyhow::Result<()> {
     } else {
         match mir::parse::grammar().block.parse(&file).into_result() {
             Ok(obj) => {
-                println!("{}", print_ast(&obj));
+                // println!("{}", print_ast(&obj));
                 let mut ctx = Ctx::new_root();
                 compile(&mut ctx, &obj)?;
                 match args.emit {

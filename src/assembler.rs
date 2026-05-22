@@ -67,7 +67,7 @@ impl<'a> Object<'a> {
                     AsmOp::PUSH6(v) => Op::PUSH6(*v),
                     AsmOp::PUSH7(v) => Op::PUSH7(*v),
                     AsmOp::PUSH8(v) => Op::PUSH8(*v),
-                    AsmOp::PUSHL(label) => Op::PUSH8(label_ptrs[dbg!(&**label)].to_be_bytes()),
+                    AsmOp::PUSHL(label) => Op::PUSH8(label_ptrs[&**label].to_be_bytes()),
                     AsmOp::DUP => Op::DUP,
                     AsmOp::SWAP => Op::SWAP,
                     AsmOp::POP => Op::POP,
