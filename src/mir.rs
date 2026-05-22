@@ -563,8 +563,10 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
 
                     def_ctx.push_section(&format!("{def_label}/BODY"));
 
+                    def_ctx.push_scope(None);
                     // compile the fn body
                     go(&mut def_ctx, depth + 1, &def.body)?;
+                    def_ctx.pop_scope(None, true)?;
 
                     def_ctx
                         .sections
@@ -1985,7 +1987,7 @@ L82
     }
 
     #[test]
-    fn broken() {
+    fn drop_vars_in_if_block() {
         init();
 
         let raw = "
@@ -2024,5 +2026,34 @@ exit(0, 8)
         let res = vm.run().unwrap();
 
         assert_eq!(res, Some(24_u64.to_be_bytes().to_vec()))
+    }
+
+    #[test]
+    fn drop_vars_in_def_body() {
+        init();
+
+        let raw = r#"
+def f(at) -> u {
+  i <- 7
+}
+
+f(0)
+        "#;
+
+        let ast = grammar().block.parse(raw).unwrap();
+
+        let mut ctx = Ctx::new_root();
+
+        compile(&mut ctx, &ast).unwrap();
+
+        let obj = ctx.into_object();
+
+        let asm = obj.assemble();
+
+        let mut vm = Vm::new(asm, b"".into());
+
+        let res = vm.run().unwrap();
+
+        assert_eq!(res, None)
     }
 }

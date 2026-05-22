@@ -1,10 +1,90 @@
-def ROTL64(a, offset) -> n {
-  # (a << offset) | (a >> (64-offset))
-  or(shl(a, offset), shr(a, sub(64, offset)))
+# Function to load a 64-bit value using the little-endian (LE) convention.
+# On a LE platform, this could be greatly simplified using a cast.
+def load64(at) -> u {
+  i <- 7
+
+  loop :a {
+    u <- shl(u, 8)
+    u <- or(u, read1(add(at, i)))
+    if eq(i, 0) {
+      break :a
+    }
+    i <- sub(i, 1)
+  }
+
+  # u <- or(u, read1(add(at, 7)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 6)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 5)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 4)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 3)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 2)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 1)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 0)))
 }
+
+# Function to store a 64-bit value using the little-endian (LE) convention.
+# On a LE platform, this could be greatly simplified using a cast.
+def store64(at, u) -> {
+  i <- 0
+
+  loop :a {
+    write1(add(at, i), u)
+    u <- shr(u, 8)
+    if eq(i, 7) {
+      break :a
+    }
+    i <- add(i, 1)
+  }
+}
+
+# load/store works correctly
+# alloc(8)
+# store64(0, 0x0123456789abcdef)
+# store64(0, load64(0))
+# trap(load64(0))
+
+# # Function to XOR into a 64-bit value using the little-endian (LE) convention.
+# # On a LE platform, this could be greatly simplified using a cast.
+def xor64(at, u) -> {
+  i <- 0
+
+  loop :a {
+    write1(add(at, i), xor(u, read1(add(at, i))))
+    u <- shr(u, 8)
+    if eq(i, 7) {
+      break :a
+    }
+    i <- add(i, 1)
+  }
+}
+
+def ROTL64(a, offset) -> n {
+  # (a << offset) ^ (a >> (64-offset))
+  n <- xor(shl(a, offset), shr(a, sub(64, offset)))
+}
+
 def i(x, y) -> n {
   # (x+5y)
   n <- add(x, mul(5, y))
+}
+
+def readLane(x, y) -> lane {
+  lane <- load64(mul(8, i(x, y)))
+}
+
+def writeLane(x, y, lane) -> {
+  store64(mul(8, i(x, y)), at)
+}
+
+def XORLane(x, y, lane) -> {
+  xor64(mul(8, i(x, y)), lane)
 }
 
 # Function that computes the linear feedback shift register (LFSR) used to
@@ -18,12 +98,6 @@ def LFSR86540(LFSR) -> new_LFSR, result {
       new_LFSR <- shl(LFSR, 1)
     }
 }
-
-def readLane(x, y) -> n {
-  # state[i(x, y)]
-  read8(i(x, y))
-}
-
 
 # state is at addr 0
 mem <- 0
@@ -44,26 +118,26 @@ alloc(40)
 temp_arr_ptr <- add(200, mul(136, block_count))
 
 # copy data to memory
-# dcopy(0, 200, dlen())
-i <- 0
-loop :a {
-  b <- dread1(i)
-  # (b * 0x0202020202ULL & 0x010884422010ULL) % 1023
-  # from https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
-  b <- mod(and(mul(b, 0x0202020202), 0x010884422010), 1023)
-  write1(add(i, 200), b)
-  i <- add(i, 1)
+dcopy(0, 200, dlen())
+# i <- 0
+# loop :a {
+#   b <- dread1(i)
+#   # (b * 0x0202020202ULL & 0x010884422010ULL) % 1023
+#   # from https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
+#   b <- mod(and(mul(b, 0x0202020202), 0x010884422010), 1023)
+#   write1(add(i, 200), b)
+#   i <- add(i, 1)
 
-  if or(gt(i, dlen()), eq(i, dlen())) {
-    break :a
-  }
-}
+#   if or(gt(i, dlen()), eq(i, dlen())) {
+#     break :a
+#   }
+# }
 
 # bits(input) + bits(0b01) + bits(0b1) + bits(0b1) + bits(n) + bits(0b1)
 # write padding byte at the end of the copied input
-write1(add(dlen(), 200), 0b01100000)
+write1(add(dlen(), 200), 0x06)
 # write trailing 1 bit to end of blocks
-write1(add(mul(136, block_count), 199), or(read1(add(mul(136, block_count), 199)), 0b00000001))
+write1(add(mul(136, block_count), 199), or(read1(add(mul(136, block_count), 199)), 0x80))
 
 block_number <- 0
 loop :blocks {
@@ -96,58 +170,78 @@ loop :blocks {
         # === θ step (see [Keccak Reference, Section 2.3.2]) ===
         # tKeccakLane C[5], D;
 
+        # exit(0, 200)
+
+        C <- temp_arr_ptr
+
         # Compute the parity of the columns
         x <- 0
-        loop :a {
+        loop :theta_parity {
           if lt(x, 5) {
+            # write to C[x]
+            r0 <- readLane(x, 0)
+            r1 <- readLane(x, 1)
+            r2 <- readLane(x, 2)
+            r3 <- readLane(x, 3)
+            r4 <- readLane(x, 4)
+            # trap(r0)
+            # trap(r1)
+            # trap(xor(r0, r1))
             write8(
-              add(temp_arr_ptr, mul(x, 8)),
-              xor(
-                xor(
-                  xor(
-                    xor(
-                      read8(i(x, 0)),
-                      read8(i(x, 1))
-                    ),
-                    read8(i(x, 2))
-                  ),
-                  read8(i(x, 3))
-                ),
-                read8(i(x, 4))
-              )
+              add(C, mul(x, 8)),
+              xor(xor(xor(xor(r0, r1), r2), r3), r4)
             )
             x <- add(x, 1)
+
+            # exit(C, 40)
           } else {
-            break :a
+            break :theta_parity
           }
         }
+
+        # exit(0, 200)
 
         x <- 0
-        loop :theta {
+        loop :theta_effect_x {
           if lt(x, 5) {
             # Compute the θ effect for a given column
-            D <- xor(
-              read8(add(temp_arr_ptr, mul(mod(add(x, 4), 5), 8))),
-              ROTL64(read8(add(temp_arr_ptr, mul(mod(add(x, 1), 5), 8))), 1)
-            )
-            x <- add(x, 1)
-            y <- 0
+            # C[(x+4)%5]
+            C_x_4_5 <- read8(add(C, mul(mod(add(x, 4), 5), 8)))
+            # C[(x+1)%5]
+            C_x_1_5 <- read8(add(C, mul(mod(add(x, 1), 5), 8)))
+
+            # trap(C_x_4_5)
+            # trap(C_x_1_5)
+            # exit(C, 40)
+
+            D <- xor(C_x_4_5, ROTL64(C_x_1_5, 1))
+
+            # exit(0, 200)
+            # trap(D)
+
+
             # Add the θ effect to the whole column
-            loop :theta {
+            y <- 0
+            loop :theta_effect_y {
               if lt(y, 5) {
-                # XORLane(x, y, D)
-                write8(i(x, y), xor(read8(i(x, y)), D))
+                XORLane(x, y, D)
+                exit(0, 200)
                 y <- add(y, 1)
               } else {
-                break :theta
+                break :theta_effect_y
               }
             }
+
+            x <- add(x, 1)
           } else {
-            break :theta
+            break :theta_effect_x
           }
         }
 
-        exit(0, 200)
+        # WORKS UP TO HERE! PROBABLY!
+        # exit(0, 200)
+
+        # exit(0, 200)
 
         # === ρ and π steps (see [Keccak Reference, Sections 2.3.3 and 2.3.4]) ===
         current <- 0
@@ -155,7 +249,7 @@ loop :blocks {
         # Start at coordinates (1 0)
         x <- 1
         y <- 0
-        current <- read8(i(x, y))
+        current <- readLane(x, y)
         # Iterate over ((0 1)(2 3))^t * (1 0) for 0 ≤ t ≤ 23
         t <- 0
         loop :a {
@@ -167,7 +261,7 @@ loop :blocks {
             x <- y
             y <- Y
             # Swap current and state(x,y), and rotate
-            temp <- read8(i(x, y))
+            temp <- readLane(x, y)
             write8(
               i(x, y),
               # ((((uint64_t)a) << offset) ^ (((uint64_t)a) >> (64-offset)))
@@ -190,7 +284,7 @@ loop :blocks {
               if lt(x, 5) {
                 write8(
                   add(temp_arr_ptr, mul(x, 8)),
-                  read8(i(x, y))
+                  readLane(x, y)
                 )
                 x <- add(x, 1)
               } else {
@@ -230,7 +324,7 @@ loop :blocks {
             ok, LFSRstate <- LFSR86540(LFSRstate)
             if ok {
                 # XORLane(0, 0, (tKeccakLane)1<<bitPosition);
-                write8(i(0, 0), xor(read8(i(0, 0)), shl(1, bitPosition)))
+                write8(i(0, 0), xor(readLane(0, 0), shl(1, bitPosition)))
             }
             j <- add(j, 1)
           } else {
@@ -263,4 +357,4 @@ loop :output {
   }
 }
 
-exit(0, 32)
+exit(0, 200)
