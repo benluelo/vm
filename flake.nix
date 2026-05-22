@@ -31,6 +31,12 @@
           crane = {
             lib = (inputs.crane.mkLib pkgs).overrideToolchain (_: self'.packages.rust-nightly);
           };
+
+          nist-vectors = pkgs.fetchzip {
+            url = "https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Algorithm-Validation-Program/documents/sha3/sha-3bytetestvectors.zip";
+            stripRoot = false;
+            hash = "sha256-nWNYO4H2piqf6CW7NJfqc4+DHzByYoNbbjGE3QeO4uc=";
+          };
         in
         {
           _module.args.pkgs = import nixpkgs {
@@ -46,6 +52,12 @@
               src = ./.;
               doCheck = false;
               cargoBuildCommand = "cargo build --release";
+            };
+            fetch-nist-vectors = pkgs.writeShellApplication {
+              name = "fetch-nist-vectors";
+              text = ''
+                cp -r ${nist-vectors} .nist-vectors
+              '';
             };
           };
           checks = {

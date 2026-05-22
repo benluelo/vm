@@ -1,4 +1,7 @@
+use chumsky::Parser;
+
 use super::*;
+use crate::assembler::parse_asm;
 
 fn return_3_as_a_single_byte() -> impl IntoIterator<Item = u8> {
     use Op::*;

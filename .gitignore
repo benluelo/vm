@@ -1,5 +1,7 @@
 /target
 
+.nist-vectors/
+
 tree-sitter-mir/bindings/
 
 ## from the tree-sitter-mir/.gitignore file
