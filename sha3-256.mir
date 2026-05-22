@@ -80,7 +80,9 @@ def readLane(x, y) -> lane {
 }
 
 def writeLane(x, y, lane) -> {
-  store64(mul(8, i(x, y)), at)
+  # TODO: This compiles, it shouldn't
+  # store64(mul(8, i(x, y)), at)
+  store64(mul(8, i(x, y)), lane)
 }
 
 def XORLane(x, y, lane) -> {
@@ -225,7 +227,6 @@ loop :blocks {
             loop :theta_effect_y {
               if lt(y, 5) {
                 XORLane(x, y, D)
-                exit(0, 200)
                 y <- add(y, 1)
               } else {
                 break :theta_effect_y
@@ -238,9 +239,6 @@ loop :blocks {
           }
         }
 
-        # WORKS UP TO HERE! PROBABLY!
-        # exit(0, 200)
-
         # exit(0, 200)
 
         # === ρ and π steps (see [Keccak Reference, Sections 2.3.3 and 2.3.4]) ===
@@ -252,7 +250,7 @@ loop :blocks {
         current <- readLane(x, y)
         # Iterate over ((0 1)(2 3))^t * (1 0) for 0 ≤ t ≤ 23
         t <- 0
-        loop :a {
+        loop :rho_and_pi {
           if lt(t, 24) {
             # Compute the rotation constant r = (t+1)(t+2)/2
             r <- mod(div(mul(add(t, 1), add(t, 2)), 2), 64)
@@ -262,17 +260,22 @@ loop :blocks {
             y <- Y
             # Swap current and state(x,y), and rotate
             temp <- readLane(x, y)
-            write8(
-              i(x, y),
+            # trap(temp)
+            # trap(ROTL64(current, r))
+            writeLane(
+              x, y,
               # ((((uint64_t)a) << offset) ^ (((uint64_t)a) >> (64-offset)))
               ROTL64(current, r)
             )
             current <- temp
             t <- add(t, 1)
           } else {
-            break :a
+            break :rho_and_pi
           }
         }
+
+        # WORKS UP TO HERE! PROBABLY!
+        # exit(0, 200)
 
         # === χ step (see [Keccak Reference, Section 2.3.1]) ===
         y <- 0
