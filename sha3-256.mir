@@ -283,7 +283,7 @@ loop :blocks {
           if lt(y, 5) {
             # Take a copy of the plane
             x <- 0
-            loop :chi {
+            loop :chi_copy_plane {
               if lt(x, 5) {
                 write8(
                   add(temp_arr_ptr, mul(x, 8)),
@@ -291,15 +291,15 @@ loop :blocks {
                 )
                 x <- add(x, 1)
               } else {
-                break :chi
+                break :chi_copy_plane
               }
             }
             # Compute χ on the plane
             x <- 0
-            loop :chi {
+            loop :chi_compute {
               if lt(x, 5) {
-                write8(
-                  i(x, y),
+                writeLane(
+                  x, y,
                   xor(
                     read8(add(temp_arr_ptr, mul(x, 8))),
                     and(
@@ -310,7 +310,7 @@ loop :blocks {
                 )
                 x <- add(x, 1)
               } else {
-                break :chi
+                break :chi_compute
               }
             }
             y <- add(y, 1)
@@ -319,15 +319,17 @@ loop :blocks {
           }
         }
 
+        # exit(0, 200)
+
         # === ι step (see [Keccak Reference, Section 2.3.5]) ===
         j <- 0
         loop :iota {
           if lt(j, 7) {
             bitPosition <- sub(shl(1, j), 1) # 2^j-1
-            ok, LFSRstate <- LFSR86540(LFSRstate)
+            LFSRstate, ok <- LFSR86540(LFSRstate)
             if ok {
                 # XORLane(0, 0, (tKeccakLane)1<<bitPosition);
-                write8(i(0, 0), xor(readLane(0, 0), shl(1, bitPosition)))
+                XORLane(0, 0, shl(1, bitPosition))
             }
             j <- add(j, 1)
           } else {
@@ -335,6 +337,8 @@ loop :blocks {
           }
         }
         round <- add(round, 1)
+
+        # exit(0, 200)
       } else {
         break :permute
       }
@@ -346,18 +350,18 @@ loop :blocks {
 }
 
 # mirror bits in output bytes
-i <- 0
-loop :output {
-  if lt(i, 32) {
-    b <- read1(i)
-    # (b * 0x0202020202ULL & 0x010884422010ULL) % 1023
-    # from https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
-    b <- mod(and(mul(b, 0x0202020202), 0x010884422010), 1023)
-    write1(i, b)
-    i <- add(i, 1)
-  } else {
-    break :output
-  }
-}
+# i <- 0
+# loop :output {
+#   if lt(i, 32) {
+#     b <- read1(i)
+#     # (b * 0x0202020202ULL & 0x010884422010ULL) % 1023
+#     # from https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
+#     b <- mod(and(mul(b, 0x0202020202), 0x010884422010), 1023)
+#     write1(i, b)
+#     i <- add(i, 1)
+#   } else {
+#     break :output
+#   }
+# }
 
-exit(0, 200)
+exit(0, 32)
