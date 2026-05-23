@@ -1,47 +1,61 @@
 # Function to load a 64-bit value using the little-endian (LE) convention.
 # On a LE platform, this could be greatly simplified using a cast.
 def load64(at) -> u {
-  i <- 7
+  # i <- 7
+  # loop :a {
+  #   u <- shl(u, 8)
+  #   u <- or(u, read1(add(at, i)))
+  #   if eq(i, 0) {
+  #     break :a
+  #   }
+  #   i <- sub(i, 1)
+  # }
 
-  loop :a {
-    u <- shl(u, 8)
-    u <- or(u, read1(add(at, i)))
-    if eq(i, 0) {
-      break :a
-    }
-    i <- sub(i, 1)
-  }
-
-  # u <- or(u, read1(add(at, 7)))
-  # u <- shl(u, 8)
-  # u <- or(u, read1(add(at, 6)))
-  # u <- shl(u, 8)
-  # u <- or(u, read1(add(at, 5)))
-  # u <- shl(u, 8)
-  # u <- or(u, read1(add(at, 4)))
-  # u <- shl(u, 8)
-  # u <- or(u, read1(add(at, 3)))
-  # u <- shl(u, 8)
-  # u <- or(u, read1(add(at, 2)))
-  # u <- shl(u, 8)
-  # u <- or(u, read1(add(at, 1)))
-  # u <- shl(u, 8)
-  # u <- or(u, read1(add(at, 0)))
+  u <- or(u, read1(add(at, 7)))
+  u <- shl(u, 8)
+  u <- or(u, read1(add(at, 6)))
+  u <- shl(u, 8)
+  u <- or(u, read1(add(at, 5)))
+  u <- shl(u, 8)
+  u <- or(u, read1(add(at, 4)))
+  u <- shl(u, 8)
+  u <- or(u, read1(add(at, 3)))
+  u <- shl(u, 8)
+  u <- or(u, read1(add(at, 2)))
+  u <- shl(u, 8)
+  u <- or(u, read1(add(at, 1)))
+  u <- shl(u, 8)
+  u <- or(u, read1(add(at, 0)))
 }
 
 # Function to store a 64-bit value using the little-endian (LE) convention.
 # On a LE platform, this could be greatly simplified using a cast.
 def store64(at, u) -> {
-  i <- 0
+  # i <- 0
+  # loop :a {
+  #   write1(add(at, i), u)
+  #   u <- shr(u, 8)
+  #   if eq(i, 7) {
+  #     break :a
+  #   }
+  #   i <- add(i, 1)
+  # }
 
-  loop :a {
-    write1(add(at, i), u)
-    u <- shr(u, 8)
-    if eq(i, 7) {
-      break :a
-    }
-    i <- add(i, 1)
-  }
+  write1(add(at, 0), u)
+  u <- shr(u, 8)
+  write1(add(at, 1), u)
+  u <- shr(u, 8)
+  write1(add(at, 2), u)
+  u <- shr(u, 8)
+  write1(add(at, 3), u)
+  u <- shr(u, 8)
+  write1(add(at, 4), u)
+  u <- shr(u, 8)
+  write1(add(at, 5), u)
+  u <- shr(u, 8)
+  write1(add(at, 6), u)
+  u <- shr(u, 8)
+  write1(add(at, 7), u)
 }
 
 # load/store works correctly
@@ -53,16 +67,31 @@ def store64(at, u) -> {
 # # Function to XOR into a 64-bit value using the little-endian (LE) convention.
 # # On a LE platform, this could be greatly simplified using a cast.
 def xor64(at, u) -> {
-  i <- 0
+  # i <- 0
+  # loop :a {
+  #   write1(add(at, i), xor(u, read1(add(at, i))))
+  #   u <- shr(u, 8)
+  #   if eq(i, 7) {
+  #     break :a
+  #   }
+  #   i <- add(i, 1)
+  # }
 
-  loop :a {
-    write1(add(at, i), xor(u, read1(add(at, i))))
-    u <- shr(u, 8)
-    if eq(i, 7) {
-      break :a
-    }
-    i <- add(i, 1)
-  }
+  write1(add(at, 0), xor(u, read1(add(at, 0))))
+  u <- shr(u, 8)
+  write1(add(at, 1), xor(u, read1(add(at, 1))))
+  u <- shr(u, 8)
+  write1(add(at, 2), xor(u, read1(add(at, 2))))
+  u <- shr(u, 8)
+  write1(add(at, 3), xor(u, read1(add(at, 3))))
+  u <- shr(u, 8)
+  write1(add(at, 4), xor(u, read1(add(at, 4))))
+  u <- shr(u, 8)
+  write1(add(at, 5), xor(u, read1(add(at, 5))))
+  u <- shr(u, 8)
+  write1(add(at, 6), xor(u, read1(add(at, 6))))
+  u <- shr(u, 8)
+  write1(add(at, 7), xor(u, read1(add(at, 7))))
 }
 
 def ROTL64(a, offset) -> n {
@@ -89,30 +118,45 @@ def XORLane(x, y, lane) -> {
   xor64(mul(8, i(x, y)), lane)
 }
 
-# Function that computes the linear feedback shift register (LFSR) used to
-# define the round constants (see [Keccak Reference, Section 1.2]).
-def LFSR86540(LFSR) -> new_LFSR, result {
-    result <- not(eq(and(LFSR, 0x01), 0))
-    if not(eq(and(LFSR, 0x80), 0)) {
-      # Primitive polynomial over GF(2): x^8+x^6+x^5+x^4+1
-      new_LFSR <- xor(shl(LFSR, 1), 0x71)
-     } else {
-      new_LFSR <- shl(LFSR, 1)
-    }
-}
-
 # alloc state (1600 bits)
 alloc(200)
 
 # alloc blocks
-
 block_count <- add(1, div(dlen(), 136))
 alloc(mul(136, block_count))
 
 # temp array[5] space (C during theta step, temp during chi step)
+temp_arr_ptr <- add(200, mul(136, block_count))
 alloc(40)
 
-temp_arr_ptr <- add(200, mul(136, block_count))
+# iota round constants
+# TODO: Make these stack variables once I add arrays
+round_constants_ptr <- add(40, temp_arr_ptr)
+alloc(mul(24, 8))
+write8(add(round_constants_ptr, mul(8, 0)), 0x0000000000000001)
+write8(add(round_constants_ptr, mul(8, 1)), 0x0000000000008082)
+write8(add(round_constants_ptr, mul(8, 2)), 0x800000000000808A)
+write8(add(round_constants_ptr, mul(8, 3)), 0x8000000080008000)
+write8(add(round_constants_ptr, mul(8, 4)), 0x000000000000808B)
+write8(add(round_constants_ptr, mul(8, 5)), 0x0000000080000001)
+write8(add(round_constants_ptr, mul(8, 6)), 0x8000000080008081)
+write8(add(round_constants_ptr, mul(8, 7)), 0x8000000000008009)
+write8(add(round_constants_ptr, mul(8, 8)), 0x000000000000008A)
+write8(add(round_constants_ptr, mul(8, 9)), 0x0000000000000088)
+write8(add(round_constants_ptr, mul(8, 10)), 0x0000000080008009)
+write8(add(round_constants_ptr, mul(8, 11)), 0x000000008000000A)
+write8(add(round_constants_ptr, mul(8, 12)), 0x000000008000808B)
+write8(add(round_constants_ptr, mul(8, 13)), 0x800000000000008B)
+write8(add(round_constants_ptr, mul(8, 14)), 0x8000000000008089)
+write8(add(round_constants_ptr, mul(8, 15)), 0x8000000000008003)
+write8(add(round_constants_ptr, mul(8, 16)), 0x8000000000008002)
+write8(add(round_constants_ptr, mul(8, 17)), 0x8000000000000080)
+write8(add(round_constants_ptr, mul(8, 18)), 0x000000000000800A)
+write8(add(round_constants_ptr, mul(8, 19)), 0x800000008000000A)
+write8(add(round_constants_ptr, mul(8, 20)), 0x8000000080008081)
+write8(add(round_constants_ptr, mul(8, 21)), 0x8000000000008080)
+write8(add(round_constants_ptr, mul(8, 22)), 0x0000000080000001)
+write8(add(round_constants_ptr, mul(8, 23)), 0x8000000080008008)
 
 # copy data to memory
 dcopy(0, 200, dlen())
@@ -148,7 +192,6 @@ loop :blocks {
     y <- 0
     j <- 0
     t <- 0
-    LFSRstate <- 0x01
     loop :permute {
       if lt(round, 24) {
         # === θ step (see [Keccak Reference, Section 2.3.2]) ===
@@ -160,14 +203,9 @@ loop :blocks {
         loop :theta_parity {
           if lt(x, 5) {
             # write to C[x]
-            r0 <- readLane(x, 0)
-            r1 <- readLane(x, 1)
-            r2 <- readLane(x, 2)
-            r3 <- readLane(x, 3)
-            r4 <- readLane(x, 4)
             write8(
               add(C, mul(x, 8)),
-              xor(xor(xor(xor(r0, r1), r2), r3), r4)
+              xor(xor(xor(xor(readLane(x, 0), readLane(x, 1)), readLane(x, 2)), readLane(x, 3)), readLane(x, 4))
             )
             x <- add(x, 1)
           } else {
@@ -179,12 +217,12 @@ loop :blocks {
         loop :theta_effect_x {
           if lt(x, 5) {
             # Compute the θ effect for a given column
-            # C[(x+4)%5]
-            C_x_4_5 <- read8(add(C, mul(mod(add(x, 4), 5), 8)))
-            # C[(x+1)%5]
-            C_x_1_5 <- read8(add(C, mul(mod(add(x, 1), 5), 8)))
-
-            D <- xor(C_x_4_5, ROTL64(C_x_1_5, 1))
+            D <- xor(
+              # C[(x+4)%5]
+              read8(add(C, mul(mod(add(x, 4), 5), 8))),
+              # C[(x+1)%5]
+              ROTL64(read8(add(C, mul(mod(add(x, 1), 5), 8))), 1)
+            )
 
             # Add the θ effect to the whole column
             y <- 0
@@ -273,20 +311,7 @@ loop :blocks {
         }
 
         # === ι step (see [Keccak Reference, Section 2.3.5]) ===
-        j <- 0
-        loop :iota {
-          if lt(j, 7) {
-            bitPosition <- sub(shl(1, j), 1) # 2^j-1
-            LFSRstate, ok <- LFSR86540(LFSRstate)
-            if ok {
-                # XORLane(0, 0, (tKeccakLane)1<<bitPosition);
-                XORLane(0, 0, shl(1, bitPosition))
-            }
-            j <- add(j, 1)
-          } else {
-            break :iota
-          }
-        }
+        XORLane(0, 0, read8(add(mul(8, round), round_constants_ptr)))
         round <- add(round, 1)
       } else {
         break :permute

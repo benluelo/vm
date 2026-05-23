@@ -259,7 +259,7 @@ mod arithmetic {
 
         shr {
             code: ops_to_code([Op::SHR]),
-            before_stack: vec![1, 100],
+            before_stack: vec![100, 1],
             after_pc: 1,
             after_stack: vec![100 >> 1],
         };
@@ -273,7 +273,7 @@ mod arithmetic {
 
         shl {
             code: ops_to_code([Op::SHL]),
-            before_stack: vec![1, 100],
+            before_stack: vec![100, 1],
             after_pc: 1,
             after_stack: vec![100 << 1],
         };
