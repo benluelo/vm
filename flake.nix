@@ -81,6 +81,8 @@
                 nodejs
                 typescript-language-server
                 graphviz
+                samply
+                cargo-pgo
               ]);
             };
           };
