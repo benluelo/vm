@@ -1,5 +1,7 @@
 /target
 
+*.o
+
 .nist-vectors/
 
 tree-sitter-mir/bindings/

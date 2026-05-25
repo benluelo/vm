@@ -63,7 +63,7 @@ impl Vm {
                 return Ok(None);
             }
 
-            // std::thread::sleep(std::time::Duration::from_millis(100));
+            // std::thread::sleep(std::time::Duration::from_millis(1000));
         }
     }
 
@@ -870,7 +870,7 @@ impl Op {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 pub enum Error {
     /// Attempted to pop off of an empty stack.
     #[error("stack empty")]

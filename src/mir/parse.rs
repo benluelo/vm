@@ -279,8 +279,18 @@ pub fn grammar<'a>() -> Grammar<
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Eq, PartialOrd, Ord)]
 pub struct Ident<'a>(pub Spanned<&'a str>);
+
+impl<'a> fmt::Debug for Ident<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            write!(f, "Ident(\"{}\" @ {})", self.0.inner, self.0.span)
+        } else {
+            write!(f, "Ident(\"{}\")", self.0.inner)
+        }
+    }
+}
 
 impl<'a> PartialEq for Ident<'a> {
     fn eq(&self, other: &Self) -> bool {
@@ -315,8 +325,18 @@ impl fmt::LowerHex for Val {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Eq, PartialOrd, Ord)]
 pub struct Label<'a>(pub Spanned<&'a str>);
+
+impl<'a> fmt::Debug for Label<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            write!(f, "Label(\"{}\" @ {})", self.0.inner, self.0.span)
+        } else {
+            write!(f, "Label(\"{}\")", self.0.inner)
+        }
+    }
+}
 
 impl<'a> PartialEq for Label<'a> {
     fn eq(&self, other: &Self) -> bool {
@@ -373,7 +393,7 @@ impl Expr<'_> {
 impl<'a> fmt::Display for Expr<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expr::Val(val) => f.write_fmt(format_args!("{}", val)),
+            Expr::Val(val) => f.write_fmt(format_args!("{val:x}")),
             Expr::Var(var) => f.write_fmt(format_args!("{var}")),
             Expr::Call {
                 spread,

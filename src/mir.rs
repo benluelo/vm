@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, iter};
 
 use chumsky::span::Spanned;
 use indexmap::IndexMap;
-use tracing::{info_span, trace};
+use tracing::{info, info_span, instrument, trace};
 
 use crate::{
     assembler::{AsmOp, Object},
@@ -26,6 +26,7 @@ pub struct Ctx<'a> {
 
 #[derive(Debug)]
 pub struct Scope<'a> {
+    tag: String,
     label: Option<Label<'a>>,
     /// var name -> stack index
     vars: BTreeMap<Ident<'a>, usize>,
@@ -102,6 +103,7 @@ impl<'a> Ctx<'a> {
             stack_depth: 0,
             fns: Default::default(),
             scopes: [Scope {
+                tag: "root".to_owned(),
                 label: Some(Label(Spanned {
                     // TODO: Figure out a better way to do this
                     inner: format!("$ROOT/{prefix}").leak(),
@@ -150,12 +152,13 @@ impl<'a> Ctx<'a> {
         self.stack_depth -= 1;
     }
 
-    fn push_scope(&mut self, label: Option<Label<'a>>) {
+    fn push_scope(&mut self, tag: String, label: Option<Label<'a>>) {
         trace!(
-            "pushing scope {}",
+            "pushing scope {} ({tag})",
             label.map_or("<none>", |label| label.0.inner)
         );
         self.scopes.push(Scope {
+            tag,
             label,
             vars: Default::default(),
             defs: Default::default(),
@@ -229,7 +232,7 @@ impl<'a> Ctx<'a> {
 
     fn get_var(&self, var: Ident<'a>) -> Option<usize> {
         self.scopes.iter().find_map(|s| {
-            s.vars
+            dbg!(&s.vars)
                 .iter()
                 .find_map(|(v, i)| v.0.inner.eq(var.0.inner).then_some(*i))
         })
@@ -240,6 +243,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn init_var_with_depth_offset(&mut self, var: Ident<'a>, depth: isize) -> usize {
+        info!("PUSHING VAR {var} @ {depth}");
         let var_idx = self.stack_depth.strict_add_signed(depth);
         self.scopes
             .last_mut()
@@ -318,7 +322,7 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
                     let loop_start_label = ctx.loop_start_label(*label);
                     let loop_end_label = ctx.loop_end_label(*label);
                     ctx.push_section(&loop_start_label);
-                    ctx.push_scope(Some(*label));
+                    ctx.push_scope(format!("loop {label}"), Some(*label));
                     go(ctx, depth + 1, block)?;
                     // append scope cleanup code just before jumping back to the beginning of the
                     // loop
@@ -360,7 +364,6 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
                     );
 
                     ctx.current_section()
-                        // force non-zero jump
                         .extend_from_slice(&[AsmOp::PUSHL(loop_start_label.into()), AsmOp::JUMP]);
                 }
                 Statement::If(if_) => {
@@ -410,7 +413,7 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
 
                         ctx.push_section(&format!("{}:if_block_[{}]", ctx.prefix, block.0.span));
 
-                        ctx.push_scope(None);
+                        ctx.push_scope(format!("if block"), None);
                         go(ctx, depth + 1, &block)?;
                         ctx.pop_scope(None, true)?;
 
@@ -507,87 +510,90 @@ pub fn compile<'a: 'b, 'b>(ctx: &mut Ctx<'a>, block: &'b Block<'a>) -> CompileRe
                         }
                     }
                 }
-                Statement::Def(def) => info_span!("def").in_scope(|| -> CompileResult {
-                    // // args.len() + 1 for return pointer
-                    // assert!(ctx.stack_depth > def.args.len());
+                Statement::Def(def) => {
+                    info_span!("def", name = %def.ident).in_scope(|| -> CompileResult {
+                        // // args.len() + 1 for return pointer
+                        // assert!(ctx.stack_depth > def.args.len());
 
-                    let def_label = format!("{}:def_{}_{depth}_{i}", ctx.prefix, def.ident);
-                    // this function is callable in this scope
-                    ctx.current_scope()
-                        .defs
-                        .insert(def.ident, (def.clone(), def_label.clone()));
-
-                    let mut def_ctx = Ctx::new(&format!("{}/{def_label}", ctx.prefix));
-                    def_ctx.push_section(&def_label);
-
-                    // calling convention is [...args, @caller_ptr, ...rets]
-                    // args will be popped before returning
-                    // output is [...rets]
-                    // therefore, before calling the final JUMP op, the stack must be
-                    // [...rets, @caller_ptr]
-
-                    // args are provided by the caller, init them in the new ctx
-                    for arg in &def.args {
-                        trace!("arg '{arg}'");
-                        def_ctx.init_var(*arg);
-                        def_ctx.inc_stack();
-                    }
-
-                    // account for @caller_ptr, also provided by the caller
-                    // NOTE: The return pointer is pushed at the callsite by CALL
-                    trace!("@caller_ptr");
-                    def_ctx.inc_stack();
-
-                    // new ctx values for this fn call
-
-                    def_ctx
-                        .sections
-                        .insert(format!("{def_label}/RETS_INIT"), vec![]);
-
-                    // init return values
-                    for ret in def.rets.iter().rev() {
-                        trace!("ret '{ret}'");
-                        def_ctx.init_var(*ret);
-                        def_ctx.inc_stack();
-                        def_ctx.current_section().push(AsmOp::push(0));
-                    }
-
-                    // functions can access other functions visible in this scope
-                    for (def_name, label) in ctx.scopes.iter().flat_map(|s| &s.defs) {
-                        def_ctx
-                            .current_scope()
+                        let def_label = format!("{}:def_{}_{depth}_{i}", ctx.prefix, def.ident);
+                        // this function is callable in this scope
+                        ctx.current_scope()
                             .defs
-                            .insert(*def_name, label.clone());
-                    }
+                            .insert(def.ident, (def.clone(), def_label.clone()));
 
-                    def_ctx.push_section(&format!("{def_label}/BODY"));
+                        let mut def_ctx = Ctx::new(&format!("{}/{def_label}", ctx.prefix));
+                        def_ctx.push_section(&def_label);
 
-                    def_ctx.push_scope(None);
-                    // compile the fn body
-                    go(&mut def_ctx, depth + 1, &def.body)?;
-                    def_ctx.pop_scope(None, true)?;
+                        // calling convention is [...args, @caller_ptr, ...rets]
+                        // args will be popped before returning
+                        // output is [...rets]
+                        // therefore, before calling the final JUMP op, the stack must be
+                        // [...rets, @caller_ptr]
 
-                    def_ctx
-                        .sections
-                        .insert(format!("{def_label}/CLEANUP"), vec![]);
+                        // args are provided by the caller, init them in the new ctx
+                        for arg in &def.args {
+                            trace!("arg '{arg}'");
+                            def_ctx.init_var(*arg);
+                            def_ctx.inc_stack();
+                        }
 
-                    // go from [...args, @caller_ptr, ...rets] to [...rets, @caller_ptr, ...args]
-                    def_ctx
-                        .current_section()
-                        .extend(reverse_list_ops(def.args.len() + 1 + def.rets.len()));
+                        // account for @caller_ptr, also provided by the caller
+                        // NOTE: The return pointer is pushed at the callsite by CALL
+                        trace!("@caller_ptr");
+                        def_ctx.inc_stack();
 
-                    for arg in &def.args {
-                        trace!("arg pop '{arg}'");
-                        def_ctx.current_section().extend_from_slice(&[AsmOp::POP]);
-                        def_ctx.dec_stack();
-                    }
+                        // new ctx values for this fn call
 
-                    def_ctx.current_section().extend([AsmOp::JUMP]);
+                        def_ctx
+                            .sections
+                            .insert(format!("{def_label}/RETS_INIT"), vec![]);
 
-                    ctx.fns.insert(def_label, def_ctx.sections);
+                        // init return values
+                        for ret in def.rets.iter().rev() {
+                            trace!("ret '{ret}'");
+                            def_ctx.init_var(*ret);
+                            def_ctx.inc_stack();
+                            def_ctx.current_section().push(AsmOp::push(0));
+                        }
 
-                    Ok(())
-                })?,
+                        // functions can access other functions visible in this scope
+                        for (def_name, label) in ctx.scopes.iter().flat_map(|s| &s.defs) {
+                            def_ctx
+                                .current_scope()
+                                .defs
+                                .insert(*def_name, label.clone());
+                        }
+
+                        def_ctx.push_section(&format!("{def_label}/BODY"));
+
+                        def_ctx.push_scope(format!("def '{}' body", def.ident), None);
+                        // compile the fn body
+                        go(&mut def_ctx, depth + 1, &def.body)?;
+                        def_ctx.pop_scope(None, true)?;
+
+                        def_ctx
+                            .sections
+                            .insert(format!("{def_label}/CLEANUP"), vec![]);
+
+                        // go from [...args, @caller_ptr, ...rets] to [...rets, @caller_ptr,
+                        // ...args]
+                        def_ctx
+                            .current_section()
+                            .extend(reverse_list_ops(def.args.len() + 1 + def.rets.len()));
+
+                        for arg in &def.args {
+                            trace!("arg pop '{arg}'");
+                            def_ctx.current_section().extend_from_slice(&[AsmOp::POP]);
+                            def_ctx.dec_stack();
+                        }
+
+                        def_ctx.current_section().extend([AsmOp::JUMP]);
+
+                        ctx.fns.insert(def_label, def_ctx.sections);
+
+                        Ok(())
+                    })?
+                }
             }
         }
 
@@ -750,6 +756,7 @@ fn expr_arity<'a>(
 
 // TODO: Modify ctx directly insted of returning the ops
 fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<AsmOp<'static>>> {
+    #[instrument(level = "TRACE", skip_all, fields(%expr))]
     fn go<'a>(
         ctx: &mut Ctx<'a>,
         depth: usize,
@@ -770,6 +777,7 @@ fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<Asm
                         var: var.0.inner.to_owned(),
                     });
                 };
+                // dbg!(&ctx.scopes);
                 trace!("var '{var}' (idx: {idx}, depth: {})", ctx.stack_depth);
                 // EXAMPLE:
                 //
@@ -972,25 +980,52 @@ fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<Asm
                             });
                         }
 
-                        ctx.push_scope(None);
+                        ctx.push_scope(format!("def '{}' args", def.ident), None);
                         let mut args = def.args.clone();
                         args.reverse();
+                        // dbg!(*f, &args);
+                        // evaluate all arg expressions to this call
+                        //
+                        // def f(a, b, c, d) {}
+                        //
+                        // f(x, ..y(), z)
+                        //
+                        // will evaluate as
+                        //
+                        // init a
+                        // evaluate x
+                        // init b
+                        // init c
+                        // evaluate ..y()
+                        // init d
+                        // evaluate z
                         for expr in exprs.iter() {
                             #[allow(clippy::unwrap_in_result)]
-                            for _ in 0..expr_arity(ctx, depth + 1, expr, true)
-                                .expect("checked above; qed;")
-                            {
-                                let arg = args.pop().expect("checked above; qed;");
-                                trace!("arg init '{arg}'");
-                                ctx.init_var(arg);
-                            }
+                            let arity = expr_arity(ctx, depth + 1, expr, true)
+                                .expect("checked above; qed;");
+
+                            let tail = args.split_off(args.len() - arity);
+                            trace!("evaluating args '{tail:?} from expr '{expr}'");
+
                             go(ctx, depth + 1, ops, expr)?;
                         }
+
+                        // dbg!(&ctx);
 
                         // all args are dropped from the stack
                         ctx.pop_scope(None, false)?;
 
                         ops.extend([AsmOp::PUSHL(def_label.into()), AsmOp::CALL]);
+
+                        for expr in exprs.iter() {
+                            #[allow(clippy::unwrap_in_result)]
+                            for _ in 0..expr_arity(ctx, depth + 1, expr, true)
+                                .expect("checked above; qed;")
+                            {
+                                ctx.dec_stack();
+                            }
+                            // go(ctx, depth + 1, ops, expr)?;
+                        }
 
                         // all return values are pushed to the stack
                         for ret in &def.rets {
@@ -1010,6 +1045,23 @@ fn compile_expr<'a>(ctx: &mut Ctx<'a>, expr: &Expr<'a>) -> CompileResult<Vec<Asm
     go(ctx, 0, &mut out, expr)?;
 
     Ok(out)
+}
+
+pub enum Scope2<'a> {
+    Loop {
+        label: Label<'a>,
+        locals: BTreeMap<Ident<'a>, usize>,
+    },
+    IfElse {
+        locals: BTreeMap<Ident<'a>, usize>,
+    },
+    DefOuter {
+        args: BTreeMap<Ident<'a>, usize>,
+        rets: BTreeMap<Ident<'a>, usize>,
+    },
+    DefBody {
+        locals: BTreeMap<Ident<'a>, usize>,
+    },
 }
 
 fn reverse_list_ops(list_len: usize) -> Vec<AsmOp<'static>> {
@@ -1094,7 +1146,7 @@ mod tests {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     use super::*;
-    use crate::{Vm, mir::parse::grammar};
+    use crate::{Error, Vm, mir::parse::grammar};
 
     #[test]
     fn reverse_list() {
@@ -1113,7 +1165,7 @@ mod tests {
             vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
         ] {
             let ops = reverse_list_ops(list.len());
-            dbg!(&ops);
+            // dbg!(&ops);
             let mut vm = Vm::new(Object::from_ops(ops).assemble(), vec![]);
             vm.stack = list.clone();
             vm.run().unwrap();
@@ -1184,7 +1236,7 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        // dbg!(&obj);
 
         let asm = obj.assemble();
 
@@ -1225,7 +1277,7 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        // dbg!(&obj);
 
         let asm = obj.assemble();
 
@@ -1266,7 +1318,7 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        // dbg!(&obj);
 
         let asm = obj.assemble();
 
@@ -1309,7 +1361,7 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        // dbg!(&obj);
 
         let asm = obj.assemble();
 
@@ -1542,7 +1594,7 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        // dbg!(&obj);
 
         let asm = obj.assemble();
 
@@ -1588,7 +1640,7 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        // dbg!(&obj);
 
         let asm = obj.assemble();
 
@@ -1642,7 +1694,7 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        // dbg!(&obj);
 
         let asm = obj.assemble();
 
@@ -1690,7 +1742,7 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        // dbg!(&obj);
 
         let asm = obj.assemble();
 
@@ -1739,7 +1791,7 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        // dbg!(&obj);
 
         let asm = obj.assemble();
 
@@ -1779,7 +1831,7 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        // dbg!(&obj);
 
         let asm = obj.assemble();
 
@@ -1820,15 +1872,13 @@ mod tests {
 
         let obj = ctx.into_object();
 
-        dbg!(&obj);
+        let asm = obj.assemble();
 
-        // let asm = obj.assemble();
+        let mut vm = Vm::new(asm, vec![]);
 
-        // let mut vm = Vm::new(asm, vec![]);
+        let res = vm.run().unwrap();
 
-        // let res = vm.run().unwrap();
-
-        // assert_eq!(res, Some(vec![10]));
+        assert_eq!(res, Some(vec![10]));
     }
 
     #[test]
@@ -2016,8 +2066,6 @@ exit(0, 8)
 
         println!("{obj}");
 
-        // panic!();
-
         let asm = obj.assemble();
 
         let mut vm = Vm::new(asm, b"".into());
@@ -2054,5 +2102,43 @@ f(0)
         let res = vm.run().unwrap();
 
         assert_eq!(res, None)
+    }
+
+    #[test]
+    fn stack_depth_after_call_is_correct() {
+        init();
+
+        let raw = r#"
+def inner(a, b, inner_at, value, c, d) -> {
+  write8(inner_at, value)
+}
+
+def outer(a, b, outer_at, value, c, d) -> n, m {
+  inner(a, b, outer_at, value, c, d)
+  n <- 0xaa
+  m <- 0xbb
+  # inner(y, inner_at, z)
+}
+
+alloc(8)
+n, m <- outer(0xa, 0xb, 0, 0xFFF, 0xc, 0xd)
+trap(n)
+        "#;
+
+        let ast = grammar().block.parse(raw).unwrap();
+
+        let mut ctx = Ctx::new_root();
+
+        compile(&mut ctx, &ast).unwrap();
+
+        let obj = ctx.into_object();
+
+        let asm = obj.assemble();
+
+        let mut vm = Vm::new(asm, b"".into());
+
+        let err = vm.run().unwrap_err();
+
+        assert_eq!(err, Error::Trap(0xaa));
     }
 }
