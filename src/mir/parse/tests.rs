@@ -149,3 +149,18 @@ fn test_program() {
 
     println!("{pretty}");
 }
+
+#[test]
+fn statement_def() {
+    let raw = "
+    def f(a) {}
+        ";
+
+    let res = grammar().block.parse(raw).unwrap();
+
+    dbg!(&res);
+
+    let pretty = print_ast(&res);
+
+    println!("{pretty}");
+}

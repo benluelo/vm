@@ -30,7 +30,7 @@ def load64(at) -> u {
 
 # Function to store a 64-bit value using the little-endian (LE) convention.
 # On a LE platform, this could be greatly simplified using a cast.
-def store64(at, u) -> {
+def store64(at, u) {
   # i <- 0
   # loop :a {
   #   write1(add(at, i), u)
@@ -66,7 +66,7 @@ def store64(at, u) -> {
 
 # # Function to XOR into a 64-bit value using the little-endian (LE) convention.
 # # On a LE platform, this could be greatly simplified using a cast.
-def xor64(at, u) -> {
+def xor64(at, u) {
   # i <- 0
   # loop :a {
   #   write1(add(at, i), xor(u, read1(add(at, i))))
@@ -108,13 +108,13 @@ def readLane(x, y) -> lane {
   lane <- load64(mul(8, i(x, y)))
 }
 
-def writeLane(x, y, lane) -> {
+def writeLane(x, y, lane) {
   # TODO: This compiles, it shouldn't
   # store64(mul(8, i(x, y)), at)
   store64(mul(8, i(x, y)), lane)
 }
 
-def XORLane(x, y, lane) -> {
+def XORLane(x, y, lane) {
   xor64(mul(8, i(x, y)), lane)
 }
 
