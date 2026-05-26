@@ -1,40 +1,4 @@
-use chumsky::Parser;
-
 use super::*;
-use crate::assembler::parse_asm;
-
-fn return_3_as_a_single_byte() -> impl IntoIterator<Item = u8> {
-    use Op::*;
-
-    [
-        // init counter
-        PUSH1([0]),
-        // begin loop
-        // add 1
-        PUSH1([1]),
-        ADD,
-        // loop check
-        DUP,
-        PUSH1([3]),
-        SUB,
-        // jump to beginning of loop (offset 2 in the bytecode) if the value on the top of the
-        // stack is non-zero (value - 3)
-        PUSH1([2]),
-        JNZ,
-        // end loop
-        // init memory for value
-        PUSH1([1]),
-        ALLOC,
-        // update value in memory
-        PUSH1([0]),
-        WRITE1,
-        PUSH1([1]), // len
-        PUSH1([0]), // ptr
-        EXIT,
-    ]
-    .into_iter()
-    .flat_map(Op::to_bytes)
-}
 
 #[derive(Default)]
 struct Case {
@@ -46,10 +10,6 @@ struct Case {
     after_pc: usize,
     after_stack: Vec<u64>,
     after_memory: Vec<u8>,
-}
-
-fn asm_to_code(asm: &str) -> Vec<u8> {
-    parse_asm().parse(asm).unwrap().assemble()
 }
 
 fn ops_to_code(ops: impl IntoIterator<Item = Op>) -> Vec<u8> {

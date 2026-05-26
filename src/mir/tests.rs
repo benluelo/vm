@@ -44,7 +44,7 @@ fn compile_expr() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -88,7 +88,7 @@ fn compile_if() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -129,7 +129,7 @@ fn compile_if_else_if_branch() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -170,7 +170,7 @@ fn compile_if_else_else_branch() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -213,7 +213,7 @@ fn compile_if_else_if() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -260,7 +260,7 @@ fn compile_def_single_arg() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -301,7 +301,7 @@ fn compile_def_multiple_args() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -344,7 +344,7 @@ fn fib_recursive() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -402,7 +402,7 @@ fn compile_def_shadowing() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -446,7 +446,7 @@ fn multiple_return_values() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -492,7 +492,7 @@ fn multiple_return_values_update_and_init() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -546,7 +546,7 @@ fn multiple_return_values_as_args() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -594,7 +594,7 @@ fn multiple_return_values_as_args_complex() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -643,7 +643,7 @@ fn multiple_return_swap_params() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -683,7 +683,7 @@ fn compile_loop() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -724,7 +724,7 @@ fn compile_loop_shadow_label() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -777,7 +777,7 @@ fn compile_atoi() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -864,7 +864,7 @@ fn compile_aoc_2025_1() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -916,7 +916,7 @@ exit(0, 8)
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -947,7 +947,7 @@ f(0)
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -985,7 +985,7 @@ trap(n)
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 
@@ -1019,7 +1019,7 @@ outer(1)
 
     let mut ctx = Ctx::new_root();
 
-    let err = compile(&mut ctx, &ast).unwrap_err();
+    let err = ctx.compile(&ast).unwrap_err();
 
     assert_eq!(
         err,

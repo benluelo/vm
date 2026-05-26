@@ -3,7 +3,7 @@ use std::fs;
 use chumsky::Parser;
 use vm::{
     Vm,
-    mir::{Ctx, compile, parse::grammar},
+    mir::{Ctx, parse::grammar},
 };
 
 fn load_vectors(file_name: &str) -> Vec<(usize, Vec<u8>, Vec<u8>)> {
@@ -45,7 +45,7 @@ fn load_monte_vectors(file_name: &str) -> (Vec<u8>, Vec<Vec<u8>>) {
         .collect::<Vec<_>>()
         .chunks_exact(2)
         .map(|chunk| {
-            let [count, md] = chunk else { panic!() };
+            let [_count, md] = chunk else { panic!() };
 
             const_hex::decode(md.split_once(" = ").unwrap().1).unwrap()
         })
@@ -65,7 +65,7 @@ fn nist_vectors() {
 
     let mut ctx = Ctx::new_root();
 
-    compile(&mut ctx, &ast).unwrap();
+    ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
 

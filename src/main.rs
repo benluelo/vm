@@ -10,7 +10,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
     Vm,
     assembler::parse_asm,
-    mir::{self, Ctx, compile},
+    mir::{self, Ctx},
 };
 
 /// Compiler and assembler.
@@ -88,7 +88,7 @@ fn main() -> anyhow::Result<()> {
             Ok(obj) => {
                 // println!("{}", print_ast(&obj));
                 let mut ctx = Ctx::new_root();
-                compile(&mut ctx, &obj)?;
+                ctx.compile(&obj)?;
                 match args.emit {
                     Emit::Asm => {
                         let obj = ctx.into_object();

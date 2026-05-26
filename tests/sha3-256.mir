@@ -109,8 +109,6 @@ def readLane(x, y) -> lane {
 }
 
 def writeLane(x, y, lane) {
-  # TODO: This compiles, it shouldn't
-  # store64(mul(8, i(x, y)), at)
   store64(mul(8, i(x, y)), lane)
 }
 
