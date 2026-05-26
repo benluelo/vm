@@ -10,22 +10,73 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
     Vm,
     assembler::parse_asm,
-    mir::{self, Ctx},
+    mir::{self, CheckCtx, Ctx},
 };
 
 /// Compiler and assembler.
 #[derive(FromArgs, PartialEq, Debug)]
 struct Args {
-    /// if this flag is provided, the input file will be treated as a assembly
+    #[argh(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand)]
+pub enum Cmd {
+    Check(CheckCmd),
+    Build(BuildCmd),
+    Run(RunCmd),
+    // Assemble {},
+}
+
+/// check a .mir file.
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "check")]
+pub struct CheckCmd {
+    /// the file to check.
+    #[argh(positional)]
+    pub file: PathBuf,
+}
+
+/// build a .mir file.
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "build")]
+pub struct BuildCmd {
+    /// the file to compile.
+    #[argh(positional)]
+    pub file: PathBuf,
+
+    /// if this flag is provided, the srouce file will be treated as a assembly
     /// file rather than a code file.
     #[argh(switch)]
     pub asm: bool,
 
-    /// run the compiled object.
-    #[argh(switch)]
-    pub run: bool,
+    /// the file to write the output to.
+    ///
+    /// If not provided, this will default to
+    /// the input file name with the file extension replaced with `.o`.
+    #[argh(option, short = 'o')]
+    pub out: Option<PathBuf>,
 
-    /// input to be provided to the program when executing with --run.
+    /// what to emit. defaults to object.
+    #[argh(option, default = "Emit::Object")]
+    pub emit: Emit,
+}
+
+/// run either a .mir or .asm file.
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "run")]
+pub struct RunCmd {
+    /// the file to compile.
+    #[argh(positional)]
+    pub file: PathBuf,
+
+    /// if this flag is provided, the srouce file will be treated as a assembly
+    /// file rather than a code file.
+    #[argh(switch)]
+    pub asm: bool,
+
+    /// input to be provided to the program.
     ///
     /// Incompatible with --input-file.
     #[argh(option)]
@@ -41,25 +92,10 @@ struct Args {
     /// whether to treat --input as hex.
     #[argh(switch)]
     pub input_hex: bool,
-
-    /// what to emit. defaults to object.
-    #[argh(option, default = "Emit::Object")]
-    pub emit: Emit,
-
-    /// the file to compile.
-    #[argh(positional)]
-    pub file: PathBuf,
-
-    /// the file to write the output to.
-    ///
-    /// If not provided, this will default to
-    /// the input file name with the file extension replaced with `.o`.
-    #[argh(option, short = 'o')]
-    pub out: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, FromArgValue)]
-enum Emit {
+pub enum Emit {
     Asm,
     #[default]
     Object,
@@ -73,71 +109,125 @@ fn main() -> anyhow::Result<()> {
 
     let args = argh::from_env::<Args>();
 
-    let file = fs::read_to_string(&args.file)?;
+    match args.cmd {
+        Cmd::Check(CheckCmd { file }) => {
+            let source = fs::read_to_string(&file)?;
 
-    let obj = if args.asm {
-        match parse_asm().parse(&file).into_result() {
-            Ok(obj) => obj.assemble(),
-            Err(errs) => {
-                report_errors(&file, errs);
-                return Ok(());
+            match mir::parse::grammar().block.parse(&source).into_result() {
+                Ok(obj) => {
+                    let mut ctx = CheckCtx::new("root");
+                    ctx.check(&obj)?;
+                }
+                Err(errs) => {
+                    report_errors(&source, errs);
+                    return Ok(());
+                }
             }
         }
-    } else {
-        match mir::parse::grammar().block.parse(&file).into_result() {
-            Ok(obj) => {
-                // println!("{}", print_ast(&obj));
-                let mut ctx = Ctx::new_root();
-                ctx.compile(&obj)?;
-                match args.emit {
-                    Emit::Asm => {
-                        let obj = ctx.into_object();
-                        match args.out {
-                            Some(out) => fs::write(out, obj.to_string())?,
-                            None => println!("{obj}"),
-                        }
+        Cmd::Build(BuildCmd {
+            file,
+            asm,
+            out,
+            emit,
+        }) => {
+            let source = fs::read_to_string(&file)?;
+
+            let obj = if asm {
+                match parse_asm().parse(&source).into_result() {
+                    Ok(obj) => obj.assemble(),
+                    Err(errs) => {
+                        report_errors(&source, errs);
                         return Ok(());
                     }
-                    Emit::Object => ctx.into_object().assemble(),
                 }
-            }
-            Err(errs) => {
-                report_errors(&file, errs);
-                return Ok(());
+            } else {
+                match mir::parse::grammar().block.parse(&source).into_result() {
+                    Ok(obj) => {
+                        // println!("{}", print_ast(&obj));
+                        let mut ctx = Ctx::new_root();
+                        ctx.compile(&obj)?;
+                        match emit {
+                            Emit::Asm => {
+                                let obj = ctx.into_object();
+                                match out {
+                                    Some(out) => fs::write(out, obj.to_string())?,
+                                    None => println!("{obj}"),
+                                }
+                                return Ok(());
+                            }
+                            Emit::Object => ctx.into_object().assemble(),
+                        }
+                    }
+                    Err(errs) => {
+                        report_errors(&source, errs);
+                        return Ok(());
+                    }
+                }
+            };
+
+            let out = out.unwrap_or(file.with_extension("o"));
+            fs::write(out, obj)?;
+        }
+        Cmd::Run(RunCmd {
+            file,
+            asm,
+            input,
+            input_file,
+            input_hex,
+        }) => {
+            let file = fs::read_to_string(&file)?;
+
+            let obj = if asm {
+                match parse_asm().parse(&file).into_result() {
+                    Ok(obj) => obj.assemble(),
+                    Err(errs) => {
+                        report_errors(&file, errs);
+                        return Ok(());
+                    }
+                }
+            } else {
+                match mir::parse::grammar().block.parse(&file).into_result() {
+                    Ok(obj) => {
+                        // println!("{}", print_ast(&obj));
+                        let mut ctx = Ctx::new_root();
+                        ctx.compile(&obj)?;
+                        ctx.into_object().assemble()
+                    }
+                    Err(errs) => {
+                        report_errors(&file, errs);
+                        return Ok(());
+                    }
+                }
+            };
+
+            let data = match (input, input_hex, input_file) {
+                (None, true, None) => bail!("--input-hex requires --input"),
+                (None, false, None) => vec![],
+                (None, true, Some(path)) => const_hex::decode(fs::read(path)?)?,
+                (None, false, Some(path)) => fs::read(path)?,
+                (Some(input), true, None) => const_hex::decode(input)?,
+                (Some(input), false, None) => input.into_bytes(),
+                (Some(_), _, Some(_)) => {
+                    bail!("--input is mutually exclusive with --input-file")
+                }
+            };
+
+            let mut vm = Vm::new(obj, data);
+            let res = vm.run();
+            match res {
+                Ok(res) => match res {
+                    Some(res) => {
+                        println!("{}", res.encode_hex());
+                    }
+                    None => {
+                        println!("<no output>");
+                    }
+                },
+                Err(err) => println!("{err}"),
             }
         }
-    };
-
-    if args.run {
-        let data = match (args.input, args.input_hex, args.input_file) {
-            (None, true, None) => bail!("--input-hex requires --input"),
-            (None, false, None) => vec![],
-            (None, true, Some(path)) => const_hex::decode(fs::read(path)?)?,
-            (None, false, Some(path)) => fs::read(path)?,
-            (Some(input), true, None) => const_hex::decode(input)?,
-            (Some(input), false, None) => input.into_bytes(),
-            (Some(_), _, Some(_)) => {
-                bail!("--input is mutually exclusive with --input-file")
-            }
-        };
-
-        let mut vm = Vm::new(obj, data);
-        let res = vm.run();
-        match res {
-            Ok(res) => match res {
-                Some(res) => {
-                    println!("{}", res.encode_hex());
-                }
-                None => {
-                    println!("<no output>");
-                }
-            },
-            Err(err) => println!("{err}"),
-        }
-    } else {
-        let out = args.out.unwrap_or(args.file.with_extension("o"));
-        fs::write(out, obj)?;
     }
+
     Ok(())
 }
 

@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, iter};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    iter,
+};
 
 use chumsky::span::Spanned;
 use indexmap::IndexMap;
@@ -83,6 +86,8 @@ pub enum CompileError {
     InvalidSpread { def: String },
     #[error("... is only used on args")]
     SpreadTopLevel {},
+    #[error("label '{label}' not found")]
+    LabelNotFound { label: String },
 }
 
 pub type CompileResult<T = ()> = Result<T, CompileError>;
@@ -1061,14 +1066,241 @@ impl<'a> Ctx<'a> {
 
         go(self, 0, expr)
     }
+}
+
+#[derive(Debug)]
+pub struct CheckCtx<'a> {
+    prefix: String,
+    scopes: Vec<CheckScope<'a>>,
+}
+
+#[derive(Debug)]
+pub struct CheckScope<'a> {
+    #[expect(dead_code)]
+    tag: String,
+    label: Option<Label<'a>>,
+    vars: BTreeSet<Ident<'a>>,
+    /// fn name -> label
+    defs: BTreeMap<Ident<'a>, Def<'a>>,
+}
+
+impl<'a> CheckCtx<'a> {
+    fn push_scope(&mut self, tag: String, label: Option<Label<'a>>) {
+        trace!(
+            "pushing scope {} ({tag})",
+            label.map_or("<none>", |label| label.0.inner)
+        );
+        self.scopes.push(CheckScope {
+            tag,
+            label,
+            vars: Default::default(),
+            defs: Default::default(),
+        });
+    }
+
+    fn pop_scope(&mut self, label: Option<Label<'a>>) -> CompileResult {
+        trace!(
+            "pop_scope {}",
+            label.map_or("<none>", |label| label.0.inner)
+        );
+
+        loop {
+            match self.scopes.pop() {
+                Some(scope) => {
+                    trace!(
+                        "popping scope {}",
+                        scope.label.map_or("<none>", |label| label.0.inner)
+                    );
+                    if label.is_none_or(|label| {
+                        scope.label.is_some_and(|scope_label| scope_label == label)
+                    }) {
+                        return Ok(());
+                    }
+                }
+                None => match label {
+                    Some(label) => {
+                        bug!(
+                            "tried to exit out of named scope '{label}' but that scope does not exist in this context"
+                        )
+                    }
+                    None => return Ok(()),
+                },
+            }
+        }
+    }
+
+    fn exprs_arity(
+        &self,
+        depth: usize,
+        exprs: &[Expr<'_>],
+        ensure_expr: bool,
+    ) -> CompileResult<usize> {
+        exprs
+            .iter()
+            .map(|expr| self.expr_arity(depth, expr, ensure_expr))
+            .sum::<CompileResult<usize>>()
+    }
+
+    fn cleanup_scopes_to_label(&mut self, label: Label<'a>) -> CompileResult<()> {
+        trace!("scope_cleanup_asm {}", label);
+
+        for scope in self.scopes.iter().rev() {
+            tracing::info!(
+                "appending drop asm for scope {}",
+                scope.label.map_or("<none>", |label| label.0.inner)
+            );
+
+            if scope
+                .label
+                .as_ref()
+                .is_some_and(|scope_label| *scope_label == label)
+            {
+                return Ok(());
+            }
+        }
+
+        Err(CompileError::LabelNotFound {
+            label: label.to_string(),
+        })
+    }
+
+    fn expr_arity(&self, depth: usize, expr: &Expr<'_>, ensure_expr: bool) -> CompileResult<usize> {
+        match expr {
+            Expr::Val(_) | Expr::Var(_) => Ok(1),
+            Expr::Call {
+                spread,
+                f: builtin,
+                args: _,
+            } if matches!(
+                builtin.0.inner,
+                "add"
+                    | "sub"
+                    | "mul"
+                    | "div"
+                    | "exp"
+                    | "mod"
+                    | "eq"
+                    | "lt"
+                    | "gt"
+                    | "shl"
+                    | "shr"
+                    | "or"
+                    | "xor"
+                    | "and"
+                    | "not"
+                    | "neg"
+                    | "dread1"
+                    | "dread2"
+                    | "dread3"
+                    | "dread4"
+                    | "dread5"
+                    | "dread6"
+                    | "dread7"
+                    | "dread8"
+                    | "dlen"
+                    | "read1"
+                    | "read2"
+                    | "read3"
+                    | "read4"
+                    | "read5"
+                    | "read6"
+                    | "read7"
+                    | "read8"
+            ) =>
+            {
+                if depth > 0 && *spread {
+                    Err(CompileError::InvalidSpread {
+                        def: builtin.0.inner.to_owned(),
+                    })
+                } else {
+                    Ok(1)
+                }
+            }
+            Expr::Call {
+                spread,
+                f: builtin,
+                args: _,
+            } if matches!(
+                builtin.0.inner,
+                "alloc"
+                    | "write1"
+                    | "write2"
+                    | "write3"
+                    | "write4"
+                    | "write5"
+                    | "write6"
+                    | "write7"
+                    | "write8"
+                    | "dcopy"
+                    | "exit"
+                    | "trap"
+            ) =>
+            {
+                if *spread {
+                    Err(CompileError::InvalidSpread {
+                        def: builtin.0.inner.to_owned(),
+                    })
+                } else if depth > 0 || ensure_expr {
+                    Err(CompileError::StatementBuiltin {
+                        builtin: builtin.0.inner.to_owned(),
+                    })
+                } else {
+                    Ok(0)
+                }
+            }
+            Expr::Call {
+                spread,
+                f: def,
+                args: _,
+            } => {
+                let arity = self
+                    .get_def(*def)
+                    .ok_or_else(|| CompileError::DefNotFound {
+                        def: def.0.inner.to_owned(),
+                    })?
+                    .rets
+                    .len();
+
+                match (ensure_expr, depth, spread, arity) {
+                    // statement def, invalid at top level if ensuring expression, invalid at any
+                    // depth greater than top level, arity zero otherwise
+                    (true, _, _, 0) | (_, 1.., _, 0) => Err(CompileError::StatementDef {
+                        def: def.0.inner.to_owned(),
+                    }),
+                    (false, _, _, 0) => Ok(0),
+                    // '...' provided at top level, always invalid
+                    (_, 0, true, _) => Err(CompileError::SpreadTopLevel {}),
+                    // '...' provided but only 1 return value
+                    (_, 1.., true, 1) => Err(CompileError::InvalidSpread {
+                        def: def.0.inner.to_owned(),
+                    }),
+                    // '...' not provided but more than 1 return value
+                    (_, 1.., false, 2..) => Err(CompileError::SpreadRequired {
+                        def: def.0.inner.to_owned(),
+                    }),
+                    _ => Ok(arity),
+                }
+            }
+        }
+    }
+
+    fn get_def(&self, def: Ident<'a>) -> Option<&Def<'a>> {
+        self.scopes.iter().find_map(|s| {
+            s.defs
+                .iter()
+                .find_map(|(d, i)| d.0.inner.eq(def.0.inner).then_some(i))
+        })
+    }
 
     pub fn check<'b>(&mut self, block: &'b Block<'a>) -> CompileResult
     where
         'a: 'b,
     {
-        fn go<'a: 'b, 'b>(ctx: &mut Ctx<'a>, depth: usize, block: &'b Block<'a>) -> CompileResult {
-            let stack_depth_before = ctx.stack_depth;
-
+        fn go<'a: 'b, 'b>(
+            ctx: &mut CheckCtx<'a>,
+            depth: usize,
+            block: &'b Block<'a>,
+        ) -> CompileResult {
             trace!(
                 "go: {}",
                 ctx.scopes
@@ -1082,152 +1314,54 @@ impl<'a> Ctx<'a> {
                 match s {
                     Statement::Expr(expr) => {
                         trace!("expr");
-                        let arity = ctx.expr_arity(0, expr, false)?;
-                        ctx.compile_expr(expr)?;
+                        ctx.expr_arity(0, expr, false)?;
+                        ctx.check_expr(expr)?;
                     }
                     Statement::Loop(Loop(label, block)) => {
                         trace!("loop");
-                        let loop_start_label = ctx.loop_start_label(*label);
-                        let loop_end_label = ctx.loop_end_label(*label);
-                        ctx.push_section(&loop_start_label);
                         ctx.push_scope(format!("loop {label}"), Some(*label));
                         go(ctx, depth + 1, block)?;
                         // append scope cleanup code just before jumping back to the beginning of
                         // the loop
-                        ctx.cleanup_scopes_to_label(
-                            *label,
-                            &format!("loop_exit_[{}]", label.0.span),
-                        );
+                        ctx.cleanup_scopes_to_label(*label)?;
                         // exit scope
-                        ctx.pop_scope(Some(*label), false)?;
-                        ctx.current_section().extend_from_slice(&[
-                            AsmOp::PUSHL(loop_start_label.into()),
-                            AsmOp::JUMP,
-                        ]);
-                        ctx.push_section(&loop_end_label);
+                        ctx.pop_scope(Some(*label))?;
                     }
                     Statement::Break(Break(label)) => {
                         trace!("break");
 
-                        let dest_label = ctx.find_labelled_section(*label).unwrap();
-
-                        let loop_end_label = ctx.loop_end_label(dest_label);
-
-                        // append scope cleanup code just before exiting the loop
-                        ctx.cleanup_scopes_to_label(
-                            *label,
-                            &format!("loop_break_[{}]", label.0.span),
-                        );
+                        ctx.cleanup_scopes_to_label(*label)?;
 
                         trace!("cleaned up scope '{label}'");
-
-                        ctx.current_section()
-                            .extend_from_slice(&[AsmOp::PUSHL(loop_end_label.into()), AsmOp::JUMP]);
                     }
                     Statement::Continue(Continue(label)) => {
                         trace!("continue");
 
-                        let dest_label = ctx.find_labelled_section(*label).unwrap();
-
-                        let loop_start_label = ctx.loop_start_label(dest_label);
-
-                        // append scope cleanup code just before jumping back to the beginning of
-                        // the loop
-                        ctx.cleanup_scopes_to_label(
-                            *label,
-                            &format!("loop_continue_[{}]", label.0.span),
-                        );
-
-                        ctx.current_section().extend_from_slice(&[
-                            AsmOp::PUSHL(loop_start_label.into()),
-                            AsmOp::JUMP,
-                        ]);
+                        ctx.cleanup_scopes_to_label(*label)?;
                     }
                     Statement::If(if_) => {
                         fn go_if<'a>(
-                            ctx: &mut Ctx<'a>,
+                            ctx: &mut CheckCtx<'a>,
                             If { cond, block, else_ }: If<'a>,
                             depth: usize,
                         ) -> CompileResult {
-                            let (if_false_label, end_label_if_tail) = match &else_ {
-                                Some(else_) => match else_ {
-                                    Else::ElseIf { if_ } => (
-                                        format!("{}:if_cond_[{}]", ctx.prefix, if_.cond.span()),
-                                        None,
-                                    ),
-                                    Else::Tail { block } => {
-                                        // on false, if the next block is a tail else block, then
-                                        // jump to the start
-                                        // of the tail block
-                                        (
-                                            format!(
-                                                "{}:if_tail_block_[{}]",
-                                                ctx.prefix, block.0.span
-                                            ),
-                                            Some(format!(
-                                                "{}:if_tail_end_[{}]",
-                                                ctx.prefix, block.0.span
-                                            )),
-                                        )
-                                    }
-                                },
-                                None => (format!("{}:if_end_[{}]", ctx.prefix, cond.span()), None),
-                            };
-
-                            let if_cond_label = format!("{}:if_cond_[{}]", ctx.prefix, cond.span());
-                            ctx.push_section(&if_cond_label);
-
-                            trace!("if {if_cond_label}");
-
                             // evaluate condition expression
-                            ctx.compile_expr(&cond)?;
-
-                            // jump to end of the if statement (past the block code) if the expr is
-                            // false
-                            ctx.current_section().extend_from_slice(&[
-                                AsmOp::NOT,
-                                AsmOp::PUSHL(if_false_label.clone().into()),
-                                AsmOp::JNZ,
-                            ]);
-                            ctx.dec_stack();
-
-                            ctx.push_section(&format!(
-                                "{}:if_block_[{}]",
-                                ctx.prefix, block.0.span
-                            ));
+                            ctx.check_expr(&cond)?;
 
                             ctx.push_scope("if block".to_owned(), None);
                             go(ctx, depth + 1, &block)?;
-                            ctx.pop_scope(None, true)?;
+                            ctx.pop_scope(None)?;
 
-                            if let Some(end_label) = end_label_if_tail {
-                                ctx.current_section()
-                                    .extend([AsmOp::PUSHL(end_label.into()), AsmOp::JUMP]);
-                            }
-
-                            match else_ {
-                                Some(else_) => match else_ {
+                            if let Some(else_) = else_ {
+                                match else_ {
                                     Else::ElseIf { if_ } => {
                                         trace!("else if");
                                         go_if(ctx, if_.inner, depth + 1)?
                                     }
                                     Else::Tail { block } => {
-                                        let tail_end_label = format!(
-                                            "{}:if_tail_end_[{}]",
-                                            ctx.prefix, block.0.span
-                                        );
-                                        let tail_block_label = format!(
-                                            "{}:if_tail_block_[{}]",
-                                            ctx.prefix, block.0.span
-                                        );
                                         trace!("else");
-                                        ctx.push_section(&tail_block_label);
                                         go(ctx, depth + 1, &block)?;
-                                        ctx.push_section(&tail_end_label);
                                     }
-                                },
-                                None => {
-                                    ctx.push_section(&if_false_label);
                                 }
                             }
 
@@ -1249,56 +1383,15 @@ impl<'a> Ctx<'a> {
 
                         // if any vars on the lhs are updates, then init any newly declared vars
                         // first before evaluating the rhs
-                        if vars.iter().any(|v| ctx.get_var(*v).is_some()) {
-                            for (i, var) in vars.iter().rev().enumerate() {
-                                if ctx.get_var(*var).is_none() {
-                                    trace!("var decl '{var}' (i: {i}) [pre-init]");
-                                    let idx = ctx.init_var(*var);
-                                    ctx.inc_stack();
-                                    // init the value to 0
-                                    ctx.current_section().push(AsmOp::push(0));
-                                    trace!("idx = {idx}");
-                                }
+                        for var in vars.iter().rev() {
+                            if !ctx.has_var(*var) {
+                                trace!("var decl '{var}'");
+                                ctx.init_var(*var);
                             }
                         }
 
                         // evaluate the expression
-                        ctx.compile_expr(expr)?;
-
-                        for (i, var) in vars.iter().rev().enumerate() {
-                            match ctx.get_var(*var) {
-                                // var declaration, initial value was already pushed to the stack
-                                // above when evaluating the rhs
-                                // expression, so just store the variable's
-                                // stack position
-                                None => {
-                                    trace!("var decl '{var}' (i: {i})");
-                                    let idx =
-                                        ctx.init_var_with_depth_offset(*var, -((i + 1) as isize));
-                                    trace!("idx = {idx}");
-                                }
-                                // var already declared, update it's value by evaluating the
-                                // expression and swapping the old
-                                // value with the new one, and then
-                                // popping the old value
-                                Some(var_stack_idx) => {
-                                    trace!(
-                                        "var update '{var}' (i: {i}, var_stack_idx: {var_stack_idx}, stack_depth: {})",
-                                        ctx.stack_depth
-                                    );
-                                    // TODO: Figure why this is -2 lol
-                                    let stack_location_from_top =
-                                        (ctx.stack_depth - var_stack_idx) - 2;
-                                    trace!("stack_location_from_top: {stack_location_from_top}");
-                                    ctx.current_section().extend_from_slice(&[
-                                        AsmOp::push(stack_location_from_top as u64),
-                                        AsmOp::SWAP,
-                                        AsmOp::POP,
-                                    ]);
-                                    ctx.dec_stack();
-                                }
-                            }
-                        }
+                        ctx.check_expr(expr)?;
                     }
                     Statement::Def(def) => {
                         info_span!("def", name = %def.ident).in_scope(|| -> CompileResult {
@@ -1307,12 +1400,13 @@ impl<'a> Ctx<'a> {
 
                             let def_label = format!("{}:def_{}_{depth}_{i}", ctx.prefix, def.ident);
                             // this function is callable in this scope
-                            ctx.current_scope()
+                            ctx.scopes
+                                .last_mut()
+                                .unwrap()
                                 .defs
-                                .insert(def.ident, (def.clone(), def_label.clone()));
+                                .insert(def.ident, def.clone());
 
-                            let mut def_ctx = Ctx::new(&format!("{}/{def_label}", ctx.prefix));
-                            def_ctx.push_section(&def_label);
+                            let mut def_ctx = CheckCtx::new(&format!("{}/{def_label}", ctx.prefix));
 
                             // calling convention is [...args, @caller_ptr, ...rets]
                             // args will be popped before returning
@@ -1324,62 +1418,34 @@ impl<'a> Ctx<'a> {
                             for arg in &def.args {
                                 trace!("arg '{arg}'");
                                 def_ctx.init_var(*arg);
-                                def_ctx.inc_stack();
                             }
 
                             // account for @caller_ptr, also provided by the caller
                             // NOTE: The return pointer is pushed at the callsite by CALL
                             trace!("@caller_ptr");
-                            def_ctx.inc_stack();
 
                             // new ctx values for this fn call
-
-                            def_ctx
-                                .sections
-                                .insert(format!("{def_label}/RETS_INIT"), vec![]);
 
                             // init return values
                             for ret in def.rets.iter().rev() {
                                 trace!("ret '{ret}'");
                                 def_ctx.init_var(*ret);
-                                def_ctx.inc_stack();
-                                def_ctx.current_section().push(AsmOp::push(0));
                             }
 
                             // functions can access other functions visible in this scope
                             for (def_name, label) in ctx.scopes.iter().flat_map(|s| &s.defs) {
                                 def_ctx
-                                    .current_scope()
+                                    .scopes
+                                    .last_mut()
+                                    .unwrap()
                                     .defs
                                     .insert(*def_name, label.clone());
                             }
 
-                            def_ctx.push_section(&format!("{def_label}/BODY"));
-
                             def_ctx.push_scope(format!("def '{}' body", def.ident), None);
                             // compile the fn body
                             go(&mut def_ctx, depth + 1, &def.body)?;
-                            def_ctx.pop_scope(None, true)?;
-
-                            def_ctx
-                                .sections
-                                .insert(format!("{def_label}/CLEANUP"), vec![]);
-
-                            // go from [...args, @caller_ptr, ...rets] to [...rets, @caller_ptr,
-                            // ...args]
-                            def_ctx
-                                .current_section()
-                                .extend(reverse_list_ops(def.args.len() + 1 + def.rets.len()));
-
-                            for arg in &def.args {
-                                trace!("arg pop '{arg}'");
-                                def_ctx.current_section().extend_from_slice(&[AsmOp::POP]);
-                                def_ctx.dec_stack();
-                            }
-
-                            def_ctx.current_section().extend([AsmOp::JUMP]);
-
-                            ctx.fns.insert(def_label, def_ctx.sections);
+                            def_ctx.pop_scope(None)?;
 
                             Ok(())
                         })?
@@ -1396,16 +1462,223 @@ impl<'a> Ctx<'a> {
                     .join(",")
             );
 
-            let stack_depth_after = ctx.stack_depth;
-
-            trace!(
-                "stack_depth_before: {stack_depth_before}, stack_depth_after: {stack_depth_after}"
-            );
-
             Ok(())
         }
 
         go(self, 0, block)
+    }
+
+    fn has_var(&self, var: Ident<'a>) -> bool {
+        self.scopes
+            .iter()
+            .any(|s| s.vars.iter().any(|v| v.0.inner.eq(var.0.inner)))
+    }
+
+    fn init_var<'b>(&'b mut self, var: Ident<'a>) {
+        self.scopes.last_mut().expect("no scopes?").vars.insert(var);
+    }
+
+    fn check_expr(&mut self, expr: &Expr<'a>) -> CompileResult<()> {
+        #[instrument(level = "TRACE", skip_all, fields(%expr))]
+        fn go<'a>(ctx: &mut CheckCtx<'a>, depth: usize, expr: &Expr<'a>) -> CompileResult {
+            trace!("evaluating: {expr}");
+
+            match expr {
+                Expr::Val(val) => {
+                    trace!("val {val:#x}");
+                }
+                Expr::Var(var) => {
+                    if !ctx.has_var(*var) {
+                        return Err(CompileError::VarNotFound {
+                            var: var.0.inner.to_owned(),
+                        });
+                    };
+                }
+                Expr::Call {
+                    spread,
+                    f,
+                    args: exprs,
+                } => {
+                    if depth == 0 && *spread {
+                        return Err(CompileError::SpreadTopLevel {});
+                    }
+
+                    fn ensure_arity_and_eval_args<'a>(
+                        ctx: &mut CheckCtx<'a>,
+                        depth: usize,
+                        builtin: &'static str,
+                        expected: usize,
+                        exprs: &[Expr<'a>],
+                    ) -> CompileResult {
+                        trace!("{builtin}");
+                        let arity = ctx.exprs_arity(depth + 1, exprs, true)?;
+                        if arity != expected {
+                            Err(CompileError::InvalidArgCountBuiltin {
+                                builtin,
+                                expected,
+                                provided: arity,
+                            })
+                        } else {
+                            for expr in exprs.iter() {
+                                go(ctx, depth + 1, expr)?;
+                            }
+                            Ok(())
+                        }
+                    }
+
+                    match f.0.inner {
+                        "add" => {
+                            ensure_arity_and_eval_args(ctx, depth, "add", 2, exprs)?;
+                        }
+                        "mul" => {
+                            ensure_arity_and_eval_args(ctx, depth, "mul", 2, exprs)?;
+                        }
+                        "sub" => {
+                            ensure_arity_and_eval_args(ctx, depth, "sub", 2, exprs)?;
+                        }
+                        "div" => {
+                            ensure_arity_and_eval_args(ctx, depth, "div", 2, exprs)?;
+                        }
+                        "exp" => {
+                            ensure_arity_and_eval_args(ctx, depth, "exp", 2, exprs)?;
+                        }
+                        "mod" => {
+                            ensure_arity_and_eval_args(ctx, depth, "mod", 2, exprs)?;
+                        }
+                        "eq" => {
+                            ensure_arity_and_eval_args(ctx, depth, "eq", 2, exprs)?;
+                        }
+                        "lt" => {
+                            ensure_arity_and_eval_args(ctx, depth, "lt", 2, exprs)?;
+                        }
+                        "gt" => {
+                            ensure_arity_and_eval_args(ctx, depth, "gt", 2, exprs)?;
+                        }
+                        "shl" => {
+                            ensure_arity_and_eval_args(ctx, depth, "shl", 2, exprs)?;
+                        }
+                        "shr" => {
+                            ensure_arity_and_eval_args(ctx, depth, "shr", 2, exprs)?;
+                        }
+                        "or" => {
+                            ensure_arity_and_eval_args(ctx, depth, "or", 2, exprs)?;
+                        }
+                        "xor" => {
+                            ensure_arity_and_eval_args(ctx, depth, "xor", 2, exprs)?;
+                        }
+                        "and" => {
+                            ensure_arity_and_eval_args(ctx, depth, "and", 2, exprs)?;
+                        }
+                        "not" => {
+                            ensure_arity_and_eval_args(ctx, depth, "not", 1, exprs)?;
+                        }
+                        "neg" => {
+                            ensure_arity_and_eval_args(ctx, depth, "neg", 1, exprs)?;
+                        }
+                        "alloc" => {
+                            ensure_arity_and_eval_args(ctx, depth, "alloc", 1, exprs)?;
+                        }
+                        "write1" => {
+                            ensure_arity_and_eval_args(ctx, depth, "write1", 2, exprs)?;
+                        }
+                        "write2" => {
+                            ensure_arity_and_eval_args(ctx, depth, "write2", 2, exprs)?;
+                        }
+                        "write8" => {
+                            ensure_arity_and_eval_args(ctx, depth, "write8", 2, exprs)?;
+                        }
+                        "read1" => {
+                            ensure_arity_and_eval_args(ctx, depth, "read1", 1, exprs)?;
+                        }
+                        "read8" => {
+                            ensure_arity_and_eval_args(ctx, depth, "read8", 1, exprs)?;
+                        }
+                        "dread1" => {
+                            ensure_arity_and_eval_args(ctx, depth, "dread1", 1, exprs)?;
+                        }
+                        "dcopy" => {
+                            ensure_arity_and_eval_args(ctx, depth, "dcopy", 3, exprs)?;
+                        }
+                        "dlen" => {
+                            ensure_arity_and_eval_args(ctx, depth, "dlen", 0, exprs)?;
+                        }
+                        "exit" => {
+                            ensure_arity_and_eval_args(ctx, depth, "exit", 2, exprs)?;
+                        }
+                        "trap" => {
+                            ensure_arity_and_eval_args(ctx, depth, "trap", 1, exprs)?;
+                        }
+                        _ => {
+                            trace!("call '{f}'");
+
+                            let def = ctx.get_def(*f).expect("def not found").clone();
+
+                            if ctx.exprs_arity(depth + 1, exprs, true)? != def.args.len() {
+                                return Err(CompileError::InvalidArgCountDef {
+                                    def: def.ident.0.inner.to_owned(),
+                                    expected: def.args.len(),
+                                    provided: exprs.len(),
+                                });
+                            }
+
+                            ctx.push_scope(format!("def '{}' args", def.ident), None);
+                            let mut args = def.args.clone();
+                            args.reverse();
+
+                            // evaluate all arg expressions to this call
+                            //
+                            // def f(a, b, c, d) {}
+                            //
+                            // f(x, ..y(), z)
+                            //
+                            // will evaluate as
+                            //
+                            // init a
+                            // evaluate x
+                            // init b
+                            // init c
+                            // evaluate ..y()
+                            // init d
+                            // evaluate z
+                            for expr in exprs.iter() {
+                                #[allow(clippy::unwrap_in_result)]
+                                let arity = ctx
+                                    .expr_arity(depth + 1, expr, true)
+                                    .expect("checked above; qed;");
+
+                                let tail = args.split_off(args.len() - arity);
+                                trace!("evaluating args '{tail:?} from expr '{expr}'");
+
+                                go(ctx, depth + 1, expr)?;
+                            }
+
+                            // all args are dropped from the stack
+                            ctx.pop_scope(None)?;
+                        }
+                    }
+                }
+            }
+
+            Ok(())
+        }
+
+        go(self, 0, expr)
+    }
+
+    pub fn new(prefix: &str) -> Self {
+        Self {
+            prefix: prefix.to_owned(),
+            scopes: vec![CheckScope {
+                tag: "root".to_owned(),
+                label: Some(Label(Spanned {
+                    // TODO: Figure out a better way to do this
+                    inner: format!("$ROOT/{prefix}").leak(),
+                    span: (0..0).into(),
+                })),
+                vars: Default::default(),
+                defs: Default::default(),
+            }],
+        }
     }
 }
 
