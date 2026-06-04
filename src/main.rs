@@ -10,7 +10,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
     Vm,
     assembler::parse_asm,
-    mir::{self, CheckCtx, Ctx},
+    mir::{
+        self, CheckCtx, Ctx,
+        parse::print_ast,
+        pass::{ConstEval, DefInline, Pass},
+    },
 };
 
 /// Compiler and assembler.
@@ -188,7 +192,19 @@ fn main() -> anyhow::Result<()> {
             } else {
                 match mir::parse::grammar().block.parse(&file).into_result() {
                     Ok(obj) => {
-                        // println!("{}", print_ast(&obj));
+                        let mut ctx = CheckCtx::new("root");
+                        ctx.check(&obj)?;
+                        let obj = ConstEval::new().run(&ctx, obj);
+
+                        let mut ctx = CheckCtx::new("root");
+                        ctx.check(&obj)?;
+                        let obj = DefInline::new().run(&ctx, obj);
+
+                        let mut ctx = CheckCtx::new("root");
+                        ctx.check(&obj)?;
+                        let obj = DefInline::new().run(&ctx, obj);
+
+                        println!("{}", print_ast(&obj));
                         let mut ctx = Ctx::new_root();
                         ctx.compile(&obj)?;
                         ctx.into_object().assemble()
@@ -215,14 +231,18 @@ fn main() -> anyhow::Result<()> {
             let mut vm = Vm::new(obj, data);
             let res = vm.run();
             match res {
-                Ok(res) => match res {
-                    Some(res) => {
-                        println!("{}", res.encode_hex());
+                Ok(res) => {
+                    println!("total cycles: {}", vm.cycles);
+                    println!("binary size: {}", vm.code.len());
+                    match res {
+                        Some(res) => {
+                            println!("output: {}", res.encode_hex());
+                        }
+                        None => {
+                            println!("output: <no output>");
+                        }
                     }
-                    None => {
-                        println!("<no output>");
-                    }
-                },
+                }
                 Err(err) => println!("{err}"),
             }
         }

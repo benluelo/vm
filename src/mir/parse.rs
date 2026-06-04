@@ -100,7 +100,7 @@ pub fn grammar<'a>() -> Grammar<
                 just("...")
                     .or_not()
                     .then(
-                        ident().then(
+                        ident().map(BuiltinOrDef::from).spanned().then(
                             tree.padded()
                                 .padded_by(comment().repeated())
                                 .separated_by(just(','))
@@ -365,7 +365,38 @@ impl<'a> fmt::Display for Label<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Block<'a>(pub Spanned<Vec<Statement<'a>>>);
+pub struct Block<'a>(Spanned<Vec<Statement<'a>>>);
+
+impl<'a> Block<'a> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Statement<'a>> {
+        self.0.inner.iter()
+    }
+
+    pub fn span(&self) -> SimpleSpan {
+        self.0.span
+    }
+
+    pub fn new(statements: Vec<Statement<'a>>, span: impl Into<SimpleSpan>) -> Self {
+        Self(Spanned {
+            inner: statements,
+            span: span.into(),
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<'a> IntoIterator for Block<'a> {
+    type Item = Statement<'a>;
+
+    type IntoIter = std::vec::IntoIter<Statement<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.inner.into_iter()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Statement<'a> {
@@ -385,21 +416,22 @@ pub enum Expr<'a> {
     Var(Ident<'a>),
     Call {
         spread: bool,
-        f: Ident<'a>,
+        f: Spanned<BuiltinOrDef<'a>>,
         args: Vec<Expr<'a>>,
     },
 }
 
 impl Expr<'_> {
-    pub(crate) fn span(&self) -> SimpleSpan {
+    pub fn span(&self) -> SimpleSpan {
         match self {
             Expr::Val(val) => val.0.span,
             Expr::Var(var) => var.0.span,
+            // TODO: Include the spread and args spans
             Expr::Call {
                 spread: _,
                 f,
                 args: _,
-            } => f.0.span,
+            } => f.span,
         }
     }
 }
@@ -417,7 +449,7 @@ impl<'a> fmt::Display for Expr<'a> {
                 if *spread {
                     f.write_str("...")?;
                 }
-                f.write_fmt(format_args!("{call}"))?;
+                f.write_fmt(format_args!("{}", call.inner))?;
                 f.write_char('(')?;
                 for (i, expr) in args.iter().enumerate() {
                     f.write_fmt(format_args!("{expr}"))?;
@@ -427,6 +459,162 @@ impl<'a> fmt::Display for Expr<'a> {
                 }
                 f.write_char(')')
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum BuiltinOrDef<'a> {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Exp,
+    Mod,
+    Eq,
+    Lt,
+    Gt,
+    Shl,
+    Shr,
+    Or,
+    Xor,
+    And,
+    Not,
+    Neg,
+    Dread1,
+    Dread2,
+    Dread3,
+    Dread4,
+    Dread5,
+    Dread6,
+    Dread7,
+    Dread8,
+    Dlen,
+    Read1,
+    Read2,
+    Read3,
+    Read4,
+    Read5,
+    Read6,
+    Read7,
+    Read8,
+    Alloc,
+    Write1,
+    Write2,
+    Write3,
+    Write4,
+    Write5,
+    Write6,
+    Write7,
+    Write8,
+    Dcopy,
+    Exit,
+    Trap,
+    Def(Ident<'a>),
+}
+
+impl<'a> fmt::Display for BuiltinOrDef<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Add => "add",
+            Self::Sub => "sub",
+            Self::Mul => "mul",
+            Self::Div => "div",
+            Self::Exp => "exp",
+            Self::Mod => "mod",
+            Self::Eq => "eq",
+            Self::Lt => "lt",
+            Self::Gt => "gt",
+            Self::Shl => "shl",
+            Self::Shr => "shr",
+            Self::Or => "or",
+            Self::Xor => "xor",
+            Self::And => "and",
+            Self::Not => "not",
+            Self::Neg => "neg",
+            Self::Dread1 => "dread1",
+            Self::Dread2 => "dread2",
+            Self::Dread3 => "dread3",
+            Self::Dread4 => "dread4",
+            Self::Dread5 => "dread5",
+            Self::Dread6 => "dread6",
+            Self::Dread7 => "dread7",
+            Self::Dread8 => "dread8",
+            Self::Dlen => "dlen",
+            Self::Read1 => "read1",
+            Self::Read2 => "read2",
+            Self::Read3 => "read3",
+            Self::Read4 => "read4",
+            Self::Read5 => "read5",
+            Self::Read6 => "read6",
+            Self::Read7 => "read7",
+            Self::Read8 => "read8",
+            Self::Alloc => "alloc",
+            Self::Write1 => "write1",
+            Self::Write2 => "write2",
+            Self::Write3 => "write3",
+            Self::Write4 => "write4",
+            Self::Write5 => "write5",
+            Self::Write6 => "write6",
+            Self::Write7 => "write7",
+            Self::Write8 => "write8",
+            Self::Dcopy => "dcopy",
+            Self::Exit => "exit",
+            Self::Trap => "trap",
+            Self::Def(ident) => ident.0.inner,
+        })
+    }
+}
+
+impl<'a> From<Ident<'a>> for BuiltinOrDef<'a> {
+    fn from(ident: Ident<'a>) -> Self {
+        match ident.0.inner {
+            "add" => Self::Add,
+            "sub" => Self::Sub,
+            "mul" => Self::Mul,
+            "div" => Self::Div,
+            "exp" => Self::Exp,
+            "mod" => Self::Mod,
+            "eq" => Self::Eq,
+            "lt" => Self::Lt,
+            "gt" => Self::Gt,
+            "shl" => Self::Shl,
+            "shr" => Self::Shr,
+            "or" => Self::Or,
+            "xor" => Self::Xor,
+            "and" => Self::And,
+            "not" => Self::Not,
+            "neg" => Self::Neg,
+            "dread1" => Self::Dread1,
+            "dread2" => Self::Dread2,
+            "dread3" => Self::Dread3,
+            "dread4" => Self::Dread4,
+            "dread5" => Self::Dread5,
+            "dread6" => Self::Dread6,
+            "dread7" => Self::Dread7,
+            "dread8" => Self::Dread8,
+            "dlen" => Self::Dlen,
+            "read1" => Self::Read1,
+            "read2" => Self::Read2,
+            "read3" => Self::Read3,
+            "read4" => Self::Read4,
+            "read5" => Self::Read5,
+            "read6" => Self::Read6,
+            "read7" => Self::Read7,
+            "read8" => Self::Read8,
+            "alloc" => Self::Alloc,
+            "write1" => Self::Write1,
+            "write2" => Self::Write2,
+            "write3" => Self::Write3,
+            "write4" => Self::Write4,
+            "write5" => Self::Write5,
+            "write6" => Self::Write6,
+            "write7" => Self::Write7,
+            "write8" => Self::Write8,
+            "dcopy" => Self::Dcopy,
+            "exit" => Self::Exit,
+            "trap" => Self::Trap,
+            _ => Self::Def(ident),
         }
     }
 }
@@ -455,6 +643,19 @@ pub enum Else<'a> {
 
 #[derive(Debug, Clone)]
 pub struct Assignment<'a>(pub Vec<Ident<'a>>, pub Expr<'a>);
+
+impl<'a> fmt::Display for Assignment<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, var) in self.0.iter().enumerate() {
+            write!(f, "{var}")?;
+            if (i + 1) < self.0.len() {
+                f.write_str(", ")?;
+            }
+        }
+        f.write_str(" <- ")?;
+        write!(f, "{}", self.1)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Def<'a> {
@@ -501,10 +702,11 @@ pub fn print_ast(ast: &Block<'_>) -> String {
                         out.push('}');
                         match else_ {
                             Some(Else::ElseIf { if_ }) => {
+                                print!(" else ");
                                 go_if(depth, out, if_);
                             }
                             Some(Else::Tail { block }) => {
-                                out.push_str(" {\n");
+                                out.push_str(" else {\n");
                                 go(depth + 1, out, block);
                                 out.write_str(&"  ".repeat(depth)).unwrap();
                                 out.push('}');
@@ -540,15 +742,17 @@ pub fn print_ast(ast: &Block<'_>) -> String {
                     out.push('(');
                     for (i, arg) in args.iter().enumerate() {
                         write!(out, "{arg}").unwrap();
-                        if i == args.len() {
+                        if (i + 1) < args.len() {
                             out.push_str(", ");
                         }
                     }
                     out.push(')');
-                    out.push_str(" -> ");
                     for (i, ret) in rets.iter().enumerate() {
+                        if i == 0 {
+                            out.push_str(" -> ");
+                        }
                         write!(out, "{ret}").unwrap();
-                        if i == rets.len() {
+                        if (i + 1) < rets.len() {
                             out.push_str(", ");
                         }
                     }
@@ -574,7 +778,7 @@ pub fn print_ast(ast: &Block<'_>) -> String {
                 if *spread {
                     write!(out, "...").unwrap();
                 }
-                write!(out, "{f}").unwrap();
+                write!(out, "{}", f.inner).unwrap();
                 out.push('(');
                 for (i, expr) in exprs.iter().enumerate() {
                     go_expr(out, expr);

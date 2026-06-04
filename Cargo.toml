@@ -16,6 +16,7 @@ const-hex = "1.18.0"
 either = "1.15.0"
 hex-literal = "1.1.0"
 indexmap = "2.13.0"
+petgraph = "0.8.3"
 thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["ansi", "env-filter"] }

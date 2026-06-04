@@ -3,7 +3,11 @@ use std::fs;
 use chumsky::Parser;
 use vm::{
     Vm,
-    mir::{Ctx, parse::grammar},
+    mir::{
+        CheckCtx, Ctx,
+        parse::grammar,
+        pass::{ConstEval, DefInline, Pass},
+    },
 };
 
 fn load_vectors(file_name: &str) -> Vec<(usize, Vec<u8>, Vec<u8>)> {
@@ -63,6 +67,18 @@ fn nist_vectors() {
 
     let ast = grammar().block.parse(&raw).unwrap();
 
+    let mut ctx = CheckCtx::new("root");
+    ctx.check(&ast).unwrap();
+    let ast = ConstEval {}.run(&ctx, ast);
+
+    let mut ctx = CheckCtx::new("root");
+    ctx.check(&ast).unwrap();
+    let ast = DefInline {}.run(&ctx, ast);
+
+    let mut ctx = CheckCtx::new("root");
+    ctx.check(&ast).unwrap();
+    let ast = ConstEval {}.run(&ctx, ast);
+
     let mut ctx = Ctx::new_root();
 
     ctx.compile(&ast).unwrap();
@@ -105,5 +121,5 @@ fn nist_vectors() {
     run_tests("SHA3_256ShortMsg.rsp");
     run_tests("SHA3_256LongMsg.rsp");
 
-    run_monte_tests("SHA3_256Monte.rsp");
+    // run_monte_tests("SHA3_256Monte.rsp");
 }

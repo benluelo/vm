@@ -3,7 +3,7 @@ use std::fmt;
 
 use anyhow::Result;
 use const_hex::ToHexExt;
-use tracing::{field::Empty, trace};
+use tracing::trace;
 
 pub mod assembler;
 pub mod mir;
@@ -16,6 +16,7 @@ pub struct Vm {
     pub data: Vec<u8>,
     pub stack: Vec<u64>,
     pub memory: Vec<u8>,
+    pub cycles: u32,
 }
 
 impl fmt::Debug for Vm {
@@ -36,6 +37,7 @@ impl Vm {
             data,
             stack: vec![],
             memory: vec![],
+            cycles: 0,
         }
     }
 
@@ -46,8 +48,6 @@ impl Vm {
     pub fn run_to(&mut self, max_cycles: Option<u32>) -> Result<Option<Vec<u8>>, Error> {
         let mut pc = 0;
 
-        let mut cycles = 0;
-
         trace!("data: {}", self.data.encode_hex());
 
         loop {
@@ -57,9 +57,9 @@ impl Vm {
                 StepResult::Exit(output) => break Ok(Some(output)),
             }
 
-            cycles += 1;
+            self.cycles += 1;
 
-            if max_cycles.is_some_and(|m| cycles > m) {
+            if max_cycles.is_some_and(|m| self.cycles > m) {
                 return Ok(None);
             }
 
@@ -230,29 +230,26 @@ impl Vm {
                 trace!("add");
                 let a = pop()?;
                 let b = pop()?;
-                self.stack.push(b.wrapping_add(a));
+                self.stack.push(op::add(a, b));
             }
             Op::SUB => {
                 trace!("sub");
                 let a = pop()?;
                 let b = pop()?;
-                self.stack.push(b.wrapping_sub(a));
+                self.stack.push(op::sub(a, b));
             }
             Op::MUL => {
                 trace!("mul");
                 let a = pop()?;
                 let b = pop()?;
                 trace!("{a:x} * {b:x}");
-                self.stack.push(b.wrapping_mul(a));
+                self.stack.push(op::mul(a, b));
             }
             Op::DIV => {
                 trace!("div");
                 let a = pop()?;
                 let b = pop()?;
-                if a == 0 {
-                    return Err(Error::DivideByZero);
-                }
-                self.stack.push(b.wrapping_div(a));
+                self.stack.push(op::div(a, b)?);
             }
             Op::EXP => {
                 trace!("exp");
@@ -263,42 +260,42 @@ impl Vm {
                     .push(b.wrapping_pow(a.try_into().map_err(|_| Error::InvalidStackValue)?));
             }
             Op::MOD => {
-                trace!(a = Empty, b = Empty, "mod");
+                trace!("mod");
                 let a = pop()?;
                 let b = pop()?;
                 trace!("{b:x} % {a:x}");
-                self.stack.push(b.wrapping_rem(a));
+                self.stack.push(op::r#mod(a, b));
             }
             Op::EQ => {
                 trace!("eq");
                 let a = pop()?;
                 let b = pop()?;
-                self.stack.push((b == a) as u64);
+                self.stack.push(op::eq(a, b));
             }
             Op::NEQ => {
                 trace!("neq");
                 let a = pop()?;
                 let b = pop()?;
-                self.stack.push((b != a) as u64);
+                self.stack.push(op::neq(a, b));
             }
             Op::LT => {
                 trace!("lt");
                 let a = pop()?;
                 let b = pop()?;
                 trace!("{b:x} < {a:x}");
-                self.stack.push((b < a) as u64);
+                self.stack.push(op::lt(a, b));
             }
             Op::GT => {
                 trace!("gt");
                 let a = pop()?;
                 let b = pop()?;
                 trace!("{b:x} > {a:x}");
-                self.stack.push((b > a) as u64);
+                self.stack.push(op::gt(a, b));
             }
             Op::NOT => {
                 trace!("not");
                 let a = pop()?;
-                self.stack.push((a == 0) as u64);
+                self.stack.push(op::not(a));
             }
             Op::SHL => {
                 trace!("shl");
@@ -318,25 +315,25 @@ impl Vm {
             Op::NEG => {
                 trace!("neg");
                 let a = pop()?;
-                self.stack.push(!a);
+                self.stack.push(op::neg(a));
             }
             Op::OR => {
                 trace!("or");
                 let a = pop()?;
                 let b = pop()?;
-                self.stack.push(b | a);
+                self.stack.push(op::or(a, b));
             }
             Op::XOR => {
                 trace!("xor");
                 let a = pop()?;
                 let b = pop()?;
-                self.stack.push(b ^ a);
+                self.stack.push(op::xor(a, b));
             }
             Op::AND => {
                 trace!("and");
                 let a = pop()?;
                 let b = pop()?;
-                self.stack.push(b & a);
+                self.stack.push(op::and(a, b));
             }
 
             Op::JUMP => {
@@ -470,6 +467,84 @@ impl Vm {
             raw::TRAP => Op::TRAP,
             op => return Err(Error::UnknownOp(op)),
         }))
+    }
+}
+
+pub mod op {
+    use crate::Error;
+
+    #[inline(always)]
+    pub const fn add(a: u64, b: u64) -> u64 {
+        b.wrapping_add(a)
+    }
+
+    #[inline(always)]
+    pub const fn sub(a: u64, b: u64) -> u64 {
+        b.wrapping_sub(a)
+    }
+
+    #[inline(always)]
+    pub const fn mul(a: u64, b: u64) -> u64 {
+        b.wrapping_mul(a)
+    }
+
+    #[inline(always)]
+    pub const fn div(a: u64, b: u64) -> Result<u64, Error> {
+        if a == 0 {
+            Err(Error::DivideByZero)
+        } else {
+            Ok(b.wrapping_div(a))
+        }
+    }
+
+    #[inline(always)]
+    pub const fn not(a: u64) -> u64 {
+        (a == 0) as u64
+    }
+
+    #[inline(always)]
+    pub const fn gt(a: u64, b: u64) -> u64 {
+        (b > a) as u64
+    }
+
+    #[inline(always)]
+    pub const fn lt(a: u64, b: u64) -> u64 {
+        (b < a) as u64
+    }
+
+    #[inline(always)]
+    pub const fn neq(a: u64, b: u64) -> u64 {
+        (b != a) as u64
+    }
+
+    #[inline(always)]
+    pub const fn eq(a: u64, b: u64) -> u64 {
+        (b == a) as u64
+    }
+
+    #[inline(always)]
+    pub const fn r#mod(a: u64, b: u64) -> u64 {
+        b.wrapping_rem(a)
+    }
+
+    #[inline(always)]
+    pub const fn and(a: u64, b: u64) -> u64 {
+        b & a
+    }
+
+    #[inline(always)]
+    pub const fn xor(a: u64, b: u64) -> u64 {
+        b ^ a
+    }
+
+    #[inline(always)]
+    pub const fn or(a: u64, b: u64) -> u64 {
+        b | a
+    }
+
+    #[inline(always)]
+    pub const fn neg(a: u64) -> u64 {
+        !a
     }
 }
 

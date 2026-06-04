@@ -212,6 +212,7 @@ loop :blocks {
         }
 
         x <- 0
+        D <- 0
         loop :theta_effect_x {
           if lt(x, 5) {
             # Compute the θ effect for a given column
@@ -231,6 +232,8 @@ loop :blocks {
               } else {
                 break :theta_effect_y
               }
+              # 1591140754
+              # 1591810066
             }
 
             x <- add(x, 1)
@@ -248,6 +251,8 @@ loop :blocks {
         current <- readLane(x, y)
         # Iterate over ((0 1)(2 3))^t * (1 0) for 0 ≤ t ≤ 23
         t <- 0
+        r <- 0
+        Y <- 0
         loop :rho_and_pi {
           if lt(t, 24) {
             # Compute the rotation constant r = (t+1)(t+2)/2
