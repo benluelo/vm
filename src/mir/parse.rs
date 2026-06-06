@@ -340,7 +340,20 @@ impl fmt::LowerHex for Val {
 }
 
 #[derive(Clone, Copy, Eq, PartialOrd, Ord)]
-pub struct Label<'a>(pub Spanned<&'a str>);
+pub struct Label<'a>(Spanned<&'a str>);
+
+impl<'a> Label<'a> {
+    pub fn new(label: &'a str) -> Self {
+        Self(Spanned {
+            inner: label,
+            span: (0..0).into(),
+        })
+    }
+
+    pub fn span(&self) -> SimpleSpan {
+        self.0.span
+    }
+}
 
 impl<'a> fmt::Debug for Label<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -385,6 +398,11 @@ impl<'a> Block<'a> {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

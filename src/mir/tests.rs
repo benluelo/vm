@@ -48,6 +48,8 @@ fn compile_expr() {
 
     let obj = ctx.into_object();
 
+    dbg!(&obj);
+
     let asm = obj.assemble();
 
     let mut vm = Vm::new(asm, vec![]);
@@ -792,73 +794,75 @@ fn compile_atoi() {
 
 #[test]
 fn compile_aoc_2025_1() {
-    let raw = "
-            if eq(dlen(), 0) {
-              trap(1)
-            }
+    init();
 
-            dial <- 100050
-            total <- 0
-            n <- 0
-            idx <- 0
+    let raw = "
+        if eq(dlen(), 0) {
+          trap(1)
+        }
+
+        dial <- 100050
+        total <- 0
+        n <- 0
+        idx <- 0
+        is_right <- 0
+
+        loop :a {
+          if eq(dlen(), idx) {
+            break :a
+          }
+
+          ascii_digit <- dread1(idx)
+
+          if eq(ascii_digit, 76) {
             is_right <- 0
 
-            loop :a {
-              if eq(dlen(), idx) {
-                break :a
+            idx <- add(idx, 1)
+            n <- 0
+            continue :a
+          } else if eq(ascii_digit, 82) {
+            is_right <- 1
+
+            idx <- add(idx, 1)
+            n <- 0
+            continue :a
+          } else if eq(ascii_digit, 10) {
+            idx <- add(idx, 1)
+            if is_right {
+              dial <- add(dial, n)
+              if eq(0, mod(dial, 100)) {
+                total <- add(total, 1)
               }
 
-              ascii_digit <- dread1(idx)
-
-              if eq(ascii_digit, 76) {
-                is_right <- 0
-
-                idx <- add(idx, 1)
-                n <- 0
-                continue :a
-              } else if eq(ascii_digit, 82) {
-                is_right <- 1
-
-                idx <- add(idx, 1)
-                n <- 0
-                continue :a
-              } else if eq(ascii_digit, 10) {
-                idx <- add(idx, 1)
-                if is_right {
-                  dial <- add(dial, n)
-                  if eq(0, mod(dial, 100)) {
-                    total <- add(total, 1)
-                  }
-
-                  continue :a
-                }
-
-                dial <- sub(dial, n)
-                if eq(0, mod(dial, 100)) {
-                  total <- add(total, 1)
-                }
-
-                continue :a
-              }
-
-              if lt(ascii_digit, 0x30) {
-                trap(2)
-              }
-
-              if gt(ascii_digit, 0x39) {
-                trap(3)
-              }
-
-              digit <- sub(ascii_digit, 0x30)
-              n <- mul(n, 10)
-              n <- add(n, digit)
-              idx <- add(idx, 1)
+              continue :a
             }
 
-            alloc(8)
-            write8(0, total)
-            exit(0, 8)
-            ";
+            dial <- sub(dial, n)
+            if eq(0, mod(dial, 100)) {
+              total <- add(total, 1)
+            }
+
+            continue :a
+          }
+
+          if lt(ascii_digit, 0x30) {
+            trap(2)
+          }
+
+          if gt(ascii_digit, 0x39) {
+            trap(3)
+          }
+
+          digit <- sub(ascii_digit, 0x30)
+          n <- mul(n, 10)
+          n <- add(n, digit)
+          idx <- add(idx, 1)
+        }
+
+        alloc(8)
+        write8(0, total)
+        exit(0, 8)
+        ";
 
     let ast = grammar().block.parse(raw).unwrap();
 
@@ -867,6 +871,9 @@ fn compile_aoc_2025_1() {
     ctx.compile(&ast).unwrap();
 
     let obj = ctx.into_object();
+
+    println!("{obj}");
+    // dbg!(&obj);
 
     let asm = obj.assemble();
 

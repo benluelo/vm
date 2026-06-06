@@ -98,7 +98,7 @@ fn const_eval<'a>(expr: Expr<'a>) -> Expr<'a> {
 
             match (f.inner, len) {
                 (Add, 2) => binop(Add, op::add),
-                (Sub, 2) => binop(Sub, op::sub),
+                (Sub, 2) => binop(Sub, |l, r| op::sub(r, l)),
                 (Mul, 2) => binop(Mul, op::mul),
                 // Div => todo!(),
                 // Exp => todo!(),

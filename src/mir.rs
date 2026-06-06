@@ -26,6 +26,8 @@ type Section<'a> = IndexMap<String, Vec<AsmOp<'a>>>;
 
 #[derive(Debug)]
 pub struct Ctx<'a> {
+    cfg: DiGraph<BasicBlock<'a>, Edge>,
+    next_scope_label_id: LabelId,
     prefix: String,
     sections: Section<'a>,
     fns: IndexMap<String, Section<'a>>,
@@ -37,7 +39,7 @@ pub struct Ctx<'a> {
 pub struct Scope<'a> {
     #[expect(dead_code)]
     tag: String,
-    label: Option<Label<'a>>,
+    label: ScopeLabel<'a>,
     /// var name -> stack index
     vars: BTreeMap<Ident<'a>, usize>,
     /// fn name -> label
@@ -47,10 +49,7 @@ pub struct Scope<'a> {
 impl<'a> Scope<'a> {
     fn drop_asm(&self) -> Vec<AsmOp<'a>> {
         let mut out = vec![];
-        trace!(
-            "dropping vars in scope {}",
-            self.label.as_ref().map_or("<none>", |label| label.0.inner)
-        );
+        trace!("dropping vars in scope {}", self.label);
         for (var, idx) in &self.vars {
             trace!("dropping var '{var}' @ idx {idx}");
             out.push(AsmOp::POP);
@@ -109,23 +108,29 @@ impl<'a> Ctx<'a> {
     }
 
     pub fn new(prefix: &str) -> Self {
+        let first_scope_label_id = LabelId::new();
+        let identified_label = IdentifiedLabel::new(
+            Label::new(
+                // TODO: Figure out a better way to do this
+                format!("$ROOT/{prefix}").leak(),
+            ),
+            first_scope_label_id,
+        );
+        let first_section_id = identified_label.to_string();
+        let scope = Scope {
+            tag: "root".to_owned(),
+            label: ScopeLabel::Label(identified_label),
+            vars: Default::default(),
+            defs: Default::default(),
+        };
         Self {
+            cfg: DiGraph::new(),
+            next_scope_label_id: first_scope_label_id.increment(),
             prefix: prefix.to_owned(),
-            sections: [(format!("$ROOT/{prefix}"), vec![])].into_iter().collect(),
+            sections: [(first_section_id, vec![])].into_iter().collect(),
             stack_depth: 0,
             fns: Default::default(),
-            scopes: [Scope {
-                tag: "root".to_owned(),
-                label: Some(Label(Spanned {
-                    // TODO: Figure out a better way to do this
-                    inner: format!("$ROOT/{prefix}").leak(),
-                    span: (0..0).into(),
-                })),
-                vars: Default::default(),
-                defs: Default::default(),
-            }]
-            .into_iter()
-            .collect(),
+            scopes: [scope].into_iter().collect(),
         }
     }
 
@@ -135,11 +140,10 @@ impl<'a> Ctx<'a> {
             .first()
             .unwrap()
             .label
-            .as_ref()
+            .as_label()
             .unwrap()
             .to_owned()
-            .0
-            .inner
+            .to_string()
             .into();
 
         Object(
@@ -164,11 +168,8 @@ impl<'a> Ctx<'a> {
         self.stack_depth -= 1;
     }
 
-    fn push_scope(&mut self, tag: String, label: Option<Label<'a>>) {
-        trace!(
-            "pushing scope {} ({tag})",
-            label.map_or("<none>", |label| label.0.inner)
-        );
+    fn push_scope(&mut self, tag: String, label: ScopeLabel<'a>) {
+        trace!("pushing scope {label} ({tag})",);
         self.scopes.push(Scope {
             tag,
             label,
@@ -177,19 +178,13 @@ impl<'a> Ctx<'a> {
         });
     }
 
-    fn pop_scope(&mut self, label: Option<Label<'a>>, cleanup_asm: bool) -> CompileResult {
-        trace!(
-            "pop_scope {}",
-            label.map_or("<none>", |label| label.0.inner)
-        );
+    fn pop_scope(&mut self, label: ScopeLabel<'a>, cleanup_asm: bool) -> CompileResult {
+        trace!("pop_scope {label}",);
 
         loop {
             match self.scopes.pop() {
                 Some(scope) => {
-                    trace!(
-                        "popping scope {}",
-                        scope.label.map_or("<none>", |label| label.0.inner)
-                    );
+                    trace!("popping scope {}", scope.label);
                     if cleanup_asm {
                         self.current_section().extend(scope.drop_asm());
                     }
@@ -197,19 +192,17 @@ impl<'a> Ctx<'a> {
                         trace!("popping var '{var}'");
                         self.dec_stack();
                     }
-                    if label.is_none_or(|label| {
-                        scope.label.is_some_and(|scope_label| scope_label == label)
-                    }) {
+                    if label.matches_scope_label(&scope.label) {
                         return Ok(());
                     }
                 }
                 None => match label {
-                    Some(label) => {
+                    ScopeLabel::Label(label) => {
                         bug!(
                             "tried to exit out of named scope '{label}' but that scope does not exist in this context"
                         )
                     }
-                    None => return Ok(()),
+                    ScopeLabel::None => return Ok(()),
                 },
             }
         }
@@ -219,24 +212,13 @@ impl<'a> Ctx<'a> {
         trace!("scope_cleanup_asm {}", label);
 
         for scope in self.scopes.iter().rev() {
-            tracing::info!(
-                "appending drop asm for scope {}",
-                scope.label.map_or("<none>", |label| label.0.inner)
-            );
+            tracing::info!("appending drop asm for scope {}", scope.label);
 
-            let key = format!(
-                "{}:drop::{label}::{salt}::{}",
-                self.prefix,
-                scope.label.map_or("<none>", |label| label.0.inner)
-            );
+            let key = format!("{}:drop::{label}::{salt}::{}", self.prefix, scope.label);
 
             self.sections.insert(key, scope.drop_asm());
 
-            if scope
-                .label
-                .as_ref()
-                .is_some_and(|scope_label| *scope_label == label)
-            {
+            if scope.label.matches_label(&label) {
                 return;
             }
         }
@@ -289,19 +271,19 @@ impl<'a> Ctx<'a> {
     }
 
     #[track_caller]
-    fn find_labelled_section(&mut self, label: Label<'a>) -> Option<Label<'a>> {
+    fn find_labelled_section(&self, label: Label<'a>) -> Option<&IdentifiedLabel<'a>> {
         self.scopes
             .iter()
-            .rfind(|scope| scope.label == Some(label))
-            .map(|scope| scope.label.unwrap())
+            .rfind(|scope| scope.label.matches_label(&label))
+            .map(|scope| scope.label.as_label().unwrap())
     }
 
-    fn loop_start_label(&self, label: Label<'_>) -> String {
-        format!("{}:loop_start_{label}_[{}]", self.prefix, label.0.span)
+    fn loop_start_label(&self, label: &IdentifiedLabel<'_>) -> String {
+        format!("{}:loop_start_{}:{}", self.prefix, label.label, label.id)
     }
 
-    fn loop_end_label(&self, label: Label<'_>) -> String {
-        format!("{}:loop_end_{label}_[{}]", self.prefix, label.0.span)
+    fn loop_end_label(&self, label: &IdentifiedLabel<'_>) -> String {
+        format!("{}:loop_end_{}:{}", self.prefix, label.label, label.id)
     }
 
     pub fn compile<'b>(&mut self, block: &'b Block<'a>) -> CompileResult
@@ -315,7 +297,7 @@ impl<'a> Ctx<'a> {
                 "go: {}",
                 ctx.scopes
                     .iter()
-                    .map(|s| s.label.map_or("<none>", |label| label.0.inner))
+                    .map(|s| s.label.to_string())
                     .collect::<Vec<_>>()
                     .join(",")
             );
@@ -331,19 +313,21 @@ impl<'a> Ctx<'a> {
                     }
                     Statement::Loop(Loop(label, block)) => {
                         trace!("loop");
-                        let loop_start_label = ctx.loop_start_label(*label);
-                        let loop_end_label = ctx.loop_end_label(*label);
+                        let identified_label = ctx.new_label(*label);
+                        let loop_start_label = ctx.loop_start_label(&identified_label);
+                        let loop_end_label = ctx.loop_end_label(&identified_label);
                         ctx.push_section(&loop_start_label);
-                        ctx.push_scope(format!("loop {label}"), Some(*label));
+                        let scope_variable = ScopeLabel::Label(identified_label);
+                        ctx.push_scope(format!("loop {label}"), scope_variable.clone());
                         go(ctx, depth + 1, block)?;
                         // append scope cleanup code just before jumping back to the beginning of
                         // the loop
                         ctx.cleanup_scopes_to_label(
                             *label,
-                            &format!("loop_exit_[{}]", label.0.span),
+                            &format!("loop_exit_[{identified_label}]"),
                         );
                         // exit scope
-                        ctx.pop_scope(Some(*label), false)?;
+                        ctx.pop_scope(scope_variable, false)?;
                         ctx.current_section().extend_from_slice(&[
                             AsmOp::PUSHL(loop_start_label.into()),
                             AsmOp::JUMP,
@@ -360,7 +344,7 @@ impl<'a> Ctx<'a> {
                         // append scope cleanup code just before exiting the loop
                         ctx.cleanup_scopes_to_label(
                             *label,
-                            &format!("loop_break_[{}]", label.0.span),
+                            &format!("loop_break_{dest_label}_[{}]", label.span()),
                         );
 
                         trace!("cleaned up scope '{label}'");
@@ -379,7 +363,7 @@ impl<'a> Ctx<'a> {
                         // the loop
                         ctx.cleanup_scopes_to_label(
                             *label,
-                            &format!("loop_continue_[{}]", label.0.span),
+                            &format!("loop_continue_{dest_label}_[{}]", label.span()),
                         );
 
                         ctx.current_section().extend_from_slice(&[
@@ -443,9 +427,9 @@ impl<'a> Ctx<'a> {
                                 block.span()
                             ));
 
-                            ctx.push_scope("if block".to_owned(), None);
+                            ctx.push_scope("if block".to_owned(), ScopeLabel::None);
                             go(ctx, depth + 1, &block)?;
-                            ctx.pop_scope(None, true)?;
+                            ctx.pop_scope(ScopeLabel::None, true)?;
 
                             if let Some(end_label) = end_label_if_tail {
                                 ctx.current_section()
@@ -605,10 +589,11 @@ impl<'a> Ctx<'a> {
 
                             def_ctx.push_section(&format!("{def_label}/BODY"));
 
-                            def_ctx.push_scope(format!("def '{}' body", def.ident), None);
+                            def_ctx
+                                .push_scope(format!("def '{}' body", def.ident), ScopeLabel::None);
                             // compile the fn body
                             go(&mut def_ctx, depth + 1, &def.body)?;
-                            def_ctx.pop_scope(None, true)?;
+                            def_ctx.pop_scope(ScopeLabel::None, true)?;
 
                             def_ctx
                                 .sections
@@ -640,7 +625,7 @@ impl<'a> Ctx<'a> {
                 "go end: {}",
                 ctx.scopes
                     .iter()
-                    .map(|s| s.label.map_or("<none>", |label| label.0.inner))
+                    .map(|s| s.label.to_string())
                     .collect::<Vec<_>>()
                     .join(",")
             );
@@ -653,6 +638,8 @@ impl<'a> Ctx<'a> {
 
             Ok(())
         }
+
+        let root = self.cfg.add_node(BasicBlock::Root);
 
         go(self, 0, block)
     }
@@ -1014,7 +1001,7 @@ impl<'a> Ctx<'a> {
                                 });
                             }
 
-                            ctx.push_scope(format!("def '{}' args", def.ident), None);
+                            ctx.push_scope(format!("def '{}' args", def.ident), ScopeLabel::None);
                             let mut args = def.args.clone();
                             args.reverse();
                             // dbg!(*f, &args);
@@ -1048,7 +1035,7 @@ impl<'a> Ctx<'a> {
                             // dbg!(&ctx);
 
                             // all args are dropped from the stack
-                            ctx.pop_scope(None, false)?;
+                            ctx.pop_scope(ScopeLabel::None, false)?;
 
                             ctx.current_section()
                                 .extend([AsmOp::PUSHL(def_label.into()), AsmOp::CALL]);
@@ -1078,6 +1065,11 @@ impl<'a> Ctx<'a> {
         }
 
         go(self, 0, expr)
+    }
+
+    fn new_label(&mut self, label: Label<'a>) -> IdentifiedLabel<'a> {
+        self.next_scope_label_id = self.next_scope_label_id.increment();
+        IdentifiedLabel::new(label, self.next_scope_label_id)
     }
 }
 
@@ -1122,6 +1114,7 @@ impl fmt::Display for Edge {
 #[derive(Debug)]
 pub struct CheckCtx<'a> {
     prefix: String,
+    next_scope_label_id: LabelId,
     scopes: Vec<CheckScope<'a>>,
 }
 
@@ -1129,18 +1122,15 @@ pub struct CheckCtx<'a> {
 pub struct CheckScope<'a> {
     #[expect(dead_code)]
     tag: String,
-    label: Option<Label<'a>>,
+    label: ScopeLabel<'a>,
     vars: BTreeSet<Ident<'a>>,
     /// fn name -> label
     defs: BTreeMap<Ident<'a>, Def<'a>>,
 }
 
 impl<'a> CheckCtx<'a> {
-    fn push_scope(&mut self, tag: String, label: Option<Label<'a>>) {
-        trace!(
-            "pushing scope {} ({tag})",
-            label.map_or("<none>", |label| label.0.inner)
-        );
+    fn push_scope(&mut self, tag: String, label: ScopeLabel<'a>) {
+        trace!("pushing scope {label} ({tag})",);
         self.scopes.push(CheckScope {
             tag,
             label,
@@ -1149,32 +1139,24 @@ impl<'a> CheckCtx<'a> {
         });
     }
 
-    fn pop_scope(&mut self, label: Option<Label<'a>>) -> CompileResult {
-        trace!(
-            "pop_scope {}",
-            label.map_or("<none>", |label| label.0.inner)
-        );
+    fn pop_scope(&mut self, label: ScopeLabel<'a>) -> CompileResult {
+        trace!("pop_scope {label}",);
 
         loop {
             match self.scopes.pop() {
                 Some(scope) => {
-                    trace!(
-                        "popping scope {}",
-                        scope.label.map_or("<none>", |label| label.0.inner)
-                    );
-                    if label.is_none_or(|label| {
-                        scope.label.is_some_and(|scope_label| scope_label == label)
-                    }) {
+                    trace!("popping scope {}", scope.label);
+                    if label.matches_scope_label(&scope.label) {
                         return Ok(());
                     }
                 }
                 None => match label {
-                    Some(label) => {
+                    ScopeLabel::Label(label) => {
                         bug!(
                             "tried to exit out of named scope '{label}' but that scope does not exist in this context"
                         )
                     }
-                    None => return Ok(()),
+                    ScopeLabel::None => return Ok(()),
                 },
             }
         }
@@ -1196,16 +1178,9 @@ impl<'a> CheckCtx<'a> {
         trace!("scope_cleanup_asm {}", label);
 
         for scope in self.scopes.iter().rev() {
-            tracing::info!(
-                "appending drop asm for scope {}",
-                scope.label.map_or("<none>", |label| label.0.inner)
-            );
+            tracing::info!("appending drop asm for scope {}", scope.label);
 
-            if scope
-                .label
-                .as_ref()
-                .is_some_and(|scope_label| *scope_label == label)
-            {
+            if scope.label.matches_label(&label) {
                 return Ok(());
             }
         }
@@ -1360,7 +1335,7 @@ impl<'a> CheckCtx<'a> {
                 "go: {}",
                 ctx.scopes
                     .iter()
-                    .map(|s| s.label.map_or("<none>", |label| label.0.inner))
+                    .map(|s| s.label.to_string())
                     .collect::<Vec<_>>()
                     .join(",")
             );
@@ -1374,13 +1349,15 @@ impl<'a> CheckCtx<'a> {
                     }
                     Statement::Loop(Loop(label, block)) => {
                         trace!("loop");
-                        ctx.push_scope(format!("loop {label}"), Some(*label));
+                        let identified_label = ctx.new_label(*label);
+                        let scope_label = ScopeLabel::Label(identified_label);
+                        ctx.push_scope(format!("loop {label}"), scope_label.clone());
                         go(ctx, depth + 1, block)?;
                         // append scope cleanup code just before jumping back to the beginning of
                         // the loop
                         ctx.cleanup_scopes_to_label(*label)?;
                         // exit scope
-                        ctx.pop_scope(Some(*label))?;
+                        ctx.pop_scope(scope_label)?;
                     }
                     Statement::Break(Break(label)) => {
                         trace!("break");
@@ -1403,9 +1380,9 @@ impl<'a> CheckCtx<'a> {
                             // evaluate condition expression
                             ctx.check_expr(&cond)?;
 
-                            ctx.push_scope("if block".to_owned(), None);
+                            ctx.push_scope("if block".to_owned(), ScopeLabel::None);
                             go(ctx, depth + 1, &block)?;
-                            ctx.pop_scope(None)?;
+                            ctx.pop_scope(ScopeLabel::None)?;
 
                             if let Some(else_) = else_ {
                                 match else_ {
@@ -1497,10 +1474,11 @@ impl<'a> CheckCtx<'a> {
                                     .insert(*def_name, label.clone());
                             }
 
-                            def_ctx.push_scope(format!("def '{}' body", def.ident), None);
+                            def_ctx
+                                .push_scope(format!("def '{}' body", def.ident), ScopeLabel::None);
                             // compile the fn body
                             go(&mut def_ctx, depth + 1, &def.body)?;
-                            def_ctx.pop_scope(None)?;
+                            def_ctx.pop_scope(ScopeLabel::None)?;
 
                             Ok(())
                         })?
@@ -1512,7 +1490,7 @@ impl<'a> CheckCtx<'a> {
                 "go end: {}",
                 ctx.scopes
                     .iter()
-                    .map(|s| s.label.map_or("<none>", |label| label.0.inner))
+                    .map(|s| s.label.to_string())
                     .collect::<Vec<_>>()
                     .join(",")
             );
@@ -1676,7 +1654,7 @@ impl<'a> CheckCtx<'a> {
                                 });
                             }
 
-                            ctx.push_scope(format!("def '{}' args", def.ident), None);
+                            ctx.push_scope(format!("def '{}' args", def.ident), ScopeLabel::None);
                             let mut args = def.args.clone();
                             args.reverse();
 
@@ -1708,7 +1686,7 @@ impl<'a> CheckCtx<'a> {
                             }
 
                             // all args are dropped from the stack
-                            ctx.pop_scope(None)?;
+                            ctx.pop_scope(ScopeLabel::None)?;
                         }
                         _ => todo!(),
                     }
@@ -1722,19 +1700,29 @@ impl<'a> CheckCtx<'a> {
     }
 
     pub fn new(prefix: &str) -> Self {
+        let first_scope_label_id = LabelId::new();
+        let scope = CheckScope {
+            tag: "root".to_owned(),
+            label: ScopeLabel::Label(IdentifiedLabel::new(
+                Label::new(
+                    // TODO: Figure out a better way to do this
+                    format!("$ROOT/{prefix}").leak(),
+                ),
+                first_scope_label_id,
+            )),
+            vars: Default::default(),
+            defs: Default::default(),
+        };
         Self {
             prefix: prefix.to_owned(),
-            scopes: vec![CheckScope {
-                tag: "root".to_owned(),
-                label: Some(Label(Spanned {
-                    // TODO: Figure out a better way to do this
-                    inner: format!("$ROOT/{prefix}").leak(),
-                    span: (0..0).into(),
-                })),
-                vars: Default::default(),
-                defs: Default::default(),
-            }],
+            next_scope_label_id: first_scope_label_id.increment(),
+            scopes: vec![scope],
         }
+    }
+
+    fn new_label(&mut self, label: Label<'a>) -> IdentifiedLabel<'a> {
+        self.next_scope_label_id = self.next_scope_label_id.increment();
+        IdentifiedLabel::new(label, self.next_scope_label_id)
     }
 }
 
@@ -1753,6 +1741,83 @@ pub enum Scope2<'a> {
     DefBody {
         locals: BTreeMap<Ident<'a>, usize>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct LabelId(u32);
+
+impl LabelId {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn increment(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+impl fmt::Display for LabelId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct IdentifiedLabel<'a> {
+    label: Label<'a>,
+    id: LabelId,
+}
+
+impl<'a> IdentifiedLabel<'a> {
+    pub fn new(label: Label<'a>, id: LabelId) -> Self {
+        Self { label, id }
+    }
+}
+
+impl fmt::Display for IdentifiedLabel<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.label, self.id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScopeLabel<'a> {
+    None,
+    Label(IdentifiedLabel<'a>),
+}
+
+impl<'a> ScopeLabel<'a> {
+    pub fn as_label(&self) -> Option<&IdentifiedLabel<'a>> {
+        if let Self::Label(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn matches_scope_label(&self, other: &ScopeLabel<'_>) -> bool {
+        match (self, other) {
+            (ScopeLabel::None, _) => true,
+            (ScopeLabel::Label(_), ScopeLabel::None) => false,
+            (ScopeLabel::Label(this), ScopeLabel::Label(other)) => this == other,
+        }
+    }
+
+    pub fn matches_label(&self, other: &Label<'_>) -> bool {
+        match self {
+            ScopeLabel::None => false,
+            ScopeLabel::Label(il) => &il.label == other,
+        }
+    }
+}
+
+impl fmt::Display for ScopeLabel<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ScopeLabel::None => write!(f, "<none>"),
+            ScopeLabel::Label(il) => write!(f, "{il}"),
+        }
+    }
 }
 
 fn reverse_list_ops(list_len: usize) -> Vec<AsmOp<'static>> {
