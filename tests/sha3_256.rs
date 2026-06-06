@@ -74,12 +74,12 @@ fn nist_vectors() {
     let mut ctx = CheckCtx::new("root");
     ctx.check(&ast).unwrap();
     let ast = DefInline {}.run(&ctx, ast);
-    fs::write("ok.asm", print_ast(&ast)).unwrap();
+    // fs::write("ok.asm", print_ast(&ast)).unwrap();
 
     let mut ctx = CheckCtx::new("root");
     ctx.check(&ast).unwrap();
     let ast = ConstEval {}.run(&ctx, ast);
-    fs::write("err.asm", print_ast(&ast)).unwrap();
+    // fs::write("err.asm", print_ast(&ast)).unwrap();
 
     let mut ctx = Ctx::new_root();
 

@@ -28,6 +28,7 @@ type Section<'a> = IndexMap<String, Vec<AsmOp<'a>>>;
 pub struct Ctx<'a> {
     cfg: DiGraph<BasicBlock<'a>, Edge>,
     next_scope_label_id: LabelId,
+    salt_id_counter: u32,
     prefix: String,
     sections: Section<'a>,
     fns: IndexMap<String, Section<'a>>,
@@ -126,6 +127,7 @@ impl<'a> Ctx<'a> {
         Self {
             cfg: DiGraph::new(),
             next_scope_label_id: first_scope_label_id.increment(),
+            salt_id_counter: 0,
             prefix: prefix.to_owned(),
             sections: [(first_section_id, vec![])].into_iter().collect(),
             stack_depth: 0,
@@ -206,6 +208,12 @@ impl<'a> Ctx<'a> {
                 },
             }
         }
+    }
+
+    fn get_salt(&mut self) -> u32 {
+        let res = self.salt_id_counter;
+        self.salt_id_counter += 1;
+        res
     }
 
     fn cleanup_scopes_to_label(&mut self, label: Label<'a>, salt: &str) {
@@ -337,6 +345,8 @@ impl<'a> Ctx<'a> {
                     Statement::Break(Break(label)) => {
                         trace!("break");
 
+                        let salt = ctx.get_salt();
+
                         let dest_label = ctx.find_labelled_section(*label).unwrap();
 
                         let loop_end_label = ctx.loop_end_label(dest_label);
@@ -344,7 +354,7 @@ impl<'a> Ctx<'a> {
                         // append scope cleanup code just before exiting the loop
                         ctx.cleanup_scopes_to_label(
                             *label,
-                            &format!("loop_break_{dest_label}_[{}]", label.span()),
+                            &format!("loop_break_{dest_label}_{salt}"),
                         );
 
                         trace!("cleaned up scope '{label}'");
@@ -355,6 +365,8 @@ impl<'a> Ctx<'a> {
                     Statement::Continue(Continue(label)) => {
                         trace!("continue");
 
+                        let salt = ctx.get_salt();
+
                         let dest_label = ctx.find_labelled_section(*label).unwrap();
 
                         let loop_start_label = ctx.loop_start_label(dest_label);
@@ -363,7 +375,7 @@ impl<'a> Ctx<'a> {
                         // the loop
                         ctx.cleanup_scopes_to_label(
                             *label,
-                            &format!("loop_continue_{dest_label}_[{}]", label.span()),
+                            &format!("loop_continue_{dest_label}_{salt}"),
                         );
 
                         ctx.current_section().extend_from_slice(&[
