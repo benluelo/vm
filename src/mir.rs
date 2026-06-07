@@ -10,14 +10,17 @@ use tracing::{info, info_span, instrument, trace};
 
 use crate::{
     assembler::{AsmOp, Object},
-    mir::parse::{
-        Assignment, Block, Break, BuiltinOrDef, Continue, Def, Else, Expr, Ident, If, Label, Loop,
-        Statement,
+    mir::ast::{
+        Assignment, Block, Break, Builtin, BuiltinOrDef, Continue, Def, Else, Expr, Ident, If,
+        Label, Loop, Statement,
     },
 };
 
 pub mod parse;
 pub mod pass;
+
+pub mod ast;
+pub mod cfg;
 
 #[cfg(test)]
 mod tests;
@@ -26,9 +29,9 @@ type Section<'a> = IndexMap<String, Vec<AsmOp<'a>>>;
 
 #[derive(Debug)]
 pub struct Ctx<'a> {
-    cfg: DiGraph<BasicBlock<'a>, Edge>,
+    cfg: DiGraph<Node<'a>, Edge>,
     next_scope_label_id: LabelId,
-    salt_id_counter: u32,
+    salt_id_counter: Id,
     prefix: String,
     sections: Section<'a>,
     fns: IndexMap<String, Section<'a>>,
@@ -127,7 +130,7 @@ impl<'a> Ctx<'a> {
         Self {
             cfg: DiGraph::new(),
             next_scope_label_id: first_scope_label_id.increment(),
-            salt_id_counter: 0,
+            salt_id_counter: Id::new(),
             prefix: prefix.to_owned(),
             sections: [(first_section_id, vec![])].into_iter().collect(),
             stack_depth: 0,
@@ -210,19 +213,19 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn get_salt(&mut self) -> u32 {
+    fn get_salt(&mut self) -> Id {
         let res = self.salt_id_counter;
-        self.salt_id_counter += 1;
+        self.salt_id_counter = self.salt_id_counter.increment();
         res
     }
 
-    fn cleanup_scopes_to_label(&mut self, label: Label<'a>, salt: &str) {
+    fn cleanup_scopes_to_label(&mut self, label: Label<'a>, from: &str) {
         trace!("scope_cleanup_asm {}", label);
 
         for scope in self.scopes.iter().rev() {
             tracing::info!("appending drop asm for scope {}", scope.label);
 
-            let key = format!("{}:drop::{label}::{salt}::{}", self.prefix, scope.label);
+            let key = format!("{}:drop::{label}::{from}::{}", self.prefix, scope.label);
 
             self.sections.insert(key, scope.drop_asm());
 
@@ -233,11 +236,9 @@ impl<'a> Ctx<'a> {
     }
 
     fn get_var(&self, var: Ident<'a>) -> Option<usize> {
-        self.scopes.iter().find_map(|s| {
-            s.vars
-                .iter()
-                .find_map(|(v, i)| v.0.inner.eq(var.0.inner).then_some(*i))
-        })
+        self.scopes
+            .iter()
+            .find_map(|s| s.vars.iter().find_map(|(v, i)| v.eq(&var).then_some(*i)))
     }
 
     fn init_var<'b>(&'b mut self, var: Ident<'a>) -> usize {
@@ -256,11 +257,9 @@ impl<'a> Ctx<'a> {
     }
 
     fn get_def(&self, def: Ident<'a>) -> Option<&(Def<'a>, String)> {
-        self.scopes.iter().find_map(|s| {
-            s.defs
-                .iter()
-                .find_map(|(d, i)| d.0.inner.eq(def.0.inner).then_some(i))
-        })
+        self.scopes
+            .iter()
+            .find_map(|s| s.defs.iter().find_map(|(d, i)| d.eq(&def).then_some(i)))
     }
 
     fn current_scope(&mut self) -> &mut Scope<'a> {
@@ -319,7 +318,7 @@ impl<'a> Ctx<'a> {
                         ctx.current_section()
                             .extend(iter::repeat_n(AsmOp::POP, arity));
                     }
-                    Statement::Loop(Loop(label, block)) => {
+                    Statement::Loop(Loop { label, block }) => {
                         trace!("loop");
                         let identified_label = ctx.new_label(*label);
                         let loop_start_label = ctx.loop_start_label(&identified_label);
@@ -483,7 +482,7 @@ impl<'a> Ctx<'a> {
 
                         go_if(ctx, if_.clone(), depth)?;
                     }
-                    Statement::Assignment(Assignment(vars, expr)) => {
+                    Statement::Assignment(Assignment { vars, expr }) => {
                         let arity = ctx.expr_arity(0, expr, true)?;
                         assert_eq!(vars.len(), arity);
 
@@ -651,7 +650,7 @@ impl<'a> Ctx<'a> {
             Ok(())
         }
 
-        let root = self.cfg.add_node(BasicBlock::Root);
+        let root = self.cfg.add_node(Node::Root);
 
         go(self, 0, block)
     }
@@ -673,48 +672,52 @@ impl<'a> Ctx<'a> {
             Expr::Val(_) | Expr::Var(_) => Ok(1),
             Expr::Call {
                 spread,
-                f: builtin,
+                f:
+                    Spanned {
+                        inner: BuiltinOrDef::Builtin(builtin),
+                        ..
+                    },
                 args: _,
             } if matches!(
-                builtin.inner,
-                BuiltinOrDef::Add
-                    | BuiltinOrDef::Sub
-                    | BuiltinOrDef::Mul
-                    | BuiltinOrDef::Div
-                    | BuiltinOrDef::Exp
-                    | BuiltinOrDef::Mod
-                    | BuiltinOrDef::Eq
-                    | BuiltinOrDef::Lt
-                    | BuiltinOrDef::Gt
-                    | BuiltinOrDef::Shl
-                    | BuiltinOrDef::Shr
-                    | BuiltinOrDef::Or
-                    | BuiltinOrDef::Xor
-                    | BuiltinOrDef::And
-                    | BuiltinOrDef::Not
-                    | BuiltinOrDef::Neg
-                    | BuiltinOrDef::Dread1
-                    | BuiltinOrDef::Dread2
-                    | BuiltinOrDef::Dread3
-                    | BuiltinOrDef::Dread4
-                    | BuiltinOrDef::Dread5
-                    | BuiltinOrDef::Dread6
-                    | BuiltinOrDef::Dread7
-                    | BuiltinOrDef::Dread8
-                    | BuiltinOrDef::Dlen
-                    | BuiltinOrDef::Read1
-                    | BuiltinOrDef::Read2
-                    | BuiltinOrDef::Read3
-                    | BuiltinOrDef::Read4
-                    | BuiltinOrDef::Read5
-                    | BuiltinOrDef::Read6
-                    | BuiltinOrDef::Read7
-                    | BuiltinOrDef::Read8
+                builtin,
+                Builtin::Add
+                    | Builtin::Sub
+                    | Builtin::Mul
+                    | Builtin::Div
+                    | Builtin::Exp
+                    | Builtin::Mod
+                    | Builtin::Eq
+                    | Builtin::Lt
+                    | Builtin::Gt
+                    | Builtin::Shl
+                    | Builtin::Shr
+                    | Builtin::Or
+                    | Builtin::Xor
+                    | Builtin::And
+                    | Builtin::Not
+                    | Builtin::Neg
+                    | Builtin::Dread1
+                    | Builtin::Dread2
+                    | Builtin::Dread3
+                    | Builtin::Dread4
+                    | Builtin::Dread5
+                    | Builtin::Dread6
+                    | Builtin::Dread7
+                    | Builtin::Dread8
+                    | Builtin::Dlen
+                    | Builtin::Read1
+                    | Builtin::Read2
+                    | Builtin::Read3
+                    | Builtin::Read4
+                    | Builtin::Read5
+                    | Builtin::Read6
+                    | Builtin::Read7
+                    | Builtin::Read8
             ) =>
             {
                 if depth > 0 && *spread {
                     Err(CompileError::InvalidSpread {
-                        def: builtin.inner.to_string(),
+                        def: builtin.to_string(),
                     })
                 } else {
                     Ok(1)
@@ -722,31 +725,35 @@ impl<'a> Ctx<'a> {
             }
             Expr::Call {
                 spread,
-                f: builtin,
+                f:
+                    Spanned {
+                        inner: BuiltinOrDef::Builtin(builtin),
+                        ..
+                    },
                 args: _,
             } if matches!(
-                builtin.inner,
-                BuiltinOrDef::Alloc
-                    | BuiltinOrDef::Write1
-                    | BuiltinOrDef::Write2
-                    | BuiltinOrDef::Write3
-                    | BuiltinOrDef::Write4
-                    | BuiltinOrDef::Write5
-                    | BuiltinOrDef::Write6
-                    | BuiltinOrDef::Write7
-                    | BuiltinOrDef::Write8
-                    | BuiltinOrDef::Dcopy
-                    | BuiltinOrDef::Exit
-                    | BuiltinOrDef::Trap
+                builtin,
+                Builtin::Alloc
+                    | Builtin::Write1
+                    | Builtin::Write2
+                    | Builtin::Write3
+                    | Builtin::Write4
+                    | Builtin::Write5
+                    | Builtin::Write6
+                    | Builtin::Write7
+                    | Builtin::Write8
+                    | Builtin::Dcopy
+                    | Builtin::Exit
+                    | Builtin::Trap
             ) =>
             {
                 if *spread {
                     Err(CompileError::InvalidSpread {
-                        def: builtin.inner.to_string(),
+                        def: builtin.to_string(),
                     })
                 } else if depth > 0 || ensure_expr {
                     Err(CompileError::StatementBuiltin {
-                        builtin: builtin.inner.to_string(),
+                        builtin: builtin.to_string(),
                     })
                 } else {
                     Ok(0)
@@ -807,7 +814,7 @@ impl<'a> Ctx<'a> {
                 Expr::Var(var) => {
                     let Some(idx) = ctx.get_var(*var) else {
                         return Err(CompileError::VarNotFound {
-                            var: var.0.inner.to_owned(),
+                            var: var.to_string(),
                         });
                     };
                     // dbg!(&ctx.scopes);
@@ -864,138 +871,138 @@ impl<'a> Ctx<'a> {
                     }
 
                     match f.inner {
-                        BuiltinOrDef::Add => {
+                        BuiltinOrDef::Builtin(Builtin::Add) => {
                             ensure_arity_and_eval_args(ctx, depth, "add", 2, exprs)?;
                             ctx.current_section().push(AsmOp::ADD);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Mul => {
+                        BuiltinOrDef::Builtin(Builtin::Mul) => {
                             ensure_arity_and_eval_args(ctx, depth, "mul", 2, exprs)?;
                             ctx.current_section().push(AsmOp::MUL);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Sub => {
+                        BuiltinOrDef::Builtin(Builtin::Sub) => {
                             ensure_arity_and_eval_args(ctx, depth, "sub", 2, exprs)?;
                             ctx.current_section().push(AsmOp::SUB);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Div => {
+                        BuiltinOrDef::Builtin(Builtin::Div) => {
                             ensure_arity_and_eval_args(ctx, depth, "div", 2, exprs)?;
                             ctx.current_section().push(AsmOp::DIV);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Exp => {
+                        BuiltinOrDef::Builtin(Builtin::Exp) => {
                             ensure_arity_and_eval_args(ctx, depth, "exp", 2, exprs)?;
                             ctx.current_section().push(AsmOp::EXP);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Mod => {
+                        BuiltinOrDef::Builtin(Builtin::Mod) => {
                             ensure_arity_and_eval_args(ctx, depth, "mod", 2, exprs)?;
                             ctx.current_section().push(AsmOp::MOD);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Eq => {
+                        BuiltinOrDef::Builtin(Builtin::Eq) => {
                             ensure_arity_and_eval_args(ctx, depth, "eq", 2, exprs)?;
                             ctx.current_section().push(AsmOp::EQ);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Lt => {
+                        BuiltinOrDef::Builtin(Builtin::Lt) => {
                             ensure_arity_and_eval_args(ctx, depth, "lt", 2, exprs)?;
                             ctx.current_section().push(AsmOp::LT);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Gt => {
+                        BuiltinOrDef::Builtin(Builtin::Gt) => {
                             ensure_arity_and_eval_args(ctx, depth, "gt", 2, exprs)?;
                             ctx.current_section().push(AsmOp::GT);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Shl => {
+                        BuiltinOrDef::Builtin(Builtin::Shl) => {
                             ensure_arity_and_eval_args(ctx, depth, "shl", 2, exprs)?;
                             ctx.current_section().push(AsmOp::SHL);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Shr => {
+                        BuiltinOrDef::Builtin(Builtin::Shr) => {
                             ensure_arity_and_eval_args(ctx, depth, "shr", 2, exprs)?;
                             ctx.current_section().push(AsmOp::SHR);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Or => {
+                        BuiltinOrDef::Builtin(Builtin::Or) => {
                             ensure_arity_and_eval_args(ctx, depth, "or", 2, exprs)?;
                             ctx.current_section().push(AsmOp::OR);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Xor => {
+                        BuiltinOrDef::Builtin(Builtin::Xor) => {
                             ensure_arity_and_eval_args(ctx, depth, "xor", 2, exprs)?;
                             ctx.current_section().push(AsmOp::XOR);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::And => {
+                        BuiltinOrDef::Builtin(Builtin::And) => {
                             ensure_arity_and_eval_args(ctx, depth, "and", 2, exprs)?;
                             ctx.current_section().push(AsmOp::AND);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Not => {
+                        BuiltinOrDef::Builtin(Builtin::Not) => {
                             ensure_arity_and_eval_args(ctx, depth, "not", 1, exprs)?;
                             ctx.current_section().push(AsmOp::NOT);
                         }
-                        BuiltinOrDef::Neg => {
+                        BuiltinOrDef::Builtin(Builtin::Neg) => {
                             ensure_arity_and_eval_args(ctx, depth, "neg", 1, exprs)?;
                             ctx.current_section().push(AsmOp::NEG);
                         }
-                        BuiltinOrDef::Alloc => {
+                        BuiltinOrDef::Builtin(Builtin::Alloc) => {
                             ensure_arity_and_eval_args(ctx, depth, "alloc", 1, exprs)?;
                             ctx.current_section().push(AsmOp::ALLOC);
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Write1 => {
+                        BuiltinOrDef::Builtin(Builtin::Write1) => {
                             ensure_arity_and_eval_args(ctx, depth, "write1", 2, exprs)?;
                             ctx.current_section().push(AsmOp::WRITE1);
                             ctx.dec_stack();
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Write2 => {
+                        BuiltinOrDef::Builtin(Builtin::Write2) => {
                             ensure_arity_and_eval_args(ctx, depth, "write2", 2, exprs)?;
                             ctx.current_section().push(AsmOp::WRITE2);
                             ctx.dec_stack();
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Write8 => {
+                        BuiltinOrDef::Builtin(Builtin::Write8) => {
                             ensure_arity_and_eval_args(ctx, depth, "write8", 2, exprs)?;
                             ctx.current_section().push(AsmOp::WRITE8);
                             ctx.dec_stack();
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Read1 => {
+                        BuiltinOrDef::Builtin(Builtin::Read1) => {
                             ensure_arity_and_eval_args(ctx, depth, "read1", 1, exprs)?;
                             ctx.current_section().push(AsmOp::READ1);
                         }
-                        BuiltinOrDef::Read8 => {
+                        BuiltinOrDef::Builtin(Builtin::Read8) => {
                             ensure_arity_and_eval_args(ctx, depth, "read8", 1, exprs)?;
                             ctx.current_section().push(AsmOp::READ8);
                         }
-                        BuiltinOrDef::Dread1 => {
+                        BuiltinOrDef::Builtin(Builtin::Dread1) => {
                             ensure_arity_and_eval_args(ctx, depth, "dread1", 1, exprs)?;
                             ctx.current_section().push(AsmOp::DREAD1);
                         }
-                        BuiltinOrDef::Dcopy => {
+                        BuiltinOrDef::Builtin(Builtin::Dcopy) => {
                             ensure_arity_and_eval_args(ctx, depth, "dcopy", 3, exprs)?;
                             ctx.current_section().push(AsmOp::DCOPY);
                             ctx.dec_stack();
                             ctx.dec_stack();
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Dlen => {
+                        BuiltinOrDef::Builtin(Builtin::Dlen) => {
                             ensure_arity_and_eval_args(ctx, depth, "dlen", 0, exprs)?;
                             ctx.current_section().push(AsmOp::DLEN);
                             ctx.inc_stack();
                         }
-                        BuiltinOrDef::Exit => {
+                        BuiltinOrDef::Builtin(Builtin::Exit) => {
                             ensure_arity_and_eval_args(ctx, depth, "exit", 2, exprs)?;
                             ctx.current_section().push(AsmOp::EXIT);
                             ctx.dec_stack();
                             ctx.dec_stack();
                         }
-                        BuiltinOrDef::Trap => {
+                        BuiltinOrDef::Builtin(Builtin::Trap) => {
                             ensure_arity_and_eval_args(ctx, depth, "trap", 1, exprs)?;
                             ctx.current_section().push(AsmOp::TRAP);
                             ctx.dec_stack();
@@ -1007,7 +1014,7 @@ impl<'a> Ctx<'a> {
 
                             if ctx.exprs_arity(depth + 1, exprs, true)? != def.args.len() {
                                 return Err(CompileError::InvalidArgCountDef {
-                                    def: def.ident.0.inner.to_owned(),
+                                    def: def.ident.to_string(),
                                     expected: def.args.len(),
                                     provided: exprs.len(),
                                 });
@@ -1086,18 +1093,21 @@ impl<'a> Ctx<'a> {
 }
 
 #[derive(Debug)]
-enum BasicBlock<'a> {
+enum Node<'a> {
     Root,
+    CallEntry,
+    CallExit,
     Expr(Expr<'a>),
     Assignment(Assignment<'a>),
 }
 
-impl fmt::Display for BasicBlock<'_> {
+impl fmt::Display for Node<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BasicBlock::Root => f.write_str("root"),
-            BasicBlock::Expr(expr) => f.write_fmt(format_args!("{expr}")),
-            BasicBlock::Assignment(assignment) => f.write_fmt(format_args!("{assignment}")),
+            Node::Root => f.write_str("root"),
+            Node::Expr(expr) => f.write_fmt(format_args!("{expr}")),
+            Node::Assignment(assignment) => f.write_fmt(format_args!("{assignment}")),
+            _ => todo!(),
         }
     }
 }
@@ -1207,48 +1217,52 @@ impl<'a> CheckCtx<'a> {
             Expr::Val(_) | Expr::Var(_) => Ok(1),
             Expr::Call {
                 spread,
-                f: builtin,
+                f:
+                    Spanned {
+                        inner: BuiltinOrDef::Builtin(builtin),
+                        ..
+                    },
                 args: _,
             } if matches!(
-                builtin.inner,
-                BuiltinOrDef::Add
-                    | BuiltinOrDef::Sub
-                    | BuiltinOrDef::Mul
-                    | BuiltinOrDef::Div
-                    | BuiltinOrDef::Exp
-                    | BuiltinOrDef::Mod
-                    | BuiltinOrDef::Eq
-                    | BuiltinOrDef::Lt
-                    | BuiltinOrDef::Gt
-                    | BuiltinOrDef::Shl
-                    | BuiltinOrDef::Shr
-                    | BuiltinOrDef::Or
-                    | BuiltinOrDef::Xor
-                    | BuiltinOrDef::And
-                    | BuiltinOrDef::Not
-                    | BuiltinOrDef::Neg
-                    | BuiltinOrDef::Dread1
-                    | BuiltinOrDef::Dread2
-                    | BuiltinOrDef::Dread3
-                    | BuiltinOrDef::Dread4
-                    | BuiltinOrDef::Dread5
-                    | BuiltinOrDef::Dread6
-                    | BuiltinOrDef::Dread7
-                    | BuiltinOrDef::Dread8
-                    | BuiltinOrDef::Dlen
-                    | BuiltinOrDef::Read1
-                    | BuiltinOrDef::Read2
-                    | BuiltinOrDef::Read3
-                    | BuiltinOrDef::Read4
-                    | BuiltinOrDef::Read5
-                    | BuiltinOrDef::Read6
-                    | BuiltinOrDef::Read7
-                    | BuiltinOrDef::Read8
+                builtin,
+                Builtin::Add
+                    | Builtin::Sub
+                    | Builtin::Mul
+                    | Builtin::Div
+                    | Builtin::Exp
+                    | Builtin::Mod
+                    | Builtin::Eq
+                    | Builtin::Lt
+                    | Builtin::Gt
+                    | Builtin::Shl
+                    | Builtin::Shr
+                    | Builtin::Or
+                    | Builtin::Xor
+                    | Builtin::And
+                    | Builtin::Not
+                    | Builtin::Neg
+                    | Builtin::Dread1
+                    | Builtin::Dread2
+                    | Builtin::Dread3
+                    | Builtin::Dread4
+                    | Builtin::Dread5
+                    | Builtin::Dread6
+                    | Builtin::Dread7
+                    | Builtin::Dread8
+                    | Builtin::Dlen
+                    | Builtin::Read1
+                    | Builtin::Read2
+                    | Builtin::Read3
+                    | Builtin::Read4
+                    | Builtin::Read5
+                    | Builtin::Read6
+                    | Builtin::Read7
+                    | Builtin::Read8
             ) =>
             {
                 if depth > 0 && *spread {
                     Err(CompileError::InvalidSpread {
-                        def: builtin.inner.to_string(),
+                        def: builtin.to_string(),
                     })
                 } else {
                     Ok(1)
@@ -1256,31 +1270,35 @@ impl<'a> CheckCtx<'a> {
             }
             Expr::Call {
                 spread,
-                f: builtin,
+                f:
+                    Spanned {
+                        inner: BuiltinOrDef::Builtin(builtin),
+                        ..
+                    },
                 args: _,
             } if matches!(
-                builtin.inner,
-                BuiltinOrDef::Alloc
-                    | BuiltinOrDef::Write1
-                    | BuiltinOrDef::Write2
-                    | BuiltinOrDef::Write3
-                    | BuiltinOrDef::Write4
-                    | BuiltinOrDef::Write5
-                    | BuiltinOrDef::Write6
-                    | BuiltinOrDef::Write7
-                    | BuiltinOrDef::Write8
-                    | BuiltinOrDef::Dcopy
-                    | BuiltinOrDef::Exit
-                    | BuiltinOrDef::Trap
+                builtin,
+                Builtin::Alloc
+                    | Builtin::Write1
+                    | Builtin::Write2
+                    | Builtin::Write3
+                    | Builtin::Write4
+                    | Builtin::Write5
+                    | Builtin::Write6
+                    | Builtin::Write7
+                    | Builtin::Write8
+                    | Builtin::Dcopy
+                    | Builtin::Exit
+                    | Builtin::Trap
             ) =>
             {
                 if *spread {
                     Err(CompileError::InvalidSpread {
-                        def: builtin.inner.to_string(),
+                        def: builtin.to_string(),
                     })
                 } else if depth > 0 || ensure_expr {
                     Err(CompileError::StatementBuiltin {
-                        builtin: builtin.inner.to_string(),
+                        builtin: builtin.to_string(),
                     })
                 } else {
                     Ok(0)
@@ -1327,11 +1345,9 @@ impl<'a> CheckCtx<'a> {
     }
 
     fn get_def(&self, def: &Ident<'a>) -> Option<&Def<'a>> {
-        self.scopes.iter().find_map(|s| {
-            s.defs
-                .iter()
-                .find_map(|(d, i)| d.0.inner.eq(def.0.inner).then_some(i))
-        })
+        self.scopes
+            .iter()
+            .find_map(|s| s.defs.iter().find_map(|(d, i)| d.eq(def).then_some(i)))
     }
 
     pub fn check<'b>(&mut self, block: &'b Block<'a>) -> CompileResult
@@ -1359,7 +1375,7 @@ impl<'a> CheckCtx<'a> {
                         ctx.expr_arity(0, expr, false)?;
                         ctx.check_expr(expr)?;
                     }
-                    Statement::Loop(Loop(label, block)) => {
+                    Statement::Loop(Loop { label, block }) => {
                         trace!("loop");
                         let identified_label = ctx.new_label(*label);
                         let scope_label = ScopeLabel::Label(identified_label);
@@ -1416,7 +1432,7 @@ impl<'a> CheckCtx<'a> {
 
                         go_if(ctx, if_.clone(), depth)?;
                     }
-                    Statement::Assignment(Assignment(vars, expr)) => {
+                    Statement::Assignment(Assignment { vars, expr }) => {
                         let arity = ctx.expr_arity(0, expr, true)?;
                         assert_eq!(vars.len(), arity);
 
@@ -1516,7 +1532,7 @@ impl<'a> CheckCtx<'a> {
     fn has_var(&self, var: Ident<'a>) -> bool {
         self.scopes
             .iter()
-            .any(|s| s.vars.iter().any(|v| v.0.inner.eq(var.0.inner)))
+            .any(|s| s.vars.iter().any(|v| v.eq(&var)))
     }
 
     fn init_var<'b>(&'b mut self, var: Ident<'a>) {
@@ -1535,7 +1551,7 @@ impl<'a> CheckCtx<'a> {
                 Expr::Var(var) => {
                     if !ctx.has_var(*var) {
                         return Err(CompileError::VarNotFound {
-                            var: var.0.inner.to_owned(),
+                            var: var.to_string(),
                         });
                     };
                 }
@@ -1572,85 +1588,85 @@ impl<'a> CheckCtx<'a> {
                     }
 
                     match f.inner {
-                        BuiltinOrDef::Add => {
+                        BuiltinOrDef::Builtin(Builtin::Add) => {
                             ensure_arity_and_eval_args(ctx, depth, "add", 2, exprs)?;
                         }
-                        BuiltinOrDef::Mul => {
+                        BuiltinOrDef::Builtin(Builtin::Mul) => {
                             ensure_arity_and_eval_args(ctx, depth, "mul", 2, exprs)?;
                         }
-                        BuiltinOrDef::Sub => {
+                        BuiltinOrDef::Builtin(Builtin::Sub) => {
                             ensure_arity_and_eval_args(ctx, depth, "sub", 2, exprs)?;
                         }
-                        BuiltinOrDef::Div => {
+                        BuiltinOrDef::Builtin(Builtin::Div) => {
                             ensure_arity_and_eval_args(ctx, depth, "div", 2, exprs)?;
                         }
-                        BuiltinOrDef::Exp => {
+                        BuiltinOrDef::Builtin(Builtin::Exp) => {
                             ensure_arity_and_eval_args(ctx, depth, "exp", 2, exprs)?;
                         }
-                        BuiltinOrDef::Mod => {
+                        BuiltinOrDef::Builtin(Builtin::Mod) => {
                             ensure_arity_and_eval_args(ctx, depth, "mod", 2, exprs)?;
                         }
-                        BuiltinOrDef::Eq => {
+                        BuiltinOrDef::Builtin(Builtin::Eq) => {
                             ensure_arity_and_eval_args(ctx, depth, "eq", 2, exprs)?;
                         }
-                        BuiltinOrDef::Lt => {
+                        BuiltinOrDef::Builtin(Builtin::Lt) => {
                             ensure_arity_and_eval_args(ctx, depth, "lt", 2, exprs)?;
                         }
-                        BuiltinOrDef::Gt => {
+                        BuiltinOrDef::Builtin(Builtin::Gt) => {
                             ensure_arity_and_eval_args(ctx, depth, "gt", 2, exprs)?;
                         }
-                        BuiltinOrDef::Shl => {
+                        BuiltinOrDef::Builtin(Builtin::Shl) => {
                             ensure_arity_and_eval_args(ctx, depth, "shl", 2, exprs)?;
                         }
-                        BuiltinOrDef::Shr => {
+                        BuiltinOrDef::Builtin(Builtin::Shr) => {
                             ensure_arity_and_eval_args(ctx, depth, "shr", 2, exprs)?;
                         }
-                        BuiltinOrDef::Or => {
+                        BuiltinOrDef::Builtin(Builtin::Or) => {
                             ensure_arity_and_eval_args(ctx, depth, "or", 2, exprs)?;
                         }
-                        BuiltinOrDef::Xor => {
+                        BuiltinOrDef::Builtin(Builtin::Xor) => {
                             ensure_arity_and_eval_args(ctx, depth, "xor", 2, exprs)?;
                         }
-                        BuiltinOrDef::And => {
+                        BuiltinOrDef::Builtin(Builtin::And) => {
                             ensure_arity_and_eval_args(ctx, depth, "and", 2, exprs)?;
                         }
-                        BuiltinOrDef::Not => {
+                        BuiltinOrDef::Builtin(Builtin::Not) => {
                             ensure_arity_and_eval_args(ctx, depth, "not", 1, exprs)?;
                         }
-                        BuiltinOrDef::Neg => {
+                        BuiltinOrDef::Builtin(Builtin::Neg) => {
                             ensure_arity_and_eval_args(ctx, depth, "neg", 1, exprs)?;
                         }
-                        BuiltinOrDef::Alloc => {
+                        BuiltinOrDef::Builtin(Builtin::Alloc) => {
                             ensure_arity_and_eval_args(ctx, depth, "alloc", 1, exprs)?;
                         }
-                        BuiltinOrDef::Write1 => {
+                        BuiltinOrDef::Builtin(Builtin::Write1) => {
                             ensure_arity_and_eval_args(ctx, depth, "write1", 2, exprs)?;
                         }
-                        BuiltinOrDef::Write2 => {
+                        BuiltinOrDef::Builtin(Builtin::Write2) => {
                             ensure_arity_and_eval_args(ctx, depth, "write2", 2, exprs)?;
                         }
-                        BuiltinOrDef::Write8 => {
+                        BuiltinOrDef::Builtin(Builtin::Write8) => {
                             ensure_arity_and_eval_args(ctx, depth, "write8", 2, exprs)?;
                         }
-                        BuiltinOrDef::Read1 => {
+                        BuiltinOrDef::Builtin(Builtin::Read1) => {
                             ensure_arity_and_eval_args(ctx, depth, "read1", 1, exprs)?;
                         }
-                        BuiltinOrDef::Read8 => {
+                        BuiltinOrDef::Builtin(Builtin::Read8) => {
                             ensure_arity_and_eval_args(ctx, depth, "read8", 1, exprs)?;
                         }
-                        BuiltinOrDef::Dread1 => {
+                        BuiltinOrDef::Builtin(Builtin::Dread1) => {
                             ensure_arity_and_eval_args(ctx, depth, "dread1", 1, exprs)?;
                         }
-                        BuiltinOrDef::Dcopy => {
+                        BuiltinOrDef::Builtin(Builtin::Dcopy) => {
                             ensure_arity_and_eval_args(ctx, depth, "dcopy", 3, exprs)?;
                         }
-                        BuiltinOrDef::Dlen => {
+                        BuiltinOrDef::Builtin(Builtin::Dlen) => {
                             ensure_arity_and_eval_args(ctx, depth, "dlen", 0, exprs)?;
                         }
-                        BuiltinOrDef::Exit => {
+                        BuiltinOrDef::Builtin(Builtin::Exit) => {
                             ensure_arity_and_eval_args(ctx, depth, "exit", 2, exprs)?;
                         }
-                        BuiltinOrDef::Trap => {
+                        BuiltinOrDef::Builtin(Builtin::Trap) => {
                             ensure_arity_and_eval_args(ctx, depth, "trap", 1, exprs)?;
                         }
                         BuiltinOrDef::Def(f) => {
@@ -1660,7 +1676,7 @@ impl<'a> CheckCtx<'a> {
 
                             if ctx.exprs_arity(depth + 1, exprs, true)? != def.args.len() {
                                 return Err(CompileError::InvalidArgCountDef {
-                                    def: def.ident.0.inner.to_owned(),
+                                    def: def.ident.to_string(),
                                     expected: def.args.len(),
                                     provided: exprs.len(),
                                 });
@@ -1829,6 +1845,25 @@ impl fmt::Display for ScopeLabel<'_> {
             ScopeLabel::None => write!(f, "<none>"),
             ScopeLabel::Label(il) => write!(f, "{il}"),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct Id(u32);
+
+impl Id {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn increment(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+impl fmt::Display for Id {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

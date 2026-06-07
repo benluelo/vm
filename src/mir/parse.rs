@@ -8,6 +8,11 @@ use chumsky::{
     },
 };
 
+use crate::mir::ast::{
+    Assignment, Block, Break, BuiltinOrDef, Continue, Def, Else, Expr, Ident, If, Label, Loop,
+    Statement, Val,
+};
+
 #[cfg(test)]
 mod tests;
 
@@ -61,7 +66,7 @@ pub fn grammar<'a>() -> Grammar<
     Parser!['a, Def<'a>],
 > {
     fn ident<'a>() -> Parser!['a, Ident<'a>] {
-        ascii::ident().spanned().padded().map(Ident)
+        ascii::ident().spanned().padded().map(Ident::new_spanned)
     }
 
     fn comment<'a>() -> Parser!['a, ()] {
@@ -91,7 +96,7 @@ pub fn grammar<'a>() -> Grammar<
         .spanned()
         .padded_by(comment().repeated())
         .padded()
-        .map(Val)
+        .map(Val::new_spanned)
     }
 
     fn expr<'a>() -> Parser!['a, Expr<'a>] {
@@ -129,7 +134,7 @@ pub fn grammar<'a>() -> Grammar<
             .collect::<Vec<_>>()
             .then_ignore(just("<-").padded())
             .then(expr())
-            .map(|(lhs, rhs)| Assignment(lhs, rhs))
+            .map(|(vars, expr)| Assignment { vars, expr })
             .padded_by(comment().repeated())
             .labelled("assignment")
     }
@@ -166,7 +171,7 @@ pub fn grammar<'a>() -> Grammar<
                     .clone()
                     .delimited_by(just('{').padded(), just('}').padded()),
             )
-            .map(|(label, statements)| Loop(label, statements))
+            .map(|(label, block)| Loop { label, block })
             .labelled("loop"),
     );
 
@@ -219,7 +224,7 @@ pub fn grammar<'a>() -> Grammar<
             .repeated()
             .collect()
             .spanned()
-            .map(Block)
+            .map(Block::new_spanned)
             .padded(),
     );
 
@@ -256,7 +261,7 @@ pub fn grammar<'a>() -> Grammar<
 
     fn label<'a>() -> Parser!['a, Label<'a>] {
         just(":")
-            .ignore_then(ascii::ident().spanned().map(Label))
+            .ignore_then(ascii::ident().spanned().map(Label::new_spanned))
             .padded()
             .labelled("label")
     }
@@ -293,405 +298,15 @@ pub fn grammar<'a>() -> Grammar<
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialOrd, Ord)]
-pub struct Ident<'a>(pub Spanned<&'a str>);
-
-impl<'a> fmt::Debug for Ident<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if f.alternate() {
-            write!(f, "Ident(\"{}\" @ {})", self.0.inner, self.0.span)
-        } else {
-            write!(f, "Ident(\"{}\")", self.0.inner)
-        }
-    }
-}
-
-impl<'a> PartialEq for Ident<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.inner == other.0.inner
-    }
-}
-
-impl<'a> fmt::Display for Ident<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Val(pub Spanned<u64>);
-
-impl Val {
-    pub fn value(&self) -> u64 {
-        self.0.inner
-    }
-}
-
-impl fmt::Display for Val {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0.inner, f)
-    }
-}
-
-impl fmt::LowerHex for Val {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::LowerHex::fmt(&self.0.inner, f)
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialOrd, Ord)]
-pub struct Label<'a>(Spanned<&'a str>);
-
-impl<'a> Label<'a> {
-    pub fn new(label: &'a str) -> Self {
-        Self(Spanned {
-            inner: label,
-            span: (0..0).into(),
-        })
-    }
-
-    pub fn span(&self) -> SimpleSpan {
-        self.0.span
-    }
-}
-
-impl<'a> fmt::Debug for Label<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if f.alternate() {
-            write!(f, "Label(\"{}\" @ {})", self.0.inner, self.0.span)
-        } else {
-            write!(f, "Label(\"{}\")", self.0.inner)
-        }
-    }
-}
-
-impl<'a> PartialEq for Label<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.inner == other.0.inner
-    }
-}
-
-impl<'a> fmt::Display for Label<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Block<'a>(Spanned<Vec<Statement<'a>>>);
-
-impl<'a> Block<'a> {
-    pub fn iter(&self) -> std::slice::Iter<'_, Statement<'a>> {
-        self.0.inner.iter()
-    }
-
-    pub fn span(&self) -> SimpleSpan {
-        self.0.span
-    }
-
-    pub fn new(statements: Vec<Statement<'a>>, span: impl Into<SimpleSpan>) -> Self {
-        Self(Spanned {
-            inner: statements,
-            span: span.into(),
-        })
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-impl<'a> IntoIterator for Block<'a> {
-    type Item = Statement<'a>;
-
-    type IntoIter = std::vec::IntoIter<Statement<'a>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.inner.into_iter()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Statement<'a> {
-    Expr(Expr<'a>),
-    Loop(Loop<'a>),
-    Break(Break<'a>),
-    Continue(Continue<'a>),
-    If(If<'a>),
-    Assignment(Assignment<'a>),
-    Def(Def<'a>),
-}
-
-// TODO: Parse builtins directly?
-#[derive(Debug, Clone)]
-pub enum Expr<'a> {
-    Val(Val),
-    Var(Ident<'a>),
-    Call {
-        spread: bool,
-        f: Spanned<BuiltinOrDef<'a>>,
-        args: Vec<Expr<'a>>,
-    },
-}
-
-impl Expr<'_> {
-    pub fn span(&self) -> SimpleSpan {
-        match self {
-            Expr::Val(val) => val.0.span,
-            Expr::Var(var) => var.0.span,
-            // TODO: Include the spread and args spans
-            Expr::Call {
-                spread: _,
-                f,
-                args: _,
-            } => f.span,
-        }
-    }
-}
-
-impl<'a> fmt::Display for Expr<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Expr::Val(val) => f.write_fmt(format_args!("{val:x}")),
-            Expr::Var(var) => f.write_fmt(format_args!("{var}")),
-            Expr::Call {
-                spread,
-                f: call,
-                args,
-            } => {
-                if *spread {
-                    f.write_str("...")?;
-                }
-                f.write_fmt(format_args!("{}", call.inner))?;
-                f.write_char('(')?;
-                for (i, expr) in args.iter().enumerate() {
-                    f.write_fmt(format_args!("{expr}"))?;
-                    if i < args.len() - 1 {
-                        f.write_str(", ")?;
-                    }
-                }
-                f.write_char(')')
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum BuiltinOrDef<'a> {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Exp,
-    Mod,
-    Eq,
-    Lt,
-    Gt,
-    Shl,
-    Shr,
-    Or,
-    Xor,
-    And,
-    Not,
-    Neg,
-    Dread1,
-    Dread2,
-    Dread3,
-    Dread4,
-    Dread5,
-    Dread6,
-    Dread7,
-    Dread8,
-    Dlen,
-    Read1,
-    Read2,
-    Read3,
-    Read4,
-    Read5,
-    Read6,
-    Read7,
-    Read8,
-    Alloc,
-    Write1,
-    Write2,
-    Write3,
-    Write4,
-    Write5,
-    Write6,
-    Write7,
-    Write8,
-    Dcopy,
-    Exit,
-    Trap,
-    Def(Ident<'a>),
-}
-
-impl<'a> fmt::Display for BuiltinOrDef<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Add => "add",
-            Self::Sub => "sub",
-            Self::Mul => "mul",
-            Self::Div => "div",
-            Self::Exp => "exp",
-            Self::Mod => "mod",
-            Self::Eq => "eq",
-            Self::Lt => "lt",
-            Self::Gt => "gt",
-            Self::Shl => "shl",
-            Self::Shr => "shr",
-            Self::Or => "or",
-            Self::Xor => "xor",
-            Self::And => "and",
-            Self::Not => "not",
-            Self::Neg => "neg",
-            Self::Dread1 => "dread1",
-            Self::Dread2 => "dread2",
-            Self::Dread3 => "dread3",
-            Self::Dread4 => "dread4",
-            Self::Dread5 => "dread5",
-            Self::Dread6 => "dread6",
-            Self::Dread7 => "dread7",
-            Self::Dread8 => "dread8",
-            Self::Dlen => "dlen",
-            Self::Read1 => "read1",
-            Self::Read2 => "read2",
-            Self::Read3 => "read3",
-            Self::Read4 => "read4",
-            Self::Read5 => "read5",
-            Self::Read6 => "read6",
-            Self::Read7 => "read7",
-            Self::Read8 => "read8",
-            Self::Alloc => "alloc",
-            Self::Write1 => "write1",
-            Self::Write2 => "write2",
-            Self::Write3 => "write3",
-            Self::Write4 => "write4",
-            Self::Write5 => "write5",
-            Self::Write6 => "write6",
-            Self::Write7 => "write7",
-            Self::Write8 => "write8",
-            Self::Dcopy => "dcopy",
-            Self::Exit => "exit",
-            Self::Trap => "trap",
-            Self::Def(ident) => ident.0.inner,
-        })
-    }
-}
-
-impl<'a> From<Ident<'a>> for BuiltinOrDef<'a> {
-    fn from(ident: Ident<'a>) -> Self {
-        match ident.0.inner {
-            "add" => Self::Add,
-            "sub" => Self::Sub,
-            "mul" => Self::Mul,
-            "div" => Self::Div,
-            "exp" => Self::Exp,
-            "mod" => Self::Mod,
-            "eq" => Self::Eq,
-            "lt" => Self::Lt,
-            "gt" => Self::Gt,
-            "shl" => Self::Shl,
-            "shr" => Self::Shr,
-            "or" => Self::Or,
-            "xor" => Self::Xor,
-            "and" => Self::And,
-            "not" => Self::Not,
-            "neg" => Self::Neg,
-            "dread1" => Self::Dread1,
-            "dread2" => Self::Dread2,
-            "dread3" => Self::Dread3,
-            "dread4" => Self::Dread4,
-            "dread5" => Self::Dread5,
-            "dread6" => Self::Dread6,
-            "dread7" => Self::Dread7,
-            "dread8" => Self::Dread8,
-            "dlen" => Self::Dlen,
-            "read1" => Self::Read1,
-            "read2" => Self::Read2,
-            "read3" => Self::Read3,
-            "read4" => Self::Read4,
-            "read5" => Self::Read5,
-            "read6" => Self::Read6,
-            "read7" => Self::Read7,
-            "read8" => Self::Read8,
-            "alloc" => Self::Alloc,
-            "write1" => Self::Write1,
-            "write2" => Self::Write2,
-            "write3" => Self::Write3,
-            "write4" => Self::Write4,
-            "write5" => Self::Write5,
-            "write6" => Self::Write6,
-            "write7" => Self::Write7,
-            "write8" => Self::Write8,
-            "dcopy" => Self::Dcopy,
-            "exit" => Self::Exit,
-            "trap" => Self::Trap,
-            _ => Self::Def(ident),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Break<'a>(pub Label<'a>);
-
-#[derive(Debug, Clone)]
-pub struct Continue<'a>(pub Label<'a>);
-
-#[derive(Debug, Clone)]
-pub struct Loop<'a>(pub Label<'a>, pub Block<'a>);
-
-#[derive(Debug, Clone)]
-pub struct If<'a> {
-    pub cond: Expr<'a>,
-    pub block: Block<'a>,
-    pub else_: Option<Else<'a>>,
-}
-
-#[derive(Debug, Clone)]
-pub enum Else<'a> {
-    ElseIf { if_: Box<Spanned<If<'a>>> },
-    Tail { block: Block<'a> },
-}
-
-#[derive(Debug, Clone)]
-pub struct Assignment<'a>(pub Vec<Ident<'a>>, pub Expr<'a>);
-
-impl<'a> fmt::Display for Assignment<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, var) in self.0.iter().enumerate() {
-            write!(f, "{var}")?;
-            if (i + 1) < self.0.len() {
-                f.write_str(", ")?;
-            }
-        }
-        f.write_str(" <- ")?;
-        write!(f, "{}", self.1)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Def<'a> {
-    pub ident: Ident<'a>,
-    pub args: Vec<Ident<'a>>,
-    pub rets: Vec<Ident<'a>>,
-    pub body: Block<'a>,
-}
-
 pub fn print_ast(ast: &Block<'_>) -> String {
     fn go(depth: usize, out: &mut String, ast: &Block<'_>) {
-        for s in &ast.0.inner {
+        for s in ast.iter() {
             match s {
                 Statement::Expr(expr) => {
                     out.push_str(&"  ".repeat(depth));
                     go_expr(out, expr);
                 }
-                Statement::Loop(Loop(label, block)) => {
+                Statement::Loop(Loop { label, block }) => {
                     out.push_str(&"  ".repeat(depth));
                     out.push_str("loop :");
                     write!(out, "{}", label).unwrap();
@@ -737,7 +352,7 @@ pub fn print_ast(ast: &Block<'_>) -> String {
 
                     go_if(depth, out, if_);
                 }
-                Statement::Assignment(Assignment(vars, expr)) => {
+                Statement::Assignment(Assignment { vars, expr }) => {
                     out.push_str(&"  ".repeat(depth));
                     for (i, var) in vars.iter().enumerate() {
                         write!(out, "{var}").unwrap();

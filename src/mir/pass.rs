@@ -1,11 +1,13 @@
-use chumsky::span::{SimpleSpan, Spanned};
+use chumsky::span::Spanned;
 use tracing::info;
 
-use super::parse::{BuiltinOrDef, Expr, Statement};
 use crate::{
     mir::{
         CheckCtx,
-        parse::{Assignment, Block, Def, Else, Ident, If, Loop, Val},
+        ast::{
+            Assignment, Block, Builtin, BuiltinOrDef, Def, Else, Expr, Ident, If, Loop, Statement,
+            Val,
+        },
     },
     op,
 };
@@ -31,17 +33,21 @@ impl Pass for ConstEval {
         for statement in block {
             let new_statement = match statement {
                 Statement::Expr(expr) => Statement::Expr(const_eval(expr)),
-                Statement::Loop(Loop(label, block)) => {
-                    Statement::Loop(Loop(label, self.run(check_ctx, block)))
-                }
+                Statement::Loop(Loop { label, block }) => Statement::Loop(Loop {
+                    label,
+                    block: self.run(check_ctx, block),
+                }),
                 Statement::If(If { cond, block, else_ }) => Statement::If(If {
                     cond: const_eval(cond),
                     block: self.run(check_ctx, block),
                     // TODO: Run on else blocks
                     else_,
                 }),
-                Statement::Assignment(Assignment(lhs, rhs)) => {
-                    Statement::Assignment(Assignment(lhs, const_eval(rhs)))
+                Statement::Assignment(Assignment { vars, expr }) => {
+                    Statement::Assignment(Assignment {
+                        vars,
+                        expr: const_eval(expr),
+                    })
                 }
                 Statement::Def(Def {
                     ident,
@@ -69,7 +75,7 @@ fn const_eval<'a>(expr: Expr<'a>) -> Expr<'a> {
         Expr::Val(val) => Expr::Val(val),
         Expr::Var(var) => Expr::Var(var),
         Expr::Call { spread, f, args } => {
-            use BuiltinOrDef::*;
+            use Builtin::*;
 
             // macro_rules! binop {
             //     ($ctor:ident, ) => {
@@ -79,16 +85,16 @@ fn const_eval<'a>(expr: Expr<'a>) -> Expr<'a> {
 
             let len = args.len();
 
-            let binop = |ctor: BuiltinOrDef<'a>, f_: fn(u64, u64) -> u64| -> Expr<'a> {
+            let binop = |ctor: Builtin, f_: fn(u64, u64) -> u64| -> Expr<'a> {
                 match (const_eval(args[0].clone()), const_eval(args[1].clone())) {
-                    (Expr::Val(l), Expr::Val(r)) => Expr::Val(Val(Spanned {
-                        inner: f_(l.0.inner, r.0.inner),
+                    (Expr::Val(l), Expr::Val(r)) => Expr::Val(Val::new_spanned(Spanned {
+                        inner: f_(l.value(), r.value()),
                         span: f.span,
                     })),
                     (l, r) => Expr::Call {
                         spread,
                         f: Spanned {
-                            inner: ctor,
+                            inner: ctor.into(),
                             span: f.span,
                         },
                         args: vec![l, r],
@@ -97,20 +103,20 @@ fn const_eval<'a>(expr: Expr<'a>) -> Expr<'a> {
             };
 
             match (f.inner, len) {
-                (Add, 2) => binop(Add, op::add),
-                (Sub, 2) => binop(Sub, |l, r| op::sub(r, l)),
-                (Mul, 2) => binop(Mul, op::mul),
+                (BuiltinOrDef::Builtin(Add), 2) => binop(Add, op::add),
+                (BuiltinOrDef::Builtin(Sub), 2) => binop(Sub, |l, r| op::sub(r, l)),
+                (BuiltinOrDef::Builtin(Mul), 2) => binop(Mul, op::mul),
                 // Div => todo!(),
                 // Exp => todo!(),
-                (Mod, 2) => binop(Mod, op::r#mod),
-                (Eq, 2) => binop(Eq, op::eq),
-                (Lt, 2) => binop(Lt, op::lt),
-                (Gt, 2) => binop(Gt, op::gt),
+                (BuiltinOrDef::Builtin(Mod), 2) => binop(Mod, op::r#mod),
+                (BuiltinOrDef::Builtin(Eq), 2) => binop(Eq, op::eq),
+                (BuiltinOrDef::Builtin(Lt), 2) => binop(Lt, op::lt),
+                (BuiltinOrDef::Builtin(Gt), 2) => binop(Gt, op::gt),
                 // Shl => todo!(),
                 // Shr => todo!(),
-                (Or, 2) => binop(Or, op::or),
-                (Xor, 2) => binop(Xor, op::xor),
-                (And, 2) => binop(And, op::and),
+                (BuiltinOrDef::Builtin(Or), 2) => binop(Or, op::or),
+                (BuiltinOrDef::Builtin(Xor), 2) => binop(Xor, op::xor),
+                (BuiltinOrDef::Builtin(And), 2) => binop(And, op::and),
                 // Not => todo!(),
                 // Neg => todo!(),
                 (f_, _) => Expr::Call {
@@ -164,12 +170,16 @@ impl Pass for DefInline {
         for statement in block {
             let new_statement = match statement {
                 Statement::Expr(expr) => Statement::Expr(def_inline(check_ctx, expr)),
-                Statement::Loop(Loop(label, block)) => {
-                    Statement::Loop(Loop(label, self.run(check_ctx, block)))
-                }
+                Statement::Loop(Loop { label, block }) => Statement::Loop(Loop {
+                    label,
+                    block: self.run(check_ctx, block),
+                }),
                 Statement::If(if_) => Statement::If(self.run_on_if_statement(check_ctx, if_)),
-                Statement::Assignment(Assignment(lhs, rhs)) => {
-                    Statement::Assignment(Assignment(lhs, def_inline(check_ctx, rhs)))
+                Statement::Assignment(Assignment { vars, expr }) => {
+                    Statement::Assignment(Assignment {
+                        vars,
+                        expr: def_inline(check_ctx, expr),
+                    })
                 }
                 Statement::Def(Def {
                     ident,
@@ -211,11 +221,11 @@ fn def_inline<'a>(check_ctx: &CheckCtx<'a>, expr: Expr<'a>) -> Expr<'a> {
                 if def.rets.len() == 1
                     && def.body.len() == 1
                     && let Statement::Assignment(assignment) = def.body.iter().next().unwrap()
-                    && assignment.0.len() == 1
-                    && assignment.0[0].0.inner == def.rets[0].0.inner
+                    && assignment.vars.len() == 1
+                    && assignment.vars[0] == def.rets[0]
                 {
                     info!("inlining");
-                    let mut a = assignment.1.clone();
+                    let mut a = assignment.expr.clone();
 
                     inline_def_args(&mut a, &args, &def.args);
 
