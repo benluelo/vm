@@ -20,7 +20,7 @@ pub mod parse;
 pub mod pass;
 
 pub mod ast;
-pub mod cfg;
+// pub mod cfg;
 
 #[cfg(test)]
 mod tests;
