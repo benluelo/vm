@@ -20,6 +20,7 @@ pub mod parse;
 pub mod pass;
 
 pub mod ast;
+pub mod ssa;
 // pub mod cfg;
 
 #[cfg(test)]
@@ -29,7 +30,8 @@ type Section<'a> = IndexMap<String, Vec<AsmOp<'a>>>;
 
 #[derive(Debug)]
 pub struct Ctx<'a> {
-    cfg: DiGraph<Node<'a>, Edge>,
+    // cfg: DiGraph<Node<'a>, Edge>,
+    cfg: DiGraph<Scope<'a>, ()>,
     next_scope_label_id: LabelId,
     salt_id_counter: Id,
     prefix: String,
@@ -61,6 +63,11 @@ impl<'a> Scope<'a> {
         out
     }
 }
+
+// pub struct VarInfo<'a> {
+//     pub ident: Ident<'a>,
+//     pub generation_counter: u32,
+// }
 
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum CompileError {
@@ -163,6 +170,7 @@ impl<'a> Ctx<'a> {
 
     fn inc_stack(&mut self) {
         trace!("inc_stack {} -> {}", self.stack_depth, self.stack_depth + 1);
+
         self.stack_depth += 1;
     }
 
@@ -650,7 +658,7 @@ impl<'a> Ctx<'a> {
             Ok(())
         }
 
-        let root = self.cfg.add_node(Node::Root);
+        // let root = self.cfg.add_node(Node::Root);
 
         go(self, 0, block)
     }

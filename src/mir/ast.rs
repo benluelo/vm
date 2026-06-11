@@ -34,8 +34,24 @@ impl<'a> fmt::Display for Ident<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Val(Spanned<u64>);
+
+impl fmt::Debug for Val {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            write!(f, "Val(\"{}\" @ {})", self.0.inner, self.0.span)
+        } else {
+            write!(f, "Val(\"{}\")", self.0.inner)
+        }
+    }
+}
+
+impl PartialEq for Val {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.inner == other.0.inner
+    }
+}
 
 impl Val {
     pub fn value(&self) -> u64 {
@@ -155,7 +171,6 @@ pub enum Statement<'a> {
     Def(Def<'a>),
 }
 
-// TODO: Parse builtins directly?
 #[derive(Debug, Clone)]
 pub enum Expr<'a> {
     Val(Val),
@@ -185,7 +200,7 @@ impl Expr<'_> {
 impl<'a> fmt::Display for Expr<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expr::Val(val) => f.write_fmt(format_args!("{val:x}")),
+            Expr::Val(val) => f.write_fmt(format_args!("0x{val:x}")),
             Expr::Var(var) => f.write_fmt(format_args!("{var}")),
             Expr::Call {
                 spread,
