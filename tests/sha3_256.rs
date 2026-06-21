@@ -6,7 +6,7 @@ use vm::{
     mir::{
         CheckCtx, Ctx,
         parse::{grammar, print_ast},
-        pass::{ConstEval, DefInline, Pass},
+        pass::{ConstEval, DefInline, Normalize, Pass},
     },
 };
 
@@ -80,6 +80,10 @@ fn nist_vectors() {
     ctx.check(&ast).unwrap();
     let ast = ConstEval {}.run(&ctx, ast);
     // fs::write("err.asm", print_ast(&ast)).unwrap();
+
+    let mut ctx = CheckCtx::new("root");
+    ctx.check(&ast).unwrap();
+    let ast = Normalize::new().run(&ctx, ast);
 
     let mut ctx = Ctx::new_root();
 

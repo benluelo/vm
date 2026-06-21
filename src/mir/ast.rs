@@ -1,14 +1,24 @@
 use core::fmt;
-use std::fmt::Write;
+use std::{borrow::Cow, fmt::Write};
 
 use chumsky::span::{SimpleSpan, Spanned};
 
-#[derive(Clone, Copy, Eq, PartialOrd, Ord)]
-pub struct Ident<'a>(Spanned<&'a str>);
+#[derive(Clone, Eq, PartialOrd, Ord)]
+pub struct Ident<'a>(Spanned<Cow<'a, str>>);
 
 impl<'a> Ident<'a> {
-    pub fn new_spanned(spanned: Spanned<&'a str>) -> Self {
-        Self(spanned)
+    pub fn new_spanned(spanned: Spanned<impl Into<Cow<'a, str>>>) -> Self {
+        Self(Spanned {
+            inner: spanned.inner.into(),
+            span: spanned.span,
+        })
+    }
+
+    pub fn new(ident: impl Into<Cow<'a, str>>) -> Self {
+        Self::new_spanned(Spanned {
+            inner: ident.into(),
+            span: (0..0).into(),
+        })
     }
 }
 
@@ -348,7 +358,7 @@ impl<'a> fmt::Display for BuiltinOrDef<'a> {
 
 impl<'a> From<Ident<'a>> for BuiltinOrDef<'a> {
     fn from(ident: Ident<'a>) -> Self {
-        match ident.0.inner {
+        match &*ident.0.inner {
             "add" => Self::Builtin(Builtin::Add),
             "sub" => Self::Builtin(Builtin::Sub),
             "mul" => Self::Builtin(Builtin::Mul),

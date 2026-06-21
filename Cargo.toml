@@ -21,5 +21,14 @@ thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["ansi", "env-filter"] }
 
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
+rand = "0.10.1"
+
 [features]
 tracing-off = ["tracing/max_level_off"]
+
+[[bench]]
+name = "ops"
+harness = false
+

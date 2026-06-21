@@ -20,7 +20,7 @@ pub mod parse;
 pub mod pass;
 
 pub mod ast;
-pub mod ssa;
+// pub mod ssa;
 // pub mod cfg;
 
 #[cfg(test)]
@@ -243,28 +243,28 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn get_var(&self, var: Ident<'a>) -> Option<usize> {
+    fn get_var(&self, var: &Ident<'a>) -> Option<usize> {
         self.scopes
             .iter()
             .find_map(|s| s.vars.iter().find_map(|(v, i)| v.eq(&var).then_some(*i)))
     }
 
-    fn init_var<'b>(&'b mut self, var: Ident<'a>) -> usize {
+    fn init_var<'b>(&'b mut self, var: &Ident<'a>) -> usize {
         self.init_var_with_depth_offset(var, 0)
     }
 
-    fn init_var_with_depth_offset(&mut self, var: Ident<'a>, depth: isize) -> usize {
+    fn init_var_with_depth_offset(&mut self, var: &Ident<'a>, depth: isize) -> usize {
         info!("PUSHING VAR {var} @ {depth}");
         let var_idx = self.stack_depth.strict_add_signed(depth);
         self.scopes
             .last_mut()
             .expect("no scopes?")
             .vars
-            .insert(var, var_idx);
+            .insert(var.clone(), var_idx);
         var_idx
     }
 
-    fn get_def(&self, def: Ident<'a>) -> Option<&(Def<'a>, String)> {
+    fn get_def(&self, def: &Ident<'a>) -> Option<&(Def<'a>, String)> {
         self.scopes
             .iter()
             .find_map(|s| s.defs.iter().find_map(|(d, i)| d.eq(&def).then_some(i)))
@@ -501,11 +501,11 @@ impl<'a> Ctx<'a> {
 
                         // if any vars on the lhs are updates, then init any newly declared vars
                         // first before evaluating the rhs
-                        if vars.iter().any(|v| ctx.get_var(*v).is_some()) {
+                        if vars.iter().any(|v| ctx.get_var(v).is_some()) {
                             for (i, var) in vars.iter().rev().enumerate() {
-                                if ctx.get_var(*var).is_none() {
+                                if ctx.get_var(var).is_none() {
                                     trace!("var decl '{var}' (i: {i}) [pre-init]");
-                                    let idx = ctx.init_var(*var);
+                                    let idx = ctx.init_var(var);
                                     ctx.inc_stack();
                                     // init the value to 0
                                     ctx.current_section().push(AsmOp::push(0));
@@ -518,7 +518,7 @@ impl<'a> Ctx<'a> {
                         ctx.compile_expr(expr)?;
 
                         for (i, var) in vars.iter().rev().enumerate() {
-                            match ctx.get_var(*var) {
+                            match ctx.get_var(var) {
                                 // var declaration, initial value was already pushed to the stack
                                 // above when evaluating the rhs
                                 // expression, so just store the variable's
@@ -526,7 +526,7 @@ impl<'a> Ctx<'a> {
                                 None => {
                                     trace!("var decl '{var}' (i: {i})");
                                     let idx =
-                                        ctx.init_var_with_depth_offset(*var, -((i + 1) as isize));
+                                        ctx.init_var_with_depth_offset(var, -((i + 1) as isize));
                                     trace!("idx = {idx}");
                                 }
                                 // var already declared, update it's value by evaluating the
@@ -561,7 +561,7 @@ impl<'a> Ctx<'a> {
                             // this function is callable in this scope
                             ctx.current_scope()
                                 .defs
-                                .insert(def.ident, (def.clone(), def_label.clone()));
+                                .insert(def.ident.clone(), (def.clone(), def_label.clone()));
 
                             let mut def_ctx = Ctx::new(&format!("{}/{def_label}", ctx.prefix));
                             def_ctx.push_section(&def_label);
@@ -575,7 +575,7 @@ impl<'a> Ctx<'a> {
                             // args are provided by the caller, init them in the new ctx
                             for arg in &def.args {
                                 trace!("arg '{arg}'");
-                                def_ctx.init_var(*arg);
+                                def_ctx.init_var(arg);
                                 def_ctx.inc_stack();
                             }
 
@@ -593,7 +593,7 @@ impl<'a> Ctx<'a> {
                             // init return values
                             for ret in def.rets.iter().rev() {
                                 trace!("ret '{ret}'");
-                                def_ctx.init_var(*ret);
+                                def_ctx.init_var(ret);
                                 def_ctx.inc_stack();
                                 def_ctx.current_section().push(AsmOp::push(0));
                             }
@@ -603,7 +603,7 @@ impl<'a> Ctx<'a> {
                                 def_ctx
                                     .current_scope()
                                     .defs
-                                    .insert(*def_name, label.clone());
+                                    .insert(def_name.clone(), label.clone());
                             }
 
                             def_ctx.push_section(&format!("{def_label}/BODY"));
@@ -772,7 +772,7 @@ impl<'a> Ctx<'a> {
                 f: def,
                 args: _,
             } => {
-                let BuiltinOrDef::Def(def) = def.inner else {
+                let BuiltinOrDef::Def(def) = &def.inner else {
                     bug!("attempted to call builtin {} as a def", def.inner)
                 };
 
@@ -820,7 +820,7 @@ impl<'a> Ctx<'a> {
                     ctx.inc_stack();
                 }
                 Expr::Var(var) => {
-                    let Some(idx) = ctx.get_var(*var) else {
+                    let Some(idx) = ctx.get_var(var) else {
                         return Err(CompileError::VarNotFound {
                             var: var.to_string(),
                         });
@@ -878,7 +878,7 @@ impl<'a> Ctx<'a> {
                         }
                     }
 
-                    match f.inner {
+                    match &f.inner {
                         BuiltinOrDef::Builtin(Builtin::Add) => {
                             ensure_arity_and_eval_args(ctx, depth, "add", 2, exprs)?;
                             ctx.current_section().push(AsmOp::ADD);
@@ -1018,7 +1018,7 @@ impl<'a> Ctx<'a> {
                         BuiltinOrDef::Def(f) => {
                             trace!("call '{f}'");
 
-                            let (def, def_label) = ctx.get_def(f).expect("def not found").clone();
+                            let (def, def_label) = ctx.get_def(&f).expect("def not found").clone();
 
                             if ctx.exprs_arity(depth + 1, exprs, true)? != def.args.len() {
                                 return Err(CompileError::InvalidArgCountDef {
@@ -1317,7 +1317,7 @@ impl<'a> CheckCtx<'a> {
                 f: def,
                 args: _,
             } => {
-                let BuiltinOrDef::Def(def) = def.inner else {
+                let BuiltinOrDef::Def(def) = &def.inner else {
                     bug!("attempted to call builtin {} as a def", def.inner)
                 };
 
@@ -1452,9 +1452,9 @@ impl<'a> CheckCtx<'a> {
                         // if any vars on the lhs are updates, then init any newly declared vars
                         // first before evaluating the rhs
                         for var in vars.iter().rev() {
-                            if !ctx.has_var(*var) {
+                            if !ctx.has_var(var) {
                                 trace!("var decl '{var}'");
-                                ctx.init_var(*var);
+                                ctx.init_var(var);
                             }
                         }
 
@@ -1472,7 +1472,7 @@ impl<'a> CheckCtx<'a> {
                                 .last_mut()
                                 .unwrap()
                                 .defs
-                                .insert(def.ident, def.clone());
+                                .insert(def.ident.clone(), def.clone());
 
                             let mut def_ctx = CheckCtx::new(&format!("{}/{def_label}", ctx.prefix));
 
@@ -1485,7 +1485,7 @@ impl<'a> CheckCtx<'a> {
                             // args are provided by the caller, init them in the new ctx
                             for arg in &def.args {
                                 trace!("arg '{arg}'");
-                                def_ctx.init_var(*arg);
+                                def_ctx.init_var(arg);
                             }
 
                             // account for @caller_ptr, also provided by the caller
@@ -1497,7 +1497,7 @@ impl<'a> CheckCtx<'a> {
                             // init return values
                             for ret in def.rets.iter().rev() {
                                 trace!("ret '{ret}'");
-                                def_ctx.init_var(*ret);
+                                def_ctx.init_var(ret);
                             }
 
                             // functions can access other functions visible in this scope
@@ -1507,7 +1507,7 @@ impl<'a> CheckCtx<'a> {
                                     .last_mut()
                                     .unwrap()
                                     .defs
-                                    .insert(*def_name, label.clone());
+                                    .insert(def_name.clone(), label.clone());
                             }
 
                             def_ctx
@@ -1537,14 +1537,18 @@ impl<'a> CheckCtx<'a> {
         go(self, 0, block)
     }
 
-    fn has_var(&self, var: Ident<'a>) -> bool {
+    fn has_var(&self, var: &Ident<'a>) -> bool {
         self.scopes
             .iter()
             .any(|s| s.vars.iter().any(|v| v.eq(&var)))
     }
 
-    fn init_var<'b>(&'b mut self, var: Ident<'a>) {
-        self.scopes.last_mut().expect("no scopes?").vars.insert(var);
+    fn init_var<'b>(&'b mut self, var: &Ident<'a>) {
+        self.scopes
+            .last_mut()
+            .expect("no scopes?")
+            .vars
+            .insert(var.clone());
     }
 
     fn check_expr(&mut self, expr: &Expr<'a>) -> CompileResult<()> {
@@ -1557,7 +1561,7 @@ impl<'a> CheckCtx<'a> {
                     trace!("val {val:#x}");
                 }
                 Expr::Var(var) => {
-                    if !ctx.has_var(*var) {
+                    if !ctx.has_var(var) {
                         return Err(CompileError::VarNotFound {
                             var: var.to_string(),
                         });
@@ -1595,7 +1599,7 @@ impl<'a> CheckCtx<'a> {
                         }
                     }
 
-                    match f.inner {
+                    match &f.inner {
                         BuiltinOrDef::Builtin(Builtin::Add) => {
                             ensure_arity_and_eval_args(ctx, depth, "add", 2, exprs)?;
                         }
