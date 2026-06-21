@@ -50,7 +50,10 @@ fn criterion_benchmark(c: &mut Criterion) {
             || Vm {
                 code: (0..10_000).flat_map(|_| Op::MOD.to_bytes()).collect(),
                 data: vec![],
-                stack: (0..10_001).map(|_| rng.random_range(1..u64::MAX)).collect(),
+                stack: (0..10_001)
+                    // .map(|_| rng.random_range(1..u64::MAX))
+                    .map(|_| 1)
+                    .collect(),
                 memory: vec![],
                 cycles: 0,
             },
