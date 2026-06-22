@@ -83,6 +83,7 @@
                 graphviz
                 samply
                 cargo-pgo
+                cargo-criterion
               ]);
             };
           };

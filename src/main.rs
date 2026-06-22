@@ -50,7 +50,7 @@ pub struct BuildCmd {
     #[argh(positional)]
     pub file: PathBuf,
 
-    /// if this flag is provided, the srouce file will be treated as a assembly
+    /// if this flag is provided, the source file will be treated as a assembly
     /// file rather than a code file.
     #[argh(switch)]
     pub asm: bool,
@@ -75,10 +75,15 @@ pub struct RunCmd {
     #[argh(positional)]
     pub file: PathBuf,
 
-    /// if this flag is provided, the srouce file will be treated as a assembly
+    /// if this flag is provided, the source file will be treated as a assembly
     /// file rather than a code file.
     #[argh(switch)]
     pub asm: bool,
+
+    /// if this flag is provided, the source file will be treated as an object
+    /// file rather than a code file.
+    #[argh(switch)]
+    pub obj: bool,
 
     /// input to be provided to the program.
     ///
@@ -175,21 +180,28 @@ fn main() -> anyhow::Result<()> {
         Cmd::Run(RunCmd {
             file,
             asm,
+            obj,
             input,
             input_file,
             input_hex,
         }) => {
-            let file = fs::read_to_string(&file)?;
+            if obj && asm {
+                bail!("--asm is incompatible with --obj")
+            }
 
-            let obj = if asm {
+            let obj = if obj {
+                fs::read(&file)?
+            } else if asm {
+                let file = fs::read_to_string(&file)?;
                 match parse_asm().parse(&file).into_result() {
                     Ok(obj) => obj.assemble(),
                     Err(errs) => {
-                        report_errors(&file, errs);
+                        report_errors(&fs::read_to_string(&file)?, errs);
                         return Ok(());
                     }
                 }
             } else {
+                let file = fs::read_to_string(&file)?;
                 match mir::parse::grammar().block.parse(&file).into_result() {
                     Ok(obj) => {
                         let mut ctx = CheckCtx::new("root");
@@ -210,7 +222,7 @@ fn main() -> anyhow::Result<()> {
                         ctx.into_object().assemble()
                     }
                     Err(errs) => {
-                        report_errors(&file, errs);
+                        report_errors(&fs::read_to_string(&file)?, errs);
                         return Ok(());
                     }
                 }

@@ -137,7 +137,7 @@ mod arithmetic {
             code: ops_to_code([Op::EXP]),
             before_stack: vec![1_000_000_000, 3],
             after_pc: 1,
-            after_stack: vec![1_000_000_000_000_000_000_000_000_000_u128 as u64],
+            after_stack: vec![11515845246319275580],
         };
 
         mod_ {

@@ -14,7 +14,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     op_bench(&mut group, "add", Op::ADD);
     op_bench(&mut group, "sub", Op::SUB);
     op_bench(&mut group, "mul", Op::MUL);
-    // op_bench(&mut group, "exp", Op::EXP);
+    op_bench(&mut group, "exp", Op::EXP);
     // op_bench(&mut group, "mod", Op::MOD);
     op_bench(&mut group, "eq", Op::EQ);
     op_bench(&mut group, "neq", Op::NEQ);
@@ -44,15 +44,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     group.bench_function("mod", |b| {
-        let mut rng = rand::rng();
-
         b.iter_batched(
             || Vm {
                 code: (0..10_000).flat_map(|_| Op::MOD.to_bytes()).collect(),
                 data: vec![],
-                stack: (0..10_001)
+                stack: (2..10_003)
+                    // .rev()
                     // .map(|_| rng.random_range(1..u64::MAX))
-                    .map(|_| 1)
+                    // .map(|_| 2)
+                    // .chain([1, 2])
                     .collect(),
                 memory: vec![],
                 cycles: 0,
@@ -62,21 +62,21 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
     });
 
-    group.bench_function("exp", |b| {
-        let mut rng = rand::rng();
+    // group.bench_function("exp", |b| {
+    //     let mut rng = rand::rng();
 
-        b.iter_batched(
-            || Vm {
-                code: (0..10_000).flat_map(|_| Op::EXP.to_bytes()).collect(),
-                data: vec![],
-                stack: (0..10_001).map(|_| rng.random::<u32>() as u64).collect(),
-                memory: vec![],
-                cycles: 0,
-            },
-            |vm| black_box(black_box(vm).run()).unwrap(),
-            BatchSize::SmallInput,
-        );
-    });
+    //     b.iter_batched(
+    //         || Vm {
+    //             code: (0..10_000).flat_map(|_| Op::EXP.to_bytes()).collect(),
+    //             data: vec![],
+    //             stack: (0..10_001).map(|_| rng.random::<u32>() as u64).collect(),
+    //             memory: vec![],
+    //             cycles: 0,
+    //         },
+    //         |vm| black_box(black_box(vm).run()).unwrap(),
+    //         BatchSize::SmallInput,
+    //     );
+    // });
 
     group.finish();
 }

@@ -1,5 +1,5 @@
 #![warn(clippy::panic, clippy::unwrap_in_result)]
-use std::fmt;
+use std::{fmt, hint::unreachable_unchecked};
 
 use anyhow::Result;
 use const_hex::ToHexExt;
@@ -68,6 +68,7 @@ impl Vm {
     }
 
     fn step(&mut self, pc: &mut usize) -> Result<StepResult, Error> {
+        #[inline]
         fn u64_from_bytes(arr: &[u8]) -> u64 {
             let mut v = [0; 8];
             v[8 - arr.len()..].copy_from_slice(arr);
@@ -78,7 +79,17 @@ impl Vm {
             return Ok(StepResult::Eof);
         };
 
-        let mut pop = || self.stack.pop().ok_or(Error::StackEmpty);
+        macro_rules! pop {
+            () => {
+                self.stack.pop().ok_or(Error::StackEmpty)?
+            };
+        }
+
+        macro_rules! last {
+            () => {
+                self.stack.last_mut().ok_or(Error::StackEmpty)?
+            };
+        }
 
         macro_rules! push_n {
             ($n:literal, $v:ident) => {{
@@ -91,8 +102,8 @@ impl Vm {
         macro_rules! write_n {
             ($n:literal) => {{
                 trace!("write{}", $n);
-                let value = pop()?;
-                let ptr = pop()? as usize;
+                let value = pop!();
+                let ptr = pop!() as usize;
                 trace!("{value:x} @ {ptr:x}");
                 let bytes = value.to_be_bytes();
                 self.memory
@@ -106,14 +117,14 @@ impl Vm {
         macro_rules! read_n {
             ($n:literal) => {{
                 trace!("read{}", $n);
-                let ptr = pop()? as usize;
+                let top = last!();
+                let ptr = *top as usize;
                 trace!("ptr: {ptr:x}");
                 let res = self
                     .memory
                     .get(ptr..((ptr + 8) - (8 - $n)))
                     .ok_or(Error::Segfault)?;
-                let value = u64_from_bytes(res);
-                self.stack.push(value);
+                *top = u64_from_bytes(res);
                 Ok(())
             }};
         }
@@ -121,11 +132,11 @@ impl Vm {
         macro_rules! dread_n {
             ($n:literal) => {{
                 trace!("dread{}", $n);
-                let ptr = pop()? as usize;
+                let top = last!();
+                let ptr = *top as usize;
                 trace!("ptr: {ptr:x}");
                 let res = self.data.get(ptr..ptr + $n).ok_or(Error::Segfault)?;
-                let value = u64_from_bytes(res);
-                self.stack.push(value);
+                *top = u64_from_bytes(res);
                 Ok(())
             }};
         }
@@ -147,24 +158,24 @@ impl Vm {
             Op::PUSH8(v) => push_n!(8, v),
             Op::DUP => {
                 trace!("dup");
-                let idx = pop()? as usize;
+                let idx = *(last!()) as usize;
                 trace!("idx = {idx:x}");
                 let stack_idx = self
                     .stack
                     .len()
                     .checked_sub(idx)
-                    .and_then(|i| i.checked_sub(1))
+                    .and_then(|i| i.checked_sub(2))
                     .ok_or(Error::InvalidStackIdx)?;
-                self.stack.push(
-                    self.stack
-                        .get(stack_idx)
-                        .copied()
-                        .ok_or(Error::InvalidStackIdx)?,
-                );
+
+                *unsafe { self.stack.last_mut().unwrap_unchecked() } = self
+                    .stack
+                    .get(stack_idx)
+                    .copied()
+                    .ok_or(Error::InvalidStackIdx)?;
             }
             Op::SWAP => {
                 trace!("swap");
-                let idx = pop()? as usize;
+                let idx = pop!() as usize;
                 if self.stack.len() < idx + 1 {
                     return Err(Error::InvalidStackIdx);
                 }
@@ -174,11 +185,11 @@ impl Vm {
             }
             Op::POP => {
                 trace!("pop");
-                pop()?;
+                pop!();
             }
             Op::ALLOC => {
                 trace!("alloc");
-                let size = pop()?;
+                let size = pop!();
                 self.memory.extend(vec![0; size as usize]);
             }
 
@@ -211,10 +222,24 @@ impl Vm {
 
             Op::DCOPY => {
                 trace!("dcopy");
-                let len = pop()? as usize;
-                let dst = pop()? as usize;
-                let src = pop()? as usize;
+                if self.stack.len() < 3 {
+                    return Err(Error::StackEmpty);
+                };
+
+                let Some([src, dst, len]) = self.stack.get(self.stack.len() - 3..) else {
+                    // unsafe { unreachable_unchecked() }
+                    unreachable!();
+                };
+
+                let len = *len as usize;
+                let dst = *dst as usize;
+                let src = *src as usize;
+
+                // unsafe { self.stack.set_len(self.stack.len() - 3) };
+                self.stack.truncate(self.stack.len() - 3);
+
                 trace!("len: {len:x}, dst: {dst:x}, src: {src:x}");
+
                 self.memory
                     .get_mut(dst..dst + len)
                     .ok_or(Error::Segfault)?
@@ -228,125 +253,122 @@ impl Vm {
 
             Op::ADD => {
                 trace!("add");
-                let a = pop()?;
-                let b = pop()?;
-                self.stack.push(op::add(a, b));
+                let a = pop!();
+                let b = last!();
+                *b = op::add(a, *b);
             }
             Op::SUB => {
                 trace!("sub");
-                let a = pop()?;
-                let b = pop()?;
-                self.stack.push(op::sub(a, b));
+                let a = pop!();
+                let b = last!();
+                *b = op::sub(a, *b);
             }
             Op::MUL => {
                 trace!("mul");
-                let a = pop()?;
-                let b = pop()?;
+                let a = pop!();
+                let b = last!();
                 trace!("{a:x} * {b:x}");
-                self.stack.push(op::mul(a, b));
+                *b = op::mul(a, *b);
             }
             Op::DIV => {
                 trace!("div");
-                let a = pop()?;
-                let b = pop()?;
-                self.stack.push(op::div(a, b)?);
+                let a = pop!();
+                let b = last!();
+                *b = op::div(a, *b)?;
             }
             Op::EXP => {
                 trace!("exp");
-                let a = pop()?;
-                let b = pop()?;
+                let a = pop!();
+                let b = last!();
                 trace!("{b:x} ** {a:x}");
-                self.stack
-                    .push(b.wrapping_pow(a.try_into().map_err(|_| Error::InvalidStackValue)?));
+                *b = op::expmod(*b, a);
             }
             Op::MOD => {
                 trace!("mod");
-                let a = pop()?;
-                let b = pop()?;
+                let a = pop!();
+                let b = last!();
                 trace!("{b:x} % {a:x}");
-                self.stack.push(op::r#mod(a, b));
+                *b = op::r#mod(a, *b)?;
             }
             Op::EQ => {
                 trace!("eq");
-                let a = pop()?;
-                let b = pop()?;
-                self.stack.push(op::eq(a, b));
+                let a = pop!();
+                let b = last!();
+                *b = op::eq(a, *b);
             }
             Op::NEQ => {
                 trace!("neq");
-                let a = pop()?;
-                let b = pop()?;
-                self.stack.push(op::neq(a, b));
+                let a = pop!();
+                let b = last!();
+                *b = op::neq(a, *b);
             }
             Op::LT => {
                 trace!("lt");
-                let a = pop()?;
-                let b = pop()?;
+                let a = pop!();
+                let b = last!();
                 trace!("{b:x} < {a:x}");
-                self.stack.push(op::lt(a, b));
+                *b = op::lt(a, *b);
             }
             Op::GT => {
                 trace!("gt");
-                let a = pop()?;
-                let b = pop()?;
+                let a = pop!();
+                let b = last!();
                 trace!("{b:x} > {a:x}");
-                self.stack.push(op::gt(a, b));
+                *b = op::gt(a, *b);
             }
             Op::NOT => {
                 trace!("not");
-                let a = pop()?;
-                self.stack.push(op::not(a));
+                let a = last!();
+                *a = op::not(*a);
             }
             Op::SHL => {
                 trace!("shl");
-                let shift = pop()?;
-                let a = pop()?;
-                self.stack
-                    .push(a.unbounded_shl(shift.try_into().unwrap_or(u32::MAX)));
+                let shift = pop!();
+                let a = last!();
+                *a = a.unbounded_shl(shift.try_into().unwrap_or(u32::MAX));
             }
             Op::SHR => {
                 trace!("shr");
-                let shift = pop()?;
-                let a = pop()?;
+                let shift = pop!();
+                let a = last!();
                 trace!("a: {a:x}, shift: {shift:x}");
-                self.stack
-                    .push(a.unbounded_shr(shift.try_into().unwrap_or(u32::MAX)));
+                *a = a.unbounded_shr(shift.try_into().unwrap_or(u32::MAX));
             }
             Op::NEG => {
                 trace!("neg");
-                let a = pop()?;
-                self.stack.push(op::neg(a));
+                let a = last!();
+                *a = op::neg(*a);
             }
             Op::OR => {
                 trace!("or");
-                let a = pop()?;
-                let b = pop()?;
-                self.stack.push(op::or(a, b));
+                let a = pop!();
+                let b = last!();
+                *b = op::or(a, *b);
             }
             Op::XOR => {
                 trace!("xor");
-                let a = pop()?;
-                let b = pop()?;
-                self.stack.push(op::xor(a, b));
+                let a = pop!();
+                let b = last!();
+                *b = op::xor(a, *b);
             }
             Op::AND => {
                 trace!("and");
-                let a = pop()?;
-                let b = pop()?;
-                self.stack.push(op::and(a, b));
+                let a = pop!();
+                let b = last!();
+                *b = op::and(a, *b);
             }
 
             Op::JUMP => {
                 trace!("jump");
-                let dst = pop()?;
+                let dst = pop!();
                 trace!("dst = {dst:x}");
                 *pc = dst.try_into().map_err(|_| Error::PointerTooBig(dst))?;
             }
             Op::JNZ => {
                 trace!("jnz");
-                let dst = pop()?;
+                let dst = pop!();
                 trace!("dst = {dst:x}");
-                let value = pop()?;
+                let value = pop!();
                 trace!("value = {value:x}");
                 if value != 0 {
                     *pc = dst.try_into().map_err(|_| Error::PointerTooBig(dst))?;
@@ -354,17 +376,18 @@ impl Vm {
             }
             Op::CALL => {
                 trace!("call");
-                let address = pop()?;
-                self.stack.push(*pc as u64);
+                let top = last!();
+                let address = *top;
+                *top = *pc as u64;
                 *pc = address
                     .try_into()
                     .map_err(|_| Error::PointerTooBig(address))?;
             }
             Op::EXIT => {
                 trace!("exit");
-                let len = pop()?;
+                let len = pop!();
                 let len: usize = len.try_into().map_err(|_| Error::PointerTooBig(len))?;
-                let ptr = pop()?;
+                let ptr = pop!();
                 let ptr: usize = ptr.try_into().map_err(|_| Error::PointerTooBig(ptr))?;
 
                 return Ok(StepResult::Exit(
@@ -376,7 +399,7 @@ impl Vm {
             }
             Op::TRAP => {
                 trace!("trap");
-                let value = pop()?;
+                let value = pop!();
                 return Err(Error::Trap(value));
             }
         }
@@ -523,8 +546,12 @@ pub mod op {
     }
 
     #[inline(always)]
-    pub const fn r#mod(a: u64, b: u64) -> u64 {
-        b.wrapping_rem(a)
+    pub const fn r#mod(a: u64, b: u64) -> Result<u64, Error> {
+        if a == 0 {
+            Err(Error::DivideByZero)
+        } else {
+            Ok(b.wrapping_rem(a))
+        }
     }
 
     #[inline(always)]
@@ -545,6 +572,46 @@ pub mod op {
     #[inline(always)]
     pub const fn neg(a: u64) -> u64 {
         !a
+    }
+
+    #[inline]
+    pub fn expmod(a: u64, b: u64) -> u64 {
+        if b == 0 {
+            return 1;
+        }
+
+        let mut acc: u128 = 1;
+        let mut base = a as u128;
+        let mut exp = b;
+
+        loop {
+            if (exp & 1) == 1 {
+                acc = acc.strict_mul(base).rem_euclid(u64::MAX as _);
+                // since exp!=0, finally the exp must be 1.
+                if exp == 1 {
+                    return acc as u64;
+                }
+            }
+            exp >>= 1;
+            base = base.strict_mul(base).rem_euclid(u64::MAX as _);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn exp_ok() {
+            assert_eq!(expmod(2, 24), 2_u64.pow(24));
+
+            assert_eq!(expmod(3, 65), 7752514819847767473);
+
+            assert_eq!(
+                expmod(1844674407370955164, 18446744073709551),
+                8344168819056270514
+            );
+        }
     }
 }
 

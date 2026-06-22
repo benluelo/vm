@@ -1,6 +1,7 @@
 use std::fs;
 
 use chumsky::Parser;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
     Vm,
     mir::{
@@ -63,6 +64,11 @@ fn load_monte_vectors(file_name: &str) -> (Vec<u8>, Vec<Vec<u8>>) {
 
 #[test]
 fn nist_vectors() {
+    let _ = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::filter::EnvFilter::from_default_env())
+        .try_init();
+
     let raw = fs::read_to_string("tests/sha3-256.mir").unwrap();
 
     let ast = grammar().block.parse(&raw).unwrap();

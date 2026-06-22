@@ -32,3 +32,5 @@ tracing-off = ["tracing/max_level_off"]
 name = "ops"
 harness = false
 
+[profile.release]
+# debug-assertions = true

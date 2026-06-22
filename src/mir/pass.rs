@@ -537,7 +537,7 @@ fn const_eval<'a>(expr: Expr<'a>) -> Expr<'a> {
                 (BuiltinOrDef::Builtin(Mul), 2) => binop(Mul, op::mul),
                 // Div => todo!(),
                 // Exp => todo!(),
-                (BuiltinOrDef::Builtin(Mod), 2) => binop(Mod, op::r#mod),
+                (BuiltinOrDef::Builtin(Mod), 2) => binop(Mod, |a, b| op::r#mod(a, b).unwrap()),
                 (BuiltinOrDef::Builtin(Eq), 2) => binop(Eq, op::eq),
                 (BuiltinOrDef::Builtin(Lt), 2) => binop(Lt, op::lt),
                 (BuiltinOrDef::Builtin(Gt), 2) => binop(Gt, op::gt),
