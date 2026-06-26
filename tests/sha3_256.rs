@@ -133,5 +133,5 @@ fn nist_vectors() {
     run_tests("SHA3_256ShortMsg.rsp");
     run_tests("SHA3_256LongMsg.rsp");
 
-    // run_monte_tests("SHA3_256Monte.rsp");
+    run_monte_tests("SHA3_256Monte.rsp");
 }

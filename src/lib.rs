@@ -143,6 +143,27 @@ impl Vm {
 
         trace!("");
 
+        macro_rules! binop {
+            ($op:literal, $f:ident) => {{
+                trace!($op);
+                let len = self.stack.len();
+
+                if len < 2 {
+                    return Err(Error::StackEmpty);
+                };
+
+                let b = len - 2;
+                let a = len - 1;
+
+                unsafe {
+                    *self.stack.get_unchecked_mut(b) =
+                        op::$f(*self.stack.get_unchecked(a), *self.stack.get_unchecked(b))
+                };
+
+                unsafe { self.stack.set_len(a) };
+            }};
+        }
+
         match op {
             Op::PUSH0 => {
                 trace!("push0");
@@ -235,8 +256,8 @@ impl Vm {
                 let dst = *dst as usize;
                 let src = *src as usize;
 
-                // unsafe { self.stack.set_len(self.stack.len() - 3) };
-                self.stack.truncate(self.stack.len() - 3);
+                unsafe { self.stack.set_len(self.stack.len() - 3) };
+                // self.stack.truncate(self.stack.len() - 3);
 
                 trace!("len: {len:x}, dst: {dst:x}, src: {src:x}");
 
@@ -251,25 +272,9 @@ impl Vm {
                 self.stack.push(self.data.len() as u64);
             }
 
-            Op::ADD => {
-                trace!("add");
-                let a = pop!();
-                let b = last!();
-                *b = op::add(a, *b);
-            }
-            Op::SUB => {
-                trace!("sub");
-                let a = pop!();
-                let b = last!();
-                *b = op::sub(a, *b);
-            }
-            Op::MUL => {
-                trace!("mul");
-                let a = pop!();
-                let b = last!();
-                trace!("{a:x} * {b:x}");
-                *b = op::mul(a, *b);
-            }
+            Op::ADD => binop!("add", add),
+            Op::SUB => binop!("sub", sub),
+            Op::MUL => binop!("mul", mul),
             Op::DIV => {
                 trace!("div");
                 let a = pop!();
@@ -290,32 +295,10 @@ impl Vm {
                 trace!("{b:x} % {a:x}");
                 *b = op::r#mod(a, *b)?;
             }
-            Op::EQ => {
-                trace!("eq");
-                let a = pop!();
-                let b = last!();
-                *b = op::eq(a, *b);
-            }
-            Op::NEQ => {
-                trace!("neq");
-                let a = pop!();
-                let b = last!();
-                *b = op::neq(a, *b);
-            }
-            Op::LT => {
-                trace!("lt");
-                let a = pop!();
-                let b = last!();
-                trace!("{b:x} < {a:x}");
-                *b = op::lt(a, *b);
-            }
-            Op::GT => {
-                trace!("gt");
-                let a = pop!();
-                let b = last!();
-                trace!("{b:x} > {a:x}");
-                *b = op::gt(a, *b);
-            }
+            Op::EQ => binop!("eq", eq),
+            Op::NEQ => binop!("neq", neq),
+            Op::LT => binop!("lt", lt),
+            Op::GT => binop!("gt", gt),
             Op::NOT => {
                 trace!("not");
                 let a = last!();
@@ -339,24 +322,9 @@ impl Vm {
                 let a = last!();
                 *a = op::neg(*a);
             }
-            Op::OR => {
-                trace!("or");
-                let a = pop!();
-                let b = last!();
-                *b = op::or(a, *b);
-            }
-            Op::XOR => {
-                trace!("xor");
-                let a = pop!();
-                let b = last!();
-                *b = op::xor(a, *b);
-            }
-            Op::AND => {
-                trace!("and");
-                let a = pop!();
-                let b = last!();
-                *b = op::and(a, *b);
-            }
+            Op::OR => binop!("or", or),
+            Op::XOR => binop!("xor", xor),
+            Op::AND => binop!("and", and),
 
             Op::JUMP => {
                 trace!("jump");
