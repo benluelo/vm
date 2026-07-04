@@ -1,0 +1,36 @@
+{
+  "name": "tree-sitter-vm",
+  "version": "0.0.1",
+  "description": "Tree-sitter grammar for benluelo/vm MIR and assembly sources",
+  "main": "bindings/node",
+  "keywords": [
+    "parser",
+    "tree-sitter",
+    "vm",
+    "mir",
+    "assembly"
+  ],
+  "license": "MIT",
+  "files": [
+    "grammar.js",
+    "queries",
+    "src"
+  ],
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "test": "tree-sitter test"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.25.0"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.vm",
+      "file-types": [
+        "mir",
+        "asm"
+      ],
+      "injection-regex": "^(vm|mir|asm)$"
+    }
+  ]
+}

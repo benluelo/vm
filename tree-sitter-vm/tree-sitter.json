@@ -1,0 +1,27 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "vm",
+      "camelcase": "Vm",
+      "title": "VM",
+      "scope": "source.vm",
+      "file-types": [
+        "mir",
+        "asm"
+      ],
+      "injection-regex": "^(vm|mir|asm)$",
+      "class-name": "TreeSitterVm"
+    }
+  ],
+  "metadata": {
+    "version": "0.0.1",
+    "license": "MIT",
+    "description": "Tree-sitter grammar for benluelo/vm MIR and assembly sources",
+    "authors": [
+      {
+        "name": "kernelnomad"
+      }
+    ]
+  }
+}

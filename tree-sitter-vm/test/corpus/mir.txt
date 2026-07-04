@@ -1,0 +1,94 @@
+==================
+Definitions and control flow
+==================
+
+def digit_to_place(digit, idx) -> n {
+  n <- mul(digit, exp(10, sub(dlen(), add(idx, 1))))
+}
+
+if eq(dlen(), 0) {
+  trap(1)
+} else if 1 {
+  # noop
+} else {
+  trap(2)
+}
+
+loop :a {
+  counter <- add(counter, 1)
+  if eq(counter, 1) {
+    break :a
+  }
+  continue :a
+}
+
+---
+
+(source_file
+  (mir_program
+    (mir_definition
+      name: (identifier)
+      parameters: (mir_parameter
+        (identifier))
+      parameters: (mir_parameter
+        (identifier))
+      returns: (mir_return
+        (identifier))
+      body: (mir_block
+        (mir_assignment
+          left: (identifier)
+          right: (mir_call
+            function: (mir_builtin)
+            arguments: (identifier)
+            arguments: (mir_call
+              function: (mir_builtin)
+              arguments: (number)
+              arguments: (mir_call
+                function: (mir_builtin)
+                arguments: (mir_call
+                  function: (mir_builtin))
+                arguments: (mir_call
+                  function: (mir_builtin)
+                  arguments: (identifier)
+                  arguments: (number))))))))
+    (mir_if
+      condition: (mir_call
+        function: (mir_builtin)
+        arguments: (mir_call
+          function: (mir_builtin))
+        arguments: (number))
+      consequence: (mir_block
+        (mir_expression_statement
+          (mir_call
+            function: (mir_builtin)
+            arguments: (number))))
+      (mir_else_clause
+        alternative: (mir_if
+          condition: (number)
+          consequence: (mir_block
+            (mir_comment))
+          (mir_else_clause
+            alternative: (mir_block
+              (mir_expression_statement
+                (mir_call
+                  function: (mir_builtin)
+                  arguments: (number))))))))
+    (mir_loop
+      label: (mir_label)
+      body: (mir_block
+        (mir_assignment
+          left: (identifier)
+          right: (mir_call
+            function: (mir_builtin)
+            arguments: (identifier)
+            arguments: (number)))
+        (mir_if
+          condition: (mir_call
+            function: (mir_builtin)
+            arguments: (identifier)
+            arguments: (number))
+          consequence: (mir_block
+            (mir_break
+              label: (mir_label))))
+        (mir_continue
+          label: (mir_label))))))
