@@ -1,8 +1,13 @@
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::{self},
+};
+
+use crate::mir::ssa::id_map::IdMap;
 
 macro_rules! id {
     ($Ty:ident, $prefix:literal) => {
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
         pub struct $Ty(usize);
 
         impl crate::mir::ssa::id_map::Id for $Ty {
@@ -12,6 +17,12 @@ macro_rules! id {
 
             fn from_usize(id: usize) -> Self {
                 Self(id)
+            }
+        }
+
+        impl fmt::Debug for $Ty {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{self}")
             }
         }
 
@@ -25,17 +36,104 @@ macro_rules! id {
 
 #[derive(Debug)]
 pub struct Builder {
-    blocks: BTreeMap<BlockId, Block>,
-    defs: BTreeMap<DefId, Def>,
+    blocks: IdMap<BlockId, Block>,
+    defs: IdMap<DefId, ()>,
+    vars: IdMap<VarId, BlockId>,
+}
+
+impl fmt::Display for Builder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (block_id, block) in self.blocks.iter() {
+            if block.args.is_empty() {
+                writeln!(f, "{block_id}:")?;
+            } else {
+                write!(f, "{block_id}(")?;
+                for arg in &block.args {
+                    write!(f, "{arg} ")?;
+                }
+                write!(f, "):")?;
+            }
+
+            for statement in &block.instructions {
+                writeln!(f, "  {statement}")?;
+            }
+
+            writeln!(f, "  {}", block.terminal)?;
+
+            writeln!(f)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl Builder {
     pub(crate) fn new() -> Self {
         Self {
-            blocks: BTreeMap::new(),
-            defs: BTreeMap::new(),
+            blocks: IdMap::new(),
+            defs: IdMap::new(),
+            vars: IdMap::new(),
         }
     }
+
+    // pub fn blocks(&self) -> &BTreeMap<BlockId, Block> {
+    //     &self.blocks
+    // }
+
+    pub fn push_var(&mut self, in_block: BlockId) -> VarId {
+        let var_id = self.vars.insert(in_block);
+        self.blocks[in_block].def_vars.insert(var_id);
+        var_id
+    }
+
+    // pub fn pop_var(&mut self, id: VarId) {
+    //     self.vars.remove(id)
+    // }
+
+    pub fn push_def(&mut self) -> DefId {
+        self.defs.insert(())
+    }
+
+    pub fn push_statements(
+        &mut self,
+        block_id: BlockId,
+        statements: impl IntoIterator<Item = Statement>,
+    ) {
+        self.blocks
+            .get_mut(block_id)
+            .instructions
+            .extend(statements);
+    }
+
+    pub fn push_block(&mut self) -> BlockId {
+        self.blocks.insert(Block {
+            predecessors: vec![],
+            args: vec![],
+            instructions: vec![],
+            terminal: Terminal::None,
+            sealed: Sealed::No {
+                vars: BTreeSet::new(),
+            },
+            def_vars: BTreeSet::new(),
+        })
+    }
+
+    pub fn block(&self, block_id: BlockId) -> &Block {
+        self.blocks.get(block_id)
+    }
+
+    pub fn block_mut(&mut self, block_id: BlockId) -> &mut Block {
+        self.blocks.get_mut(block_id)
+    }
+
+    /// Get the block that a var was defined in.
+    pub fn get_var_def_block(&self, var_id: VarId) -> BlockId {
+        *self.vars.get(var_id)
+    }
+
+    // pub fn pop_def(&mut self, id: DefId) {
+    //     self.defs.remove(id);
+    // }
 }
 
 id!(BlockId, "bb");
@@ -44,24 +142,77 @@ id!(DefId, "f");
 
 #[derive(Debug, Clone)]
 pub struct Block {
-    args: Vec<VarId>,
-    instructions: Vec<Statement>,
-    terminal: Terminal,
+    pub predecessors: Vec<BlockId>,
+    pub args: Vec<VarId>,
+    pub instructions: Vec<Statement>,
+    pub terminal: Terminal,
+    pub sealed: Sealed,
+    pub def_vars: BTreeSet<VarId>,
+}
+
+impl Block {
+    pub fn is_sealed(&self) -> bool {
+        matches!(self.sealed, Sealed::Yes)
+    }
+
+    // pub fn undef_vars(&self) -> impl Iterator<Item = VarId> {
+    //     self.instructions.iter().flat_map(|s| match s {
+    //         Statement::Builtin(builtin_call) => todo!(),
+    //         Statement::Assignment { var_id, expr } => todo!(),
+    //         Statement::Call { def_id, args, rets } => todo!(),
+    //     })
+    // }
 }
 
 #[derive(Debug, Clone)]
+pub enum Sealed {
+    Yes,
+    No { vars: BTreeSet<VarId> },
+}
+
+#[derive(Clone)]
 pub enum Statement {
     /// Call to a builtin
     Builtin(BuiltinCall),
     /// Assignment of an expression to a variable
-    Assignment { var: VarId, expr: Expr },
+    Assignment { var_id: VarId, expr: Expr },
+    /// Call to a def, returning 0 or more values as a result
+    Call {
+        def_id: DefId,
+        /// Arguments to the function (either variables or constants)
+        args: Vec<Operand>,
+        /// Return values of the function
+        rets: Vec<VarId>,
+    },
+}
+
+impl fmt::Debug for Statement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self}")
+    }
 }
 
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Statement::Builtin(builtin_call) => write!(f, "{builtin_call}"),
-            Statement::Assignment { var, expr } => write!(f, "{var} <- {expr}"),
+            Statement::Assignment { var_id, expr } => write!(f, "{var_id} <- {expr}"),
+            Statement::Call { def_id, args, rets } => {
+                write!(
+                    f,
+                    "{rets} <- call {def_id}({args})",
+                    rets = rets
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    args = args
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+            }
         }
     }
 }
@@ -86,7 +237,7 @@ impl fmt::Display for Expr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum BuiltinCall {
     Add(Operand, Operand),
     Sub(Operand, Operand),
@@ -135,6 +286,12 @@ pub enum BuiltinCall {
     Trap(Operand),
 }
 
+impl fmt::Debug for BuiltinCall {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self}")
+    }
+}
+
 impl fmt::Display for BuiltinCall {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -180,7 +337,7 @@ impl fmt::Display for BuiltinCall {
             BuiltinCall::Write6(a, b) => write!(f, "write6({a}, {b})"),
             BuiltinCall::Write7(a, b) => write!(f, "write7({a}, {b})"),
             BuiltinCall::Write8(a, b) => write!(f, "write8({a}, {b})"),
-            BuiltinCall::Dcopy(a, b, o2) => write!(f, "dcopy({a}, {b}, {o2})"),
+            BuiltinCall::Dcopy(a, b, c) => write!(f, "dcopy({a}, {b}, {c})"),
             BuiltinCall::Exit(a, b) => write!(f, "exit({a}, {b})"),
             BuiltinCall::Trap(a) => write!(f, "trap({a})"),
         }
@@ -202,19 +359,7 @@ impl fmt::Display for Operand {
     }
 }
 
-impl Operand {
-    // fn from_ast_expr(expr: Expr<'_>) -> Self {
-    //     match expr {
-    //         Expr::Val(val) => Operand::Const(val.value()),
-    //         Expr::Var(ident) => Operand::Var(ident.to_string()),
-    //         Expr::Call { spread, f, args } => {
-    //             panic!("not normalized: {}", Expr::Call { spread, f, args })
-    //         }
-    //     }
-    // }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Terminal {
     /// Conditional jump to the provided label
     Jump {
@@ -227,6 +372,14 @@ pub enum Terminal {
     // Trap (Operand),
     // Exit (Operand, Operand),
     End,
+
+    None,
+}
+
+impl fmt::Debug for Terminal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self}")
+    }
 }
 
 impl fmt::Display for Terminal {
@@ -235,14 +388,15 @@ impl fmt::Display for Terminal {
             Terminal::Jump { cond, then, else_ } => write!(f, "if {cond} then {then} else {else_}"),
             Terminal::Goto(goto) => write!(f, "goto {goto}"),
             Terminal::End => write!(f, "end"),
+            Terminal::None => write!(f, "<NONE>"),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Goto {
-    label: BlockId,
-    args: Vec<Operand>,
+    pub label: BlockId,
+    pub args: Vec<Operand>,
 }
 
 impl fmt::Display for Goto {
@@ -264,7 +418,7 @@ impl fmt::Display for Goto {
 
 #[derive(Debug, Clone)]
 pub struct Def {
-    params: Vec<()>,
-    rets: Vec<()>,
+    params: Vec<VarId>,
+    rets: Vec<VarId>,
     blocks: BTreeMap<BlockId, Block>,
 }

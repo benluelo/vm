@@ -1,4 +1,4 @@
-use std::fmt::{self, Write};
+use std::fmt::Write;
 
 use chumsky::{
     prelude::*,
@@ -335,7 +335,7 @@ pub fn print_ast(ast: &Block<'_>) -> String {
                         out.push('}');
                         match else_ {
                             Some(Else::ElseIf { if_ }) => {
-                                print!(" else ");
+                                write!(out, " else ").unwrap();
                                 go_if(depth, out, if_);
                             }
                             Some(Else::Tail { block }) => {

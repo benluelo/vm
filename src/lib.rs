@@ -1,5 +1,5 @@
 #![warn(clippy::panic, clippy::unwrap_in_result)]
-use std::{fmt, hint::unreachable_unchecked};
+use std::fmt;
 
 use anyhow::Result;
 use const_hex::ToHexExt;

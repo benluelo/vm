@@ -5,7 +5,6 @@ use std::{
 
 use chumsky::span::Spanned;
 use indexmap::IndexMap;
-use petgraph::graph::DiGraph;
 use tracing::{info, info_span, instrument, trace};
 
 use crate::{
@@ -20,7 +19,7 @@ pub mod parse;
 pub mod pass;
 
 pub mod ast;
-// pub mod ssa;
+pub mod ssa;
 // pub mod cfg;
 
 #[cfg(test)]
@@ -30,8 +29,6 @@ type Section<'a> = IndexMap<String, Vec<AsmOp<'a>>>;
 
 #[derive(Debug)]
 pub struct Ctx<'a> {
-    // cfg: DiGraph<Node<'a>, Edge>,
-    cfg: DiGraph<Scope<'a>, ()>,
     next_scope_label_id: LabelId,
     salt_id_counter: Id,
     prefix: String,
@@ -135,7 +132,6 @@ impl<'a> Ctx<'a> {
             defs: Default::default(),
         };
         Self {
-            cfg: DiGraph::new(),
             next_scope_label_id: first_scope_label_id.increment(),
             salt_id_counter: Id::new(),
             prefix: prefix.to_owned(),
@@ -246,7 +242,7 @@ impl<'a> Ctx<'a> {
     fn get_var(&self, var: &Ident<'a>) -> Option<usize> {
         self.scopes
             .iter()
-            .find_map(|s| s.vars.iter().find_map(|(v, i)| v.eq(&var).then_some(*i)))
+            .find_map(|s| s.vars.iter().find_map(|(v, i)| v.eq(var).then_some(*i)))
     }
 
     fn init_var<'b>(&'b mut self, var: &Ident<'a>) -> usize {
@@ -267,7 +263,7 @@ impl<'a> Ctx<'a> {
     fn get_def(&self, def: &Ident<'a>) -> Option<&(Def<'a>, String)> {
         self.scopes
             .iter()
-            .find_map(|s| s.defs.iter().find_map(|(d, i)| d.eq(&def).then_some(i)))
+            .find_map(|s| s.defs.iter().find_map(|(d, i)| d.eq(def).then_some(i)))
     }
 
     fn current_scope(&mut self) -> &mut Scope<'a> {
@@ -1018,7 +1014,7 @@ impl<'a> Ctx<'a> {
                         BuiltinOrDef::Def(f) => {
                             trace!("call '{f}'");
 
-                            let (def, def_label) = ctx.get_def(&f).expect("def not found").clone();
+                            let (def, def_label) = ctx.get_def(f).expect("def not found").clone();
 
                             if ctx.exprs_arity(depth + 1, exprs, true)? != def.args.len() {
                                 return Err(CompileError::InvalidArgCountDef {
@@ -1097,47 +1093,6 @@ impl<'a> Ctx<'a> {
     fn new_label(&mut self, label: Label<'a>) -> IdentifiedLabel<'a> {
         self.next_scope_label_id = self.next_scope_label_id.increment();
         IdentifiedLabel::new(label, self.next_scope_label_id)
-    }
-}
-
-#[derive(Debug)]
-enum Node<'a> {
-    Root,
-    CallEntry,
-    CallExit,
-    Expr(Expr<'a>),
-    Assignment(Assignment<'a>),
-}
-
-impl fmt::Display for Node<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Node::Root => f.write_str("root"),
-            Node::Expr(expr) => f.write_fmt(format_args!("{expr}")),
-            Node::Assignment(assignment) => f.write_fmt(format_args!("{assignment}")),
-            _ => todo!(),
-        }
-    }
-}
-
-#[derive(Debug)]
-enum Edge {
-    None,
-    Break,
-    Continue,
-    IfTrue,
-    IfFalse,
-}
-
-impl fmt::Display for Edge {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Edge::None => f.write_str(""),
-            Edge::Break => f.write_str("break"),
-            Edge::Continue => f.write_str("continue"),
-            Edge::IfTrue => f.write_str("if true"),
-            Edge::IfFalse => f.write_str("if false"),
-        }
     }
 }
 
@@ -1322,7 +1277,7 @@ impl<'a> CheckCtx<'a> {
                 };
 
                 let arity = self
-                    .get_def(&def)
+                    .get_def(def)
                     .ok_or_else(|| CompileError::DefNotFound {
                         def: def.to_string(),
                     })?
@@ -1538,9 +1493,7 @@ impl<'a> CheckCtx<'a> {
     }
 
     fn has_var(&self, var: &Ident<'a>) -> bool {
-        self.scopes
-            .iter()
-            .any(|s| s.vars.iter().any(|v| v.eq(&var)))
+        self.scopes.iter().any(|s| s.vars.iter().any(|v| v.eq(var)))
     }
 
     fn init_var<'b>(&'b mut self, var: &Ident<'a>) {
@@ -1684,7 +1637,7 @@ impl<'a> CheckCtx<'a> {
                         BuiltinOrDef::Def(f) => {
                             trace!("call '{f}'");
 
-                            let def = ctx.get_def(&f).expect("def not found").clone();
+                            let def = ctx.get_def(f).expect("def not found").clone();
 
                             if ctx.exprs_arity(depth + 1, exprs, true)? != def.args.len() {
                                 return Err(CompileError::InvalidArgCountDef {
