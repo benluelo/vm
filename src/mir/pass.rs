@@ -1,17 +1,31 @@
 use crate::mir::{CheckCtx, ast::Block};
 
 mod const_eval;
+mod const_prop;
 mod dead_code_removal;
 mod def_inline;
+mod loop_unroll;
 mod normalize;
 
 pub use const_eval::ConstEval;
+pub use const_prop::ConstProp;
 pub use dead_code_removal::DeadCodeRemoval;
 pub use def_inline::DefInline;
+pub use loop_unroll::LoopUnroll;
 pub use normalize::Normalize;
 
 pub trait Pass {
     fn run<'a>(&mut self, check_ctx: &CheckCtx<'a>, block: Block<'a>) -> Block<'a>;
+}
+
+#[cfg(test)]
+fn init() {
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+    let _ = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::filter::EnvFilter::from_default_env())
+        .try_init();
 }
 
 #[cfg(test)]

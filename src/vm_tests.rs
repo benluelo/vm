@@ -51,7 +51,6 @@ macro_rules! test_cases {
     };
 }
 
-#[cfg(test)]
 mod arithmetic {
     use super::*;
 
@@ -268,7 +267,6 @@ mod arithmetic {
     }
 }
 
-#[cfg(test)]
 mod stack {
     use super::*;
 
@@ -373,7 +371,6 @@ mod stack {
     }
 }
 
-#[cfg(test)]
 mod data {
     use super::*;
 
@@ -386,5 +383,14 @@ mod data {
             before_memory: vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
             after_memory: vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
         };
+    }
+}
+
+mod tests {
+    use crate::op::*;
+
+    #[test]
+    fn ops() {
+        assert_eq!(add(mul(10, sub(5, 2)), 3), (10 * (5 - 2)) + 3);
     }
 }

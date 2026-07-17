@@ -1,13 +1,14 @@
 use std::fs;
 
 use chumsky::Parser;
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
     Vm,
     mir::{
         CheckCtx, Ctx,
         parse::grammar,
-        pass::{ConstEval, DefInline, Pass},
+        pass::{ConstEval, ConstProp, DefInline, LoopUnroll, Pass},
     },
 };
 
@@ -75,21 +76,34 @@ fn nist_vectors() {
 
     let mut ctx = CheckCtx::new("root");
     ctx.check(&ast).unwrap();
-    let ast = ConstEval {}.run(&ctx, ast);
+    let ast = DefInline::new().run(&ctx, ast);
 
     let mut ctx = CheckCtx::new("root");
     ctx.check(&ast).unwrap();
-    let ast = DefInline {}.run(&ctx, ast);
-    // fs::write("ok.asm", print_ast(&ast)).unwrap();
+    let ast = DefInline::new().run(&ctx, ast);
 
     let mut ctx = CheckCtx::new("root");
-    ctx.check(&ast).unwrap();
-    let ast = ConstEval {}.run(&ctx, ast);
-    // fs::write("err.asm", print_ast(&ast)).unwrap();
+    let ast = ctx.check_with(&ast, &mut LoopUnroll).unwrap();
 
-    // let mut ctx = CheckCtx::new("root");
-    // ctx.check(&ast).unwrap();
-    // let ast = Normalize::new().run(&ctx, ast);
+    let mut ctx = CheckCtx::new("root");
+    let ast = ctx.check_with(&ast, &mut LoopUnroll).unwrap();
+
+    let mut ast = ast;
+    for i in 0.. {
+        let mut ctx = CheckCtx::new("root");
+        let new_ast = ctx.check_with(&ast, &mut ConstProp).unwrap();
+
+        let mut ctx = CheckCtx::new("root");
+        ctx.check(&new_ast).unwrap();
+        let new_ast = ConstEval::new().run(&ctx, new_ast);
+
+        if new_ast == ast {
+            info!("ran const prop/eval loop {i} times");
+            break;
+        } else {
+            ast = new_ast;
+        }
+    }
 
     let mut ctx = Ctx::new_root();
 

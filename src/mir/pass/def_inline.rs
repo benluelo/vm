@@ -1,5 +1,5 @@
 use chumsky::span::Spanned;
-use tracing::info;
+use tracing::trace;
 
 use crate::mir::{
     CheckCtx,
@@ -15,11 +15,7 @@ impl DefInline {
         Self {}
     }
 
-    pub(crate) fn run_on_if_statement<'a>(
-        &mut self,
-        check_ctx: &CheckCtx<'a>,
-        if_: If<'a>,
-    ) -> If<'a> {
+    fn run_on_if_statement<'a>(&mut self, check_ctx: &CheckCtx<'a>, if_: If<'a>) -> If<'a> {
         If {
             cond: def_inline(check_ctx, if_.cond),
             block: self.run(check_ctx, if_.block),
@@ -103,7 +99,7 @@ fn def_inline<'a>(check_ctx: &CheckCtx<'a>, expr: Expr<'a>) -> Expr<'a> {
                     && assignment.vars.len() == 1
                     && assignment.vars[0] == def.rets[0]
                 {
-                    info!("inlining");
+                    trace!("inlining");
                     let mut a = assignment.expr.clone();
 
                     inline_def_args(&mut a, &args, &def.args);
@@ -112,7 +108,7 @@ fn def_inline<'a>(check_ctx: &CheckCtx<'a>, expr: Expr<'a>) -> Expr<'a> {
                 } else if def.body.len() == 1
                     && let Statement::Expr(expr) = def.body.iter().next().unwrap()
                 {
-                    info!("inlining");
+                    trace!("inlining");
                     let mut expr = expr.clone();
 
                     inline_def_args(&mut expr, &args, &def.args);
@@ -128,7 +124,7 @@ fn def_inline<'a>(check_ctx: &CheckCtx<'a>, expr: Expr<'a>) -> Expr<'a> {
     }
 }
 
-pub(crate) fn inline_def_args<'a>(expr: &mut Expr<'a>, params: &[Expr<'a>], args: &[Ident<'a>]) {
+fn inline_def_args<'a>(expr: &mut Expr<'a>, params: &[Expr<'a>], args: &[Ident<'a>]) {
     match expr {
         Expr::Val(_) => {}
         Expr::Var(ident) => {

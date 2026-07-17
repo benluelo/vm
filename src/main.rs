@@ -1,11 +1,12 @@
 #![warn(clippy::panic, clippy::unwrap_in_result)]
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, time::Instant};
 
 use anyhow::bail;
 use argh::{FromArgValue, FromArgs};
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::{Parser, error::Rich};
 use const_hex::ToHexExt;
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
     Vm,
@@ -13,7 +14,7 @@ use vm::{
     mir::{
         self, CheckCtx, Ctx,
         parse::print_ast,
-        pass::{ConstEval, DefInline, Pass},
+        pass::{ConstEval, ConstProp, DefInline, LoopUnroll, Pass},
     },
 };
 
@@ -152,7 +153,23 @@ fn main() -> anyhow::Result<()> {
             } else {
                 match mir::parse::grammar().block.parse(&source).into_result() {
                     Ok(obj) => {
-                        // println!("{}", print_ast(&obj));
+                        let mut ctx = CheckCtx::new("root");
+                        ctx.check(&obj)?;
+                        let obj = ConstEval::new().run(&ctx, obj);
+
+                        let mut ctx = CheckCtx::new("root");
+                        ctx.check(&obj)?;
+                        let obj = DefInline::new().run(&ctx, obj);
+
+                        let mut ctx = CheckCtx::new("root");
+                        ctx.check(&obj)?;
+                        let obj = DefInline::new().run(&ctx, obj);
+
+                        let mut ctx = CheckCtx::new("root");
+                        let obj = ctx.check_with(&obj, &mut LoopUnroll)?;
+
+                        println!("{}", print_ast(&obj));
+
                         let mut ctx = Ctx::new_root();
                         ctx.compile(&obj)?;
                         match emit {
@@ -203,22 +220,50 @@ fn main() -> anyhow::Result<()> {
             } else {
                 let file = fs::read_to_string(&file)?;
                 match mir::parse::grammar().block.parse(&file).into_result() {
-                    Ok(obj) => {
+                    Ok(ast) => {
                         let mut ctx = CheckCtx::new("root");
-                        ctx.check(&obj)?;
-                        let obj = ConstEval::new().run(&ctx, obj);
+                        ctx.check(&ast)?;
+                        let ast = DefInline::new().run(&ctx, ast);
 
                         let mut ctx = CheckCtx::new("root");
-                        ctx.check(&obj)?;
-                        let obj = DefInline::new().run(&ctx, obj);
+                        ctx.check(&ast)?;
+                        let ast = DefInline::new().run(&ctx, ast);
 
                         let mut ctx = CheckCtx::new("root");
-                        ctx.check(&obj)?;
-                        let obj = DefInline::new().run(&ctx, obj);
+                        let ast = ctx.check_with(&ast, &mut LoopUnroll)?;
 
-                        println!("{}", print_ast(&obj));
+                        let mut ctx = CheckCtx::new("root");
+                        let ast = ctx.check_with(&ast, &mut LoopUnroll)?;
+
+                        let mut ctx = CheckCtx::new("root");
+                        let ast = ctx.check_with(&ast, &mut LoopUnroll)?;
+
+                        let mut ctx = CheckCtx::new("root");
+                        let ast = ctx.check_with(&ast, &mut LoopUnroll)?;
+
+                        let mut ast = ast;
+                        for i in 0.. {
+                            let mut ctx = CheckCtx::new("root");
+                            let new_ast = ctx.check_with(&ast, &mut ConstProp)?;
+
+                            let mut ctx = CheckCtx::new("root");
+                            ctx.check(&new_ast)?;
+                            let new_ast = ConstEval::new().run(&ctx, new_ast);
+
+                            if new_ast == ast {
+                                info!("ran const prop/eval loop {i} times");
+                                break;
+                            } else {
+                                ast = new_ast;
+                            }
+                        }
+
+                        // fs::write("before.mir", print_ast(&ast))?;
+                        // fs::write("after.mir", print_ast(&ast2))?;
+
+                        // println!("{}", print_ast(&ast));
                         let mut ctx = Ctx::new_root();
-                        ctx.compile(&obj)?;
+                        ctx.compile(&ast)?;
                         ctx.into_object().assemble()
                     }
                     Err(errs) => {
@@ -241,9 +286,12 @@ fn main() -> anyhow::Result<()> {
             };
 
             let mut vm = Vm::new(obj, data);
+            let now = Instant::now();
             let res = vm.run();
+            let elapsed = now.elapsed();
             match res {
                 Ok(res) => {
+                    println!("time: {}", elapsed.as_secs_f64());
                     println!("total cycles: {}", vm.cycles);
                     println!("binary size: {}", vm.code.len());
                     match res {
@@ -255,7 +303,11 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-                Err(err) => println!("{err}"),
+                Err(err) => {
+                    println!("{err}");
+                    println!();
+                    println!("{}", const_hex::encode(vm.memory));
+                }
             }
         }
     }

@@ -68,7 +68,8 @@ impl fmt::Display for Builder {
 }
 
 impl Builder {
-    pub(crate) fn new() -> Self {
+    #[expect(clippy::new_without_default)]
+    pub fn new() -> Self {
         Self {
             blocks: IdMap::new(),
             defs: IdMap::new(),

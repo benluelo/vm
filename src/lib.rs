@@ -1,4 +1,5 @@
-#![warn(clippy::panic, clippy::unwrap_in_result)]
+// #![warn(clippy::panic, clippy::unwrap_in_result)]
+
 use std::fmt;
 
 use anyhow::Result;
@@ -157,7 +158,7 @@ impl Vm {
 
                 unsafe {
                     *self.stack.get_unchecked_mut(b) =
-                        op::$f(*self.stack.get_unchecked(a), *self.stack.get_unchecked(b))
+                        op::$f(*self.stack.get_unchecked(b), *self.stack.get_unchecked(a))
                 };
 
                 unsafe { self.stack.set_len(a) };
@@ -277,23 +278,31 @@ impl Vm {
             Op::MUL => binop!("mul", mul),
             Op::DIV => {
                 trace!("div");
-                let a = pop!();
-                let b = last!();
-                *b = op::div(a, *b)?;
+                let len = self.stack.len();
+                if len < 2 {
+                    return Err(Error::StackEmpty);
+                };
+                let b = len - 2;
+                let a = len - 1;
+                unsafe {
+                    *self.stack.get_unchecked_mut(b) =
+                        op::div(*self.stack.get_unchecked(b), *self.stack.get_unchecked(a))?
+                };
+                unsafe { self.stack.set_len(a) };
             }
-            Op::EXP => {
-                trace!("exp");
-                let a = pop!();
-                let b = last!();
-                trace!("{b:x} ** {a:x}");
-                *b = op::expmod(*b, a);
-            }
+            // Op::DIV => {
+            //     trace!("div");
+            //     let a = pop!();
+            //     let b = last!();
+            //     *b = op::div(a, *b)?;
+            // }
+            Op::EXP => binop!("exp", expmod),
             Op::MOD => {
                 trace!("mod");
                 let a = pop!();
                 let b = last!();
                 trace!("{b:x} % {a:x}");
-                *b = op::r#mod(a, *b)?;
+                *b = op::r#mod(*b, a)?;
             }
             Op::EQ => binop!("eq", eq),
             Op::NEQ => binop!("neq", neq),
@@ -466,25 +475,25 @@ pub mod op {
 
     #[inline(always)]
     pub const fn add(a: u64, b: u64) -> u64 {
-        b.wrapping_add(a)
+        a.wrapping_add(b)
     }
 
     #[inline(always)]
     pub const fn sub(a: u64, b: u64) -> u64 {
-        b.wrapping_sub(a)
+        a.wrapping_sub(b)
     }
 
     #[inline(always)]
     pub const fn mul(a: u64, b: u64) -> u64 {
-        b.wrapping_mul(a)
+        a.wrapping_mul(b)
     }
 
     #[inline(always)]
     pub const fn div(a: u64, b: u64) -> Result<u64, Error> {
-        if a == 0 {
+        if b == 0 {
             Err(Error::DivideByZero)
         } else {
-            Ok(b.wrapping_div(a))
+            Ok(a.wrapping_div(b))
         }
     }
 
@@ -495,22 +504,22 @@ pub mod op {
 
     #[inline(always)]
     pub const fn gt(a: u64, b: u64) -> u64 {
-        (b > a) as u64
+        (a > b) as u64
     }
 
     #[inline(always)]
     pub const fn lt(a: u64, b: u64) -> u64 {
-        (b < a) as u64
+        (a < b) as u64
     }
 
     #[inline(always)]
     pub const fn neq(a: u64, b: u64) -> u64 {
-        (b != a) as u64
+        (a != b) as u64
     }
 
     #[inline(always)]
     pub const fn eq(a: u64, b: u64) -> u64 {
-        (b == a) as u64
+        (a == b) as u64
     }
 
     #[inline(always)]
@@ -518,23 +527,23 @@ pub mod op {
         if a == 0 {
             Err(Error::DivideByZero)
         } else {
-            Ok(b.wrapping_rem(a))
+            Ok(a.wrapping_rem(b))
         }
     }
 
     #[inline(always)]
     pub const fn and(a: u64, b: u64) -> u64 {
-        b & a
+        a & b
     }
 
     #[inline(always)]
     pub const fn xor(a: u64, b: u64) -> u64 {
-        b ^ a
+        a ^ b
     }
 
     #[inline(always)]
     pub const fn or(a: u64, b: u64) -> u64 {
-        b | a
+        a | b
     }
 
     #[inline(always)]

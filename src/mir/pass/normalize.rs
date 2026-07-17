@@ -7,7 +7,7 @@ use crate::mir::{
 };
 
 pub struct Normalize {
-    pub(crate) counter: u32,
+    counter: u32,
 }
 
 impl Normalize {
@@ -16,20 +16,19 @@ impl Normalize {
         Self { counter: 0 }
     }
 
-    pub(crate) fn next_var(&mut self) -> Ident<'static> {
+    fn next_var(&mut self) -> Ident<'static> {
         let id = self.counter;
         self.counter += 1;
         Ident::new(format!("t{id}"))
     }
 
-    pub(crate) fn normalize_expr<'a>(&mut self, expr: Expr<'a>) -> (Vec<Statement<'a>>, Expr<'a>) {
+    fn normalize_expr<'a>(&mut self, expr: Expr<'a>) -> (Vec<Statement<'a>>, Expr<'a>) {
         match expr {
             Expr::Val(val) => (vec![], Expr::Val(val)),
             Expr::Var(var) => (vec![], Expr::Var(var)),
             Expr::Call { spread, f, args } => {
                 if args.iter().any(|a| matches!(a, Expr::Call { .. })) {
                     let mut statements = vec![];
-                    // let mut last_var = None;
                     let mut new_args = vec![];
                     for arg in args {
                         match arg {
@@ -61,7 +60,7 @@ impl Normalize {
         }
     }
 
-    pub(crate) fn normalize_if<'a>(
+    fn normalize_if<'a>(
         &mut self,
         check_ctx: &CheckCtx<'a>,
         If { cond, block, else_ }: If<'a>,

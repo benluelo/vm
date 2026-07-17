@@ -11,7 +11,7 @@ use crate::{
     assembler::{AsmOp, Object},
     mir::ast::{
         Assignment, Block, Break, Builtin, BuiltinOrDef, Continue, Def, Else, Expr, Ident, If,
-        Label, Loop, Statement,
+        Label, Loop, Statement, Val,
     },
 };
 
@@ -227,7 +227,7 @@ impl<'a> Ctx<'a> {
         trace!("scope_cleanup_asm {}", label);
 
         for scope in self.scopes.iter().rev() {
-            tracing::info!("appending drop asm for scope {}", scope.label);
+            trace!("appending drop asm for scope {}", scope.label);
 
             let key = format!("{}:drop::{label}::{from}::{}", self.prefix, scope.label);
 
@@ -250,7 +250,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn init_var_with_depth_offset(&mut self, var: &Ident<'a>, depth: isize) -> usize {
-        info!("PUSHING VAR {var} @ {depth}");
+        trace!("PUSHING VAR {var} @ {depth}");
         let var_idx = self.stack_depth.strict_add_signed(depth);
         self.scopes
             .last_mut()
@@ -1108,7 +1108,7 @@ pub struct CheckScope<'a> {
     #[expect(dead_code)]
     tag: String,
     label: ScopeLabel<'a>,
-    vars: BTreeSet<Ident<'a>>,
+    vars: BTreeMap<Ident<'a>, VarValue>,
     /// fn name -> label
     defs: BTreeMap<Ident<'a>, Def<'a>>,
 }
@@ -1160,10 +1160,10 @@ impl<'a> CheckCtx<'a> {
     }
 
     fn cleanup_scopes_to_label(&mut self, label: Label<'a>) -> CompileResult<()> {
-        trace!("scope_cleanup_asm {}", label);
+        trace!("cleaning up to scope {}", label);
 
         for scope in self.scopes.iter().rev() {
-            tracing::info!("appending drop asm for scope {}", scope.label);
+            trace!("cleaning up scope {}", scope.label);
 
             if scope.label.matches_label(&label) {
                 return Ok(());
@@ -1317,11 +1317,26 @@ impl<'a> CheckCtx<'a> {
     where
         'a: 'b,
     {
-        fn go<'a: 'b, 'b>(
+        self.check_with(block, &mut ())?;
+
+        Ok(())
+    }
+
+    pub fn check_with<'b, V: Visitor>(
+        &mut self,
+        block: &'b Block<'a>,
+        visitor: &mut V,
+    ) -> CompileResult<Block<'a>>
+    where
+        'a: 'b,
+    {
+        #[must_use = "use it bro"]
+        fn go<'a: 'b, 'b, V: Visitor>(
             ctx: &mut CheckCtx<'a>,
             depth: usize,
             block: &'b Block<'a>,
-        ) -> CompileResult {
+            visitor: &mut V,
+        ) -> CompileResult<Block<'a>> {
             trace!(
                 "go: {}",
                 ctx.scopes
@@ -1331,24 +1346,63 @@ impl<'a> CheckCtx<'a> {
                     .join(",")
             );
 
+            let mut out = vec![];
+
             for (i, s) in block.iter().enumerate() {
                 match s {
                     Statement::Expr(expr) => {
                         trace!("expr");
                         ctx.expr_arity(0, expr, false)?;
-                        ctx.check_expr(expr)?;
+                        match visitor.visit_expr(ctx, expr) {
+                            Some(expr) => {
+                                let expr = ctx.check_expr(&expr, visitor)?;
+                                out.push(Statement::Expr(expr));
+                            }
+                            None => {
+                                let expr = ctx.check_expr(expr, visitor)?;
+                                out.push(Statement::Expr(expr.clone()));
+                            }
+                        }
                     }
                     Statement::Loop(Loop { label, block }) => {
                         trace!("loop");
-                        let identified_label = ctx.new_label(*label);
-                        let scope_label = ScopeLabel::Label(identified_label);
-                        ctx.push_scope(format!("loop {label}"), scope_label.clone());
-                        go(ctx, depth + 1, block)?;
-                        // append scope cleanup code just before jumping back to the beginning of
-                        // the loop
-                        ctx.cleanup_scopes_to_label(*label)?;
-                        // exit scope
-                        ctx.pop_scope(scope_label)?;
+                        // dbg!(&ctx);
+                        match visitor.visit_loop(ctx, label, block) {
+                            Some(block) => {
+                                trace!("visitor returned a new block");
+                                // println!("{}", print_ast(&block));
+                                let block = go(ctx, depth + 1, &block, visitor)?;
+                                // println!("{}", print_ast(&block));
+                                out.extend(block);
+                            }
+                            None => {
+                                for var in ctx
+                                    .scopes
+                                    .iter()
+                                    .flat_map(|s| s.vars.keys().cloned())
+                                    .collect::<BTreeSet<_>>()
+                                {
+                                    // dyn until proven otherwise
+                                    // TODO: Make this check smarter somehow
+                                    ctx.set_var_value(&var, VarValue::Dyn);
+                                }
+
+                                let identified_label = ctx.new_label(*label);
+                                let scope_label = ScopeLabel::Label(identified_label);
+                                ctx.push_scope(format!("loop {label}"), scope_label.clone());
+                                let block = go(ctx, depth + 1, block, visitor)?;
+                                // append scope cleanup code just before jumping back to the
+                                // beginning of the loop
+                                ctx.cleanup_scopes_to_label(*label)?;
+                                // exit scope
+                                ctx.pop_scope(scope_label)?;
+
+                                out.push(Statement::Loop(Loop {
+                                    label: *label,
+                                    block: block.clone(),
+                                }));
+                            }
+                        }
                     }
                     Statement::Break(Break(label)) => {
                         trace!("break");
@@ -1356,44 +1410,66 @@ impl<'a> CheckCtx<'a> {
                         ctx.cleanup_scopes_to_label(*label)?;
 
                         trace!("cleaned up scope '{label}'");
+
+                        out.push(Statement::Break(Break(*label)));
                     }
                     Statement::Continue(Continue(label)) => {
                         trace!("continue");
 
                         ctx.cleanup_scopes_to_label(*label)?;
+
+                        trace!("cleaned up scope '{label}'");
+
+                        out.push(Statement::Continue(Continue(*label)));
                     }
                     Statement::If(if_) => {
-                        fn go_if<'a>(
+                        fn go_if<'a, V: Visitor>(
                             ctx: &mut CheckCtx<'a>,
-                            If { cond, block, else_ }: If<'a>,
+                            If {
+                                cond,
+                                block,
+                                mut else_,
+                            }: If<'a>,
                             depth: usize,
-                        ) -> CompileResult {
+                            visitor: &mut V,
+                        ) -> CompileResult<If<'a>> {
                             // evaluate condition expression
-                            ctx.check_expr(&cond)?;
+                            let cond = ctx.check_expr(&cond, visitor)?;
 
                             ctx.push_scope("if block".to_owned(), ScopeLabel::None);
-                            go(ctx, depth + 1, &block)?;
+                            let block = go(ctx, depth + 1, &block, visitor)?;
                             ctx.pop_scope(ScopeLabel::None)?;
 
-                            if let Some(else_) = else_ {
-                                match else_ {
+                            else_ = if let Some(else_) = else_ {
+                                Some(match else_ {
                                     Else::ElseIf { if_ } => {
                                         trace!("else if");
-                                        go_if(ctx, if_.inner, depth + 1)?
+                                        Else::ElseIf {
+                                            if_: Box::new(Spanned {
+                                                inner: go_if(ctx, if_.inner, depth + 1, visitor)?,
+                                                span: if_.span,
+                                            }),
+                                        }
                                     }
                                     Else::Tail { block } => {
                                         trace!("else");
-                                        go(ctx, depth + 1, &block)?;
+                                        Else::Tail {
+                                            block: go(ctx, depth + 1, &block, visitor)?,
+                                        }
                                     }
-                                }
-                            }
+                                })
+                            } else {
+                                None
+                            };
 
-                            Ok(())
+                            Ok(If { cond, block, else_ })
                         }
 
                         trace!("if");
 
-                        go_if(ctx, if_.clone(), depth)?;
+                        let if_ = go_if(ctx, if_.clone(), depth, visitor)?;
+
+                        out.push(Statement::If(if_));
                     }
                     Statement::Assignment(Assignment { vars, expr }) => {
                         let arity = ctx.expr_arity(0, expr, true)?;
@@ -1409,70 +1485,98 @@ impl<'a> CheckCtx<'a> {
                         for var in vars.iter().rev() {
                             if !ctx.has_var(var) {
                                 trace!("var decl '{var}'");
-                                ctx.init_var(var);
+                                ctx.init_var(var, VarValue::Dyn);
+                            } else {
+                                ctx.set_var_value(var, VarValue::Dyn);
                             }
                         }
 
+                        if let [var] = &**vars
+                            && let Expr::Val(val) = expr
+                        {
+                            trace!("var '{var}' has const value {val}");
+                            ctx.set_var_value(var, VarValue::Const(*val))
+                        }
+
                         // evaluate the expression
-                        ctx.check_expr(expr)?;
+                        let expr = ctx.check_expr(expr, visitor)?;
+
+                        out.push(Statement::Assignment(Assignment {
+                            vars: vars.clone(),
+                            expr: expr.clone(),
+                        }));
                     }
                     Statement::Def(def) => {
-                        info_span!("def", name = %def.ident).in_scope(|| -> CompileResult {
-                            // // args.len() + 1 for return pointer
-                            // assert!(ctx.stack_depth > def.args.len());
+                        let block = info_span!("def", name = %def.ident).in_scope(
+                            || -> CompileResult<Block<'a>> {
+                                // // args.len() + 1 for return pointer
+                                // assert!(ctx.stack_depth > def.args.len());
 
-                            let def_label = format!("{}:def_{}_{depth}_{i}", ctx.prefix, def.ident);
-                            // this function is callable in this scope
-                            ctx.scopes
-                                .last_mut()
-                                .unwrap()
-                                .defs
-                                .insert(def.ident.clone(), def.clone());
-
-                            let mut def_ctx = CheckCtx::new(&format!("{}/{def_label}", ctx.prefix));
-
-                            // calling convention is [...args, @caller_ptr, ...rets]
-                            // args will be popped before returning
-                            // output is [...rets]
-                            // therefore, before calling the final JUMP op, the stack must be
-                            // [...rets, @caller_ptr]
-
-                            // args are provided by the caller, init them in the new ctx
-                            for arg in &def.args {
-                                trace!("arg '{arg}'");
-                                def_ctx.init_var(arg);
-                            }
-
-                            // account for @caller_ptr, also provided by the caller
-                            // NOTE: The return pointer is pushed at the callsite by CALL
-                            trace!("@caller_ptr");
-
-                            // new ctx values for this fn call
-
-                            // init return values
-                            for ret in def.rets.iter().rev() {
-                                trace!("ret '{ret}'");
-                                def_ctx.init_var(ret);
-                            }
-
-                            // functions can access other functions visible in this scope
-                            for (def_name, label) in ctx.scopes.iter().flat_map(|s| &s.defs) {
-                                def_ctx
-                                    .scopes
+                                let def_label =
+                                    format!("{}:def_{}_{depth}_{i}", ctx.prefix, def.ident);
+                                // this function is callable in this scope
+                                ctx.scopes
                                     .last_mut()
                                     .unwrap()
                                     .defs
-                                    .insert(def_name.clone(), label.clone());
-                            }
+                                    .insert(def.ident.clone(), def.clone());
 
-                            def_ctx
-                                .push_scope(format!("def '{}' body", def.ident), ScopeLabel::None);
-                            // compile the fn body
-                            go(&mut def_ctx, depth + 1, &def.body)?;
-                            def_ctx.pop_scope(ScopeLabel::None)?;
+                                let mut def_ctx =
+                                    CheckCtx::new(&format!("{}/{def_label}", ctx.prefix));
 
-                            Ok(())
-                        })?
+                                // calling convention is [...args, @caller_ptr, ...rets]
+                                // args will be popped before returning
+                                // output is [...rets]
+                                // therefore, before calling the final JUMP op, the stack must be
+                                // [...rets, @caller_ptr]
+
+                                // args are provided by the caller, init them in the new ctx
+                                for arg in &def.args {
+                                    trace!("arg '{arg}'");
+                                    def_ctx.init_var(arg, VarValue::Dyn);
+                                }
+
+                                // account for @caller_ptr, also provided by the caller
+                                // NOTE: The return pointer is pushed at the callsite by CALL
+                                trace!("@caller_ptr");
+
+                                // new ctx values for this fn call
+
+                                // init return values
+                                for ret in def.rets.iter().rev() {
+                                    trace!("ret '{ret}'");
+                                    // REVIEW: Should this actually start at Const(0)?
+                                    def_ctx.init_var(ret, VarValue::Dyn);
+                                }
+
+                                // functions can access other functions visible in this scope
+                                for (def_name, label) in ctx.scopes.iter().flat_map(|s| &s.defs) {
+                                    def_ctx
+                                        .scopes
+                                        .last_mut()
+                                        .unwrap()
+                                        .defs
+                                        .insert(def_name.clone(), label.clone());
+                                }
+
+                                def_ctx.push_scope(
+                                    format!("def '{}' body", def.ident),
+                                    ScopeLabel::None,
+                                );
+                                // compile the fn body
+                                let block = go(&mut def_ctx, depth + 1, &def.body, visitor)?;
+                                def_ctx.pop_scope(ScopeLabel::None)?;
+
+                                Ok(block)
+                            },
+                        )?;
+
+                        out.push(Statement::Def(Def {
+                            ident: def.ident.clone(),
+                            args: def.args.clone(),
+                            rets: def.rets.clone(),
+                            body: block,
+                        }));
                     }
                 }
             }
@@ -1486,25 +1590,39 @@ impl<'a> CheckCtx<'a> {
                     .join(",")
             );
 
-            Ok(())
+            Ok(Block::new(out, block.span()))
         }
 
-        go(self, 0, block)
+        go(self, 0, block, visitor)
     }
 
     fn has_var(&self, var: &Ident<'a>) -> bool {
-        self.scopes.iter().any(|s| s.vars.iter().any(|v| v.eq(var)))
+        self.scopes.iter().any(|s| s.vars.keys().any(|v| v.eq(var)))
     }
 
-    fn init_var<'b>(&'b mut self, var: &Ident<'a>) {
+    fn init_var<'b>(&'b mut self, var: &Ident<'a>, value: VarValue) {
         self.scopes
             .last_mut()
             .expect("no scopes?")
             .vars
-            .insert(var.clone());
+            .insert(var.clone(), value);
     }
 
-    fn check_expr(&mut self, expr: &Expr<'a>) -> CompileResult<()> {
+    fn set_var_value<'b>(&'b mut self, var: &Ident<'a>, value: VarValue) {
+        assert!(self.has_var(var), "bug: var {var} not found");
+
+        for s in self.scopes.iter_mut() {
+            if let Some(val) = s.vars.get_mut(var) {
+                *val = value.clone()
+            };
+        }
+    }
+
+    fn check_expr<V: Visitor>(
+        &mut self,
+        expr: &Expr<'a>,
+        visitor: &mut V,
+    ) -> CompileResult<Expr<'a>> {
         #[instrument(level = "TRACE", skip_all, fields(%expr))]
         fn go<'a>(ctx: &mut CheckCtx<'a>, depth: usize, expr: &Expr<'a>) -> CompileResult {
             trace!("evaluating: {expr}");
@@ -1689,7 +1807,16 @@ impl<'a> CheckCtx<'a> {
             Ok(())
         }
 
-        go(self, 0, expr)
+        match visitor.visit_expr(self, expr) {
+            Some(expr) => {
+                go(self, 0, &expr)?;
+                Ok(expr)
+            }
+            None => {
+                go(self, 0, expr)?;
+                Ok(expr.clone())
+            }
+        }
     }
 
     pub fn new(prefix: &str) -> Self {
@@ -1717,7 +1844,40 @@ impl<'a> CheckCtx<'a> {
         self.next_scope_label_id = self.next_scope_label_id.increment();
         IdentifiedLabel::new(label, self.next_scope_label_id)
     }
+
+    fn var_value<'b>(&'b self, var: &Ident<'a>) -> &'b VarValue {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|s| s.vars.get(var))
+            .unwrap()
+    }
 }
+
+#[derive(Debug, Clone)]
+pub enum VarValue {
+    Dyn,
+    Const(Val),
+}
+
+pub trait Visitor {
+    fn visit_loop<'a>(
+        &mut self,
+        ctx: &CheckCtx,
+        label: &Label<'a>,
+        block: &Block<'a>,
+    ) -> Option<Block<'a>> {
+        let _ = (ctx, label, block);
+        None
+    }
+
+    fn visit_expr<'a>(&mut self, ctx: &CheckCtx, expr: &Expr<'a>) -> Option<Expr<'a>> {
+        let _ = (ctx, expr);
+        None
+    }
+}
+
+impl Visitor for () {}
 
 pub enum Scope2<'a> {
     Loop {

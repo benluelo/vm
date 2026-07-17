@@ -1,10 +1,27 @@
-use core::fmt;
-use std::{borrow::Cow, fmt::Write};
+use std::{
+    borrow::Cow,
+    cmp::Ordering,
+    fmt::{self, Write},
+};
 
 use chumsky::span::{SimpleSpan, Spanned};
 
-#[derive(Clone, Eq, PartialOrd, Ord)]
+#[derive(Clone)]
 pub struct Ident<'a>(Spanned<Cow<'a, str>>);
+
+impl<'a> Ord for Ident<'a> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.inner.cmp(&other.0.inner)
+    }
+}
+
+impl<'a> PartialOrd for Ident<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'a> Eq for Ident<'a> {}
 
 impl<'a> Ident<'a> {
     pub fn new_spanned(spanned: Spanned<impl Into<Cow<'a, str>>>) -> Self {
@@ -44,15 +61,15 @@ impl<'a> fmt::Display for Ident<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Val(Spanned<u64>);
 
 impl fmt::Debug for Val {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.alternate() {
-            write!(f, "Val(\"{}\" @ {})", self.0.inner, self.0.span)
+            write!(f, "Val({} @ {})", self.0.inner, self.0.span)
         } else {
-            write!(f, "Val(\"{}\")", self.0.inner)
+            write!(f, "Val({})", self.0.inner)
         }
     }
 }
@@ -70,6 +87,13 @@ impl Val {
 
     pub fn new_spanned(spanned: Spanned<u64>) -> Val {
         Self(spanned)
+    }
+
+    pub fn new(ident: u64) -> Self {
+        Self::new_spanned(Spanned {
+            inner: ident,
+            span: (0..0).into(),
+        })
     }
 }
 
@@ -130,6 +154,12 @@ impl<'a> fmt::Display for Label<'a> {
 #[derive(Debug, Clone)]
 pub struct Block<'a>(Spanned<Vec<Statement<'a>>>);
 
+impl<'a> PartialEq for Block<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.inner == other.0.inner
+    }
+}
+
 impl<'a> Block<'a> {
     pub fn new_spanned(spanned: Spanned<Vec<Statement<'a>>>) -> Self {
         Self(spanned)
@@ -158,6 +188,14 @@ impl<'a> Block<'a> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    pub fn statements(&self) -> &[Statement<'a>] {
+        &self.0
+    }
+
+    pub fn statements_mut(&mut self) -> &mut [Statement<'a>] {
+        &mut self.0
+    }
 }
 
 impl<'a> IntoIterator for Block<'a> {
@@ -170,7 +208,7 @@ impl<'a> IntoIterator for Block<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Statement<'a> {
     Expr(Expr<'a>),
     Loop(Loop<'a>),
@@ -181,7 +219,7 @@ pub enum Statement<'a> {
     Def(Def<'a>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Expr<'a> {
     Val(Val),
     Var(Ident<'a>),
@@ -190,6 +228,61 @@ pub enum Expr<'a> {
         f: Spanned<BuiltinOrDef<'a>>,
         args: Vec<Expr<'a>>,
     },
+}
+
+impl<'a> fmt::Debug for Expr<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Val(val) => {
+                if f.alternate() {
+                    write!(f, "{val:#?}")
+                } else {
+                    write!(f, "{val:?}")
+                }
+            }
+            Self::Var(var) => {
+                if f.alternate() {
+                    write!(f, "{var:#?}")
+                } else {
+                    write!(f, "{var:?}")
+                }
+            }
+            Self::Call {
+                spread,
+                f: f_,
+                args,
+            } => f
+                .debug_struct("Call")
+                .field("spread", spread)
+                // TODO: Include the span here in the alternate format (probably with a newtype for
+                // debug)
+                .field("f", &**f_)
+                .field("args", args)
+                .finish(),
+        }
+    }
+}
+
+impl<'a> PartialEq for Expr<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Val(l), Self::Val(r)) => l == r,
+            (Self::Var(l), Self::Var(r)) => l == r,
+            (
+                Self::Call {
+                    spread: l_spread,
+                    f: l_f,
+                    args: l_args,
+                },
+                Self::Call {
+                    spread: r_spread,
+                    f: r_f,
+                    args: r_args,
+                },
+            ) => l_spread == r_spread && l_f.inner == r_f.inner && l_args == r_args,
+            _ => false,
+        }
+    }
 }
 
 impl Expr<'_> {
@@ -234,10 +327,21 @@ impl<'a> fmt::Display for Expr<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, PartialEq)]
 pub enum BuiltinOrDef<'a> {
     Builtin(Builtin),
     Def(Ident<'a>),
+}
+
+impl<'a> fmt::Debug for BuiltinOrDef<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Builtin(builtin) => {
+                write!(f, "Builtin({builtin})")
+            }
+            Self::Def(def) => write!(f, "Def({def:?})"),
+        }
+    }
 }
 
 impl<'a> From<Builtin> for BuiltinOrDef<'a> {
@@ -246,7 +350,7 @@ impl<'a> From<Builtin> for BuiltinOrDef<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Builtin {
     Add,
     Sub,
@@ -409,19 +513,19 @@ impl<'a> From<Ident<'a>> for BuiltinOrDef<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Break<'a>(pub Label<'a>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Continue<'a>(pub Label<'a>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Loop<'a> {
     pub label: Label<'a>,
     pub block: Block<'a>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct If<'a> {
     pub cond: Expr<'a>,
     pub block: Block<'a>,
@@ -434,7 +538,19 @@ pub enum Else<'a> {
     Tail { block: Block<'a> },
 }
 
-#[derive(Debug, Clone)]
+impl<'a> PartialEq for Else<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::ElseIf { if_: l_if_ }, Self::ElseIf { if_: r_if_ }) => {
+                l_if_.inner == r_if_.inner
+            }
+            (Self::Tail { block: l_block }, Self::Tail { block: r_block }) => l_block == r_block,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Assignment<'a> {
     pub vars: Vec<Ident<'a>>,
     pub expr: Expr<'a>,
@@ -453,7 +569,7 @@ impl<'a> fmt::Display for Assignment<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Def<'a> {
     pub ident: Ident<'a>,
     pub args: Vec<Ident<'a>>,
