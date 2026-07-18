@@ -55,6 +55,12 @@ impl<'a> PartialEq for Ident<'a> {
     }
 }
 
+impl<'a> PartialEq<str> for Ident<'a> {
+    fn eq(&self, other: &str) -> bool {
+        self.0.inner == other
+    }
+}
+
 impl<'a> fmt::Display for Ident<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -205,6 +211,16 @@ impl<'a> IntoIterator for Block<'a> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.inner.into_iter()
+    }
+}
+
+impl<'a, 'b: 'a> IntoIterator for &'b Block<'a> {
+    type Item = &'b Statement<'a>;
+
+    type IntoIter = std::slice::Iter<'b, Statement<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.inner.iter()
     }
 }
 

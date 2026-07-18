@@ -11,21 +11,29 @@ def load64(at) -> u {
   #   i <- sub(i, 1)
   # }
 
-  u <- or(u, read1(add(at, 7)))
-  u <- shl(u, 8)
-  u <- or(u, read1(add(at, 6)))
-  u <- shl(u, 8)
-  u <- or(u, read1(add(at, 5)))
-  u <- shl(u, 8)
-  u <- or(u, read1(add(at, 4)))
-  u <- shl(u, 8)
-  u <- or(u, read1(add(at, 3)))
-  u <- shl(u, 8)
-  u <- or(u, read1(add(at, 2)))
-  u <- shl(u, 8)
-  u <- or(u, read1(add(at, 1)))
-  u <- shl(u, 8)
-  u <- or(u, read1(add(at, 0)))
+  # u <- or(shl(or(shl(or(shl(or(shl(or(shl(or(shl(or(shl(read1(add(at, 7)), 8), read1(add(at, 6))), 8), read1(add(at, 5))), 8), read1(add(at, 4))), 8), read1(add(at, 3))), 8), read1(add(at, 2))), 8), read1(add(at, 1))), 8), read1(add(at, 0)))
+  # u <- u
+
+  # u <- or(u, read1(add(at, 7)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 6)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 5)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 4)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 3)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 2)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 1)))
+  # u <- shl(u, 8)
+  # u <- or(u, read1(add(at, 0)))
+
+  u <- read8(at)
+  u <- or(and(shl(u, 8),  0xFF00FF00FF00FF00), and(shr(u, 8),  0x00FF00FF00FF00FF))
+  u <- or(and(shl(u, 16), 0xFFFF0000FFFF0000), and(shr(u, 16), 0x0000FFFF0000FFFF))
+  u <- or(shl(u, 32), shr(u, 32))
 }
 
 # Function to store a 64-bit value using the little-endian (LE) convention.
@@ -41,21 +49,25 @@ def store64(at, u) {
   #   i <- add(i, 1)
   # }
 
-  write1(add(at, 0), u)
-  u <- shr(u, 8)
-  write1(add(at, 1), u)
-  u <- shr(u, 8)
-  write1(add(at, 2), u)
-  u <- shr(u, 8)
-  write1(add(at, 3), u)
-  u <- shr(u, 8)
-  write1(add(at, 4), u)
-  u <- shr(u, 8)
-  write1(add(at, 5), u)
-  u <- shr(u, 8)
-  write1(add(at, 6), u)
-  u <- shr(u, 8)
-  write1(add(at, 7), u)
+  # write1(add(at, 0), u)
+  # u <- shr(u, 8)
+  # write1(add(at, 1), u)
+  # u <- shr(u, 8)
+  # write1(add(at, 2), u)
+  # u <- shr(u, 8)
+  # write1(add(at, 3), u)
+  # u <- shr(u, 8)
+  # write1(add(at, 4), u)
+  # u <- shr(u, 8)
+  # write1(add(at, 5), u)
+  # u <- shr(u, 8)
+  # write1(add(at, 6), u)
+  # u <- shr(u, 8)
+  # write1(add(at, 7), u)
+
+  u <- or(and(shl(u, 8),  0xFF00FF00FF00FF00), and(shr(u, 8),  0x00FF00FF00FF00FF))
+  u <- or(and(shl(u, 16), 0xFFFF0000FFFF0000), and(shr(u, 16), 0x0000FFFF0000FFFF))
+  write8(at, or(shl(u, 32), shr(u, 32)))
 }
 
 # load/store works correctly
@@ -77,21 +89,26 @@ def xor64(at, u) {
   #   i <- add(i, 1)
   # }
 
-  write1(add(at, 0), xor(u, read1(add(at, 0))))
-  u <- shr(u, 8)
-  write1(add(at, 1), xor(u, read1(add(at, 1))))
-  u <- shr(u, 8)
-  write1(add(at, 2), xor(u, read1(add(at, 2))))
-  u <- shr(u, 8)
-  write1(add(at, 3), xor(u, read1(add(at, 3))))
-  u <- shr(u, 8)
-  write1(add(at, 4), xor(u, read1(add(at, 4))))
-  u <- shr(u, 8)
-  write1(add(at, 5), xor(u, read1(add(at, 5))))
-  u <- shr(u, 8)
-  write1(add(at, 6), xor(u, read1(add(at, 6))))
-  u <- shr(u, 8)
-  write1(add(at, 7), xor(u, read1(add(at, 7))))
+  # write1(add(at, 0), xor(u, read1(add(at, 0))))
+  # u <- shr(u, 8)
+  # write1(add(at, 1), xor(u, read1(add(at, 1))))
+  # u <- shr(u, 8)
+  # write1(add(at, 2), xor(u, read1(add(at, 2))))
+  # u <- shr(u, 8)
+  # write1(add(at, 3), xor(u, read1(add(at, 3))))
+  # u <- shr(u, 8)
+  # write1(add(at, 4), xor(u, read1(add(at, 4))))
+  # u <- shr(u, 8)
+  # write1(add(at, 5), xor(u, read1(add(at, 5))))
+  # u <- shr(u, 8)
+  # write1(add(at, 6), xor(u, read1(add(at, 6))))
+  # u <- shr(u, 8)
+  # write1(add(at, 7), xor(u, read1(add(at, 7))))
+
+
+  u <- or(and(shl(u, 8),  0xFF00FF00FF00FF00), and(shr(u, 8),  0x00FF00FF00FF00FF))
+  u <- or(and(shl(u, 16), 0xFFFF0000FFFF0000), and(shr(u, 16), 0x0000FFFF0000FFFF))
+  write8(at, xor(read8(at), or(shl(u, 32), shr(u, 32))))
 }
 
 def ROTL64(a, offset) -> n {
@@ -172,10 +189,6 @@ write1(
 
 block_number <- 0
 loop :blocks {
-  blocks_ptr <- add(add(200, 40), mul(24, 8))
-  temp_arr_ptr <- 200
-  round_constants_ptr <- add(40, temp_arr_ptr)
-
   if eq(block_number, block_count) {
     break :blocks
   }
@@ -186,18 +199,18 @@ loop :blocks {
     if eq(i, 17) {
       break :a
     }
-    state_word <- read8(mul(i, 8))
-    # # start of blocks (200) + block offset + word offset
-    block_word <- read8(add(blocks_ptr, add(mul(block_number, 136), mul(i, 8))))
-    # trap(block_word)
+    # state_word <- read8(mul(i, 8))
+    # # # start of blocks (200) + block offset + word offset
+    # block_word <- read8(add(blocks_ptr, add(mul(block_number, 136), mul(i, 8))))
     write8(
       mul(i, 8),
-      xor(state_word, block_word)
+      xor(
+        read8(mul(i, 8)),
+        read8(add(blocks_ptr, add(mul(block_number, 136), mul(i, 8))))
+      )
     )
     i <- add(i, 1)
   }
-
-  # trap(1)
 
   round <- 0
   x <- 0
@@ -326,7 +339,79 @@ loop :blocks {
     }
 
     # === ι step (see [Keccak Reference, Section 2.3.5]) ===
-    XORLane(0, 0, read8(add(mul(8, round), round_constants_ptr)))
+    if eq(round, 0) {
+      XORLane(0, 0, 0x0000000000000001)
+    }
+    if eq(round, 1) {
+      XORLane(0, 0, 0x0000000000008082)
+    }
+    if eq(round, 2) {
+      XORLane(0, 0, 0x800000000000808A)
+    }
+    if eq(round, 3) {
+      XORLane(0, 0, 0x8000000080008000)
+    }
+    if eq(round, 4) {
+      XORLane(0, 0, 0x000000000000808B)
+    }
+    if eq(round, 5) {
+      XORLane(0, 0, 0x0000000080000001)
+    }
+    if eq(round, 6) {
+      XORLane(0, 0, 0x8000000080008081)
+    }
+    if eq(round, 7) {
+      XORLane(0, 0, 0x8000000000008009)
+    }
+    if eq(round, 8) {
+      XORLane(0, 0, 0x000000000000008A)
+    }
+    if eq(round, 9) {
+      XORLane(0, 0, 0x0000000000000088)
+    }
+    if eq(round, 10) {
+      XORLane(0, 0, 0x000000008000800)
+    }
+    if eq(round, 11) {
+      XORLane(0, 0, 0x000000008000000)
+    }
+    if eq(round, 12) {
+      XORLane(0, 0, 0x000000008000808)
+    }
+    if eq(round, 13) {
+      XORLane(0, 0, 0x800000000000008)
+    }
+    if eq(round, 14) {
+      XORLane(0, 0, 0x800000000000808)
+    }
+    if eq(round, 15) {
+      XORLane(0, 0, 0x800000000000800)
+    }
+    if eq(round, 16) {
+      XORLane(0, 0, 0x800000000000800)
+    }
+    if eq(round, 17) {
+      XORLane(0, 0, 0x800000000000008)
+    }
+    if eq(round, 18) {
+      XORLane(0, 0, 0x000000000000800)
+    }
+    if eq(round, 19) {
+      XORLane(0, 0, 0x800000008000000)
+    }
+    if eq(round, 20) {
+      XORLane(0, 0, 0x800000008000808)
+    }
+    if eq(round, 21) {
+      XORLane(0, 0, 0x800000000000808)
+    }
+    if eq(round, 22) {
+      XORLane(0, 0, 0x000000008000000)
+    }
+    if eq(round, 23) {
+      XORLane(0, 0, 0x800000008000800)
+    }
+
     round <- add(round, 1)
   
   }

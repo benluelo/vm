@@ -1,5 +1,9 @@
 #![warn(clippy::panic, clippy::unwrap_in_result)]
-use std::{fs, path::PathBuf, time::Instant};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::bail;
 use argh::{FromArgValue, FromArgs};
@@ -14,7 +18,7 @@ use vm::{
     mir::{
         self, CheckCtx, Ctx,
         parse::print_ast,
-        pass::{ConstEval, ConstProp, DefInline, LoopUnroll, Pass},
+        pass::{ConstEval, ConstProp, DeadCodeRemoval, DefInline, LoopUnroll, Pass},
     },
 };
 
@@ -229,36 +233,42 @@ fn main() -> anyhow::Result<()> {
                         ctx.check(&ast)?;
                         let ast = DefInline::new().run(&ctx, ast);
 
-                        let mut ctx = CheckCtx::new("root");
-                        let ast = ctx.check_with(&ast, &mut LoopUnroll)?;
-
-                        let mut ctx = CheckCtx::new("root");
-                        let ast = ctx.check_with(&ast, &mut LoopUnroll)?;
-
-                        let mut ctx = CheckCtx::new("root");
-                        let ast = ctx.check_with(&ast, &mut LoopUnroll)?;
-
-                        let mut ctx = CheckCtx::new("root");
-                        let ast = ctx.check_with(&ast, &mut LoopUnroll)?;
-
                         let mut ast = ast;
-                        for i in 0.. {
-                            let mut ctx = CheckCtx::new("root");
-                            let new_ast = ctx.check_with(&ast, &mut ConstProp)?;
 
+                        for i in 1..=3 {
                             let mut ctx = CheckCtx::new("root");
-                            ctx.check(&new_ast)?;
-                            let new_ast = ConstEval::new().run(&ctx, new_ast);
+                            ast = ctx.check_with(&ast, &mut LoopUnroll)?;
 
-                            if new_ast == ast {
-                                info!("ran const prop/eval loop {i} times");
-                                break;
-                            } else {
-                                ast = new_ast;
+                            for i in 1.. {
+                                let mut ctx = CheckCtx::new("root");
+                                let new_ast = ctx.check_with(&ast, &mut ConstProp)?;
+
+                                let mut ctx = CheckCtx::new("root");
+                                ctx.check(&new_ast)?;
+                                let new_ast = ConstEval::new().run(&ctx, new_ast);
+
+                                let mut ctx = CheckCtx::new("root");
+                                let new_ast = ctx.check_with(&new_ast, &mut DeadCodeRemoval)?;
+
+                                if new_ast == ast {
+                                    info!("ran const prop/eval loop {i} times");
+                                    break;
+                                } else {
+                                    ast = new_ast;
+                                }
                             }
                         }
 
-                        // fs::write("before.mir", print_ast(&ast))?;
+                        #[expect(
+                            clippy::unwrap_in_result,
+                            reason = "if this errors we probably have bigger issues to deal with"
+                        )]
+                        let now = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .expect("???")
+                            .as_nanos()
+                            - 1784300000000000000;
+                        fs::write(format!("out-{now}.mir"), print_ast(&ast))?;
                         // fs::write("after.mir", print_ast(&ast2))?;
 
                         // println!("{}", print_ast(&ast));
@@ -304,9 +314,9 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 Err(err) => {
-                    println!("{err}");
-                    println!();
-                    println!("{}", const_hex::encode(vm.memory));
+                    println!("err: {err}");
+                    println!("cycles: {}", vm.cycles);
+                    // println!("{}", const_hex::encode(vm.memory));
                 }
             }
         }

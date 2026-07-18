@@ -3,7 +3,7 @@ use std::{
     iter::{self},
 };
 
-use tracing::trace;
+use tracing::{info, trace};
 
 use crate::{
     mir::{
@@ -12,6 +12,7 @@ use crate::{
             Assignment, Block, Builtin, BuiltinOrDef, Else, Expr, Ident, If, Label, Loop,
             Statement, Val,
         },
+        parse::print_ast,
     },
     op,
 };
@@ -172,20 +173,34 @@ impl Visitor for LoopUnroll {
                     if eval_cond(cond, cond_var, val) {
                         None
                     } else {
-                        // inline the body, remove the check, and replace the update expr with the
+                        // inline the body, remove the check, and inline the var with the
                         // current value
-                        let mut block = block.clone();
-                        val = eval_update_expr(update, cond_var, val);
-                        block.statements_mut()[update_idx] = Statement::Assignment(Assignment {
-                            vars: vec![cond_var.clone()],
-                            expr: Expr::Val(Val::new(val)),
-                        });
+                        let block = block.clone();
+                        let new_val = eval_update_expr(update, cond_var, val);
+                        // block.statements_mut()[update_idx] = Statement::Assignment(Assignment {
+                        //     vars: vec![cond_var.clone()],
+                        //     expr: Expr::Val(Val::new(val)),
+                        // });
 
                         let block = block
                             .into_iter()
                             .enumerate()
-                            .filter_map(|(idx, s)| if idx == cond_idx { None } else { Some(s) })
+                            .filter_map(|(idx, mut s)| {
+                                // filter out both the condition and the update
+                                if idx == cond_idx || idx == update_idx {
+                                    None
+                                } else {
+                                    inline_var(
+                                        &mut s,
+                                        cond_var,
+                                        if idx > update_idx { new_val } else { val },
+                                    );
+                                    Some(s)
+                                }
+                            })
                             .collect::<Vec<_>>();
+
+                        val = new_val;
 
                         // dbg!(&block);
 
@@ -198,7 +213,71 @@ impl Visitor for LoopUnroll {
             }
         });
 
-        Some(Block::new(it.flatten().collect::<Vec<_>>(), 0..0))
+        Some(Block::new(
+            it.flatten()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .chain([Statement::Assignment(Assignment {
+                    vars: vec![cond_var.clone()],
+                    expr: Expr::Val(Val::new(val)),
+                })])
+                .collect::<Vec<_>>(),
+            0..0,
+        ))
+    }
+}
+
+fn inline_var<'a>(s: &mut Statement<'a>, var: &Ident<'a>, val: u64) {
+    fn inline_var_expr<'a>(expr: &mut Expr<'a>, var: &Ident<'a>, val: u64) {
+        match expr {
+            Expr::Var(ident) => {
+                if *ident == *var {
+                    *expr = Expr::Val(Val::new(val))
+                }
+            }
+            Expr::Call { args, .. } => {
+                for arg in args {
+                    inline_var_expr(arg, var, val);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    match s {
+        Statement::Expr(expr) => inline_var_expr(expr, var, val),
+        Statement::Loop(loop_) => {
+            for s in loop_.block.statements_mut() {
+                inline_var(s, var, val);
+            }
+        }
+        Statement::If(if_) => {
+            fn go_if<'a>(if_: &mut If<'a>, var: &Ident<'a>, val: u64) {
+                inline_var_expr(&mut if_.cond, var, val);
+                for s in if_.block.statements_mut() {
+                    inline_var(s, var, val);
+                }
+                if let Some(else_) = if_.else_.as_mut() {
+                    match else_ {
+                        Else::ElseIf { if_ } => go_if(if_, var, val),
+                        Else::Tail { block } => {
+                            for s in block.statements_mut() {
+                                inline_var(s, var, val);
+                            }
+                        }
+                    }
+                }
+            }
+
+            go_if(if_, var, val);
+        }
+        Statement::Assignment(assignment) => {
+            if assignment.vars.contains(var) {
+                panic!("???")
+            }
+            inline_var_expr(&mut assignment.expr, var, val)
+        }
+        _ => {}
     }
 }
 

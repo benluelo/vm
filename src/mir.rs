@@ -392,34 +392,37 @@ impl<'a> Ctx<'a> {
                             If { cond, block, else_ }: If<'a>,
                             depth: usize,
                         ) -> CompileResult {
+                            let cond_id = ctx.get_salt();
+
                             let (if_false_label, end_label_if_tail) = match &else_ {
                                 Some(else_) => match else_ {
-                                    Else::ElseIf { if_ } => (
-                                        format!("{}:if_cond_[{}]", ctx.prefix, if_.cond.span()),
-                                        None,
-                                    ),
+                                    // jump to the next condition check if the preceeding if
+                                    // condition is false
+                                    Else::ElseIf { if_ } => {
+                                        let id = ctx.get_salt();
+                                        (format!("{}:if_cond_[{}]", ctx.prefix, id), None)
+                                    }
+                                    // if this is a tail else block, jump to the block if the
+                                    // preceeding condition is false, and set the end of the entire
+                                    // statement to jump to
                                     Else::Tail { block } => {
+                                        let tail_id = ctx.get_salt();
+                                        let end_id = ctx.get_salt();
                                         // on false, if the next block is a tail else block, then
-                                        // jump to the start
-                                        // of the tail block
+                                        // jump to the start of the tail block
                                         (
-                                            format!(
-                                                "{}:if_tail_block_[{}]",
-                                                ctx.prefix,
-                                                block.span()
-                                            ),
-                                            Some(format!(
-                                                "{}:if_tail_end_[{}]",
-                                                ctx.prefix,
-                                                block.span()
-                                            )),
+                                            format!("{}:if_tail_block_[{tail_id}]", ctx.prefix),
+                                            Some(format!("{}:if_tail_end_[{end_id}]", ctx.prefix)),
                                         )
                                     }
                                 },
-                                None => (format!("{}:if_end_[{}]", ctx.prefix, cond.span()), None),
+                                None => {
+                                    let id = ctx.get_salt();
+                                    (format!("{}:if_end_[{}]", ctx.prefix, id), None)
+                                }
                             };
 
-                            let if_cond_label = format!("{}:if_cond_[{}]", ctx.prefix, cond.span());
+                            let if_cond_label = format!("{}:if_cond_[{}]", ctx.prefix, cond_id);
                             ctx.push_section(&if_cond_label);
 
                             trace!("if {if_cond_label}");
@@ -436,11 +439,8 @@ impl<'a> Ctx<'a> {
                             ]);
                             ctx.dec_stack();
 
-                            ctx.push_section(&format!(
-                                "{}:if_block_[{}]",
-                                ctx.prefix,
-                                block.span()
-                            ));
+                            let block_id = ctx.get_salt();
+                            ctx.push_section(&format!("{}:if_block_[{}]", ctx.prefix, block_id));
 
                             ctx.push_scope("if block".to_owned(), ScopeLabel::None);
                             go(ctx, depth + 1, &block)?;
@@ -988,6 +988,10 @@ impl<'a> Ctx<'a> {
                             ensure_arity_and_eval_args(ctx, depth, "dread1", 1, exprs)?;
                             ctx.current_section().push(AsmOp::DREAD1);
                         }
+                        BuiltinOrDef::Builtin(Builtin::Dread8) => {
+                            ensure_arity_and_eval_args(ctx, depth, "dread8", 1, exprs)?;
+                            ctx.current_section().push(AsmOp::DREAD8);
+                        }
                         BuiltinOrDef::Builtin(Builtin::Dcopy) => {
                             ensure_arity_and_eval_args(ctx, depth, "dcopy", 3, exprs)?;
                             ctx.current_section().push(AsmOp::DCOPY);
@@ -1348,6 +1352,11 @@ impl<'a> CheckCtx<'a> {
 
             let mut out = vec![];
 
+            let block = match visitor.visit_block(ctx, block) {
+                Some(block) => go(ctx, depth, &block, visitor)?,
+                None => block.clone(),
+            };
+
             for (i, s) in block.iter().enumerate() {
                 match s {
                     Statement::Expr(expr) => {
@@ -1382,9 +1391,12 @@ impl<'a> CheckCtx<'a> {
                                     .flat_map(|s| s.vars.keys().cloned())
                                     .collect::<BTreeSet<_>>()
                                 {
-                                    // dyn until proven otherwise
-                                    // TODO: Make this check smarter somehow
-                                    ctx.set_var_value(&var, VarValue::Dyn);
+                                    if is_assigned(&var, block) {
+                                        trace!(
+                                            "'{var}' is assigned in the loop '{label}', value is dynamic"
+                                        );
+                                        ctx.set_var_value(&var, VarValue::Dyn);
+                                    }
                                 }
 
                                 let identified_label = ctx.new_label(*label);
@@ -1494,7 +1506,9 @@ impl<'a> CheckCtx<'a> {
                         if let [var] = &**vars
                             && let Expr::Val(val) = expr
                         {
-                            trace!("var '{var}' has const value {val}");
+                            if var == "temp_arr_ptr" {
+                                trace!("var '{var}' has const value {val}");
+                            }
                             ctx.set_var_value(var, VarValue::Const(*val))
                         }
 
@@ -1546,7 +1560,7 @@ impl<'a> CheckCtx<'a> {
                                 for ret in def.rets.iter().rev() {
                                     trace!("ret '{ret}'");
                                     // REVIEW: Should this actually start at Const(0)?
-                                    def_ctx.init_var(ret, VarValue::Dyn);
+                                    def_ctx.init_var(ret, VarValue::Const(Val::new(0)));
                                 }
 
                                 // functions can access other functions visible in this scope
@@ -1611,9 +1625,10 @@ impl<'a> CheckCtx<'a> {
     fn set_var_value<'b>(&'b mut self, var: &Ident<'a>, value: VarValue) {
         assert!(self.has_var(var), "bug: var {var} not found");
 
-        for s in self.scopes.iter_mut() {
+        for s in self.scopes.iter_mut().rev() {
             if let Some(val) = s.vars.get_mut(var) {
-                *val = value.clone()
+                *val = value.clone();
+                return;
             };
         }
     }
@@ -1740,6 +1755,9 @@ impl<'a> CheckCtx<'a> {
                         BuiltinOrDef::Builtin(Builtin::Dread1) => {
                             ensure_arity_and_eval_args(ctx, depth, "dread1", 1, exprs)?;
                         }
+                        BuiltinOrDef::Builtin(Builtin::Dread8) => {
+                            ensure_arity_and_eval_args(ctx, depth, "dread8", 1, exprs)?;
+                        }
                         BuiltinOrDef::Builtin(Builtin::Dcopy) => {
                             ensure_arity_and_eval_args(ctx, depth, "dcopy", 3, exprs)?;
                         }
@@ -1854,6 +1872,24 @@ impl<'a> CheckCtx<'a> {
     }
 }
 
+fn is_assigned(var: &Ident<'_>, block: &Block<'_>) -> bool {
+    block.into_iter().any(|s| match s {
+        Statement::Loop(loop_) => is_assigned(var, &loop_.block),
+        Statement::If(if_) => {
+            fn go_if(var: &Ident<'_>, if_: &If<'_>) -> bool {
+                is_assigned(var, &if_.block)
+                    || if_.else_.as_ref().is_some_and(|e| match e {
+                        Else::ElseIf { if_ } => go_if(var, if_),
+                        Else::Tail { block } => is_assigned(var, block),
+                    })
+            }
+            go_if(var, if_)
+        }
+        Statement::Assignment(assignment) => assignment.vars.contains(var),
+        _ => false,
+    })
+}
+
 #[derive(Debug, Clone)]
 pub enum VarValue {
     Dyn,
@@ -1873,6 +1909,11 @@ pub trait Visitor {
 
     fn visit_expr<'a>(&mut self, ctx: &CheckCtx, expr: &Expr<'a>) -> Option<Expr<'a>> {
         let _ = (ctx, expr);
+        None
+    }
+
+    fn visit_block<'a>(&mut self, ctx: &CheckCtx, block: &Block<'a>) -> Option<Block<'a>> {
+        let _ = (ctx, block);
         None
     }
 }

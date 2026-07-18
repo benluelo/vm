@@ -8,7 +8,7 @@ use vm::{
     mir::{
         CheckCtx, Ctx,
         parse::grammar,
-        pass::{ConstEval, ConstProp, DefInline, LoopUnroll, Pass},
+        pass::{ConstEval, ConstProp, DeadCodeRemoval, DefInline, LoopUnroll, Pass},
     },
 };
 
@@ -82,26 +82,29 @@ fn nist_vectors() {
     ctx.check(&ast).unwrap();
     let ast = DefInline::new().run(&ctx, ast);
 
-    let mut ctx = CheckCtx::new("root");
-    let ast = ctx.check_with(&ast, &mut LoopUnroll).unwrap();
-
-    let mut ctx = CheckCtx::new("root");
-    let ast = ctx.check_with(&ast, &mut LoopUnroll).unwrap();
-
     let mut ast = ast;
-    for i in 0.. {
-        let mut ctx = CheckCtx::new("root");
-        let new_ast = ctx.check_with(&ast, &mut ConstProp).unwrap();
 
+    for i in 1..=3 {
         let mut ctx = CheckCtx::new("root");
-        ctx.check(&new_ast).unwrap();
-        let new_ast = ConstEval::new().run(&ctx, new_ast);
+        ast = ctx.check_with(&ast, &mut LoopUnroll).unwrap();
 
-        if new_ast == ast {
-            info!("ran const prop/eval loop {i} times");
-            break;
-        } else {
-            ast = new_ast;
+        for i in 1.. {
+            let mut ctx = CheckCtx::new("root");
+            let new_ast = ctx.check_with(&ast, &mut ConstProp).unwrap();
+
+            let mut ctx = CheckCtx::new("root");
+            ctx.check(&new_ast).unwrap();
+            let new_ast = ConstEval::new().run(&ctx, new_ast);
+
+            let mut ctx = CheckCtx::new("root");
+            let new_ast = ctx.check_with(&new_ast, &mut DeadCodeRemoval).unwrap();
+
+            if new_ast == ast {
+                info!("ran const prop/eval loop {i} times");
+                break;
+            } else {
+                ast = new_ast;
+            }
         }
     }
 

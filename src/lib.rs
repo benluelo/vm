@@ -4,7 +4,7 @@ use std::fmt;
 
 use anyhow::Result;
 use const_hex::ToHexExt;
-use tracing::trace;
+use tracing::{info, trace};
 
 pub mod assembler;
 pub mod mir;
@@ -52,10 +52,14 @@ impl Vm {
         trace!("data: {}", self.data.encode_hex());
 
         loop {
-            match self.step(&mut pc)? {
-                StepResult::Stepped => {}
-                StepResult::Eof => break Ok(None),
-                StepResult::Exit(output) => break Ok(Some(output)),
+            match self.step(&mut pc) {
+                Ok(StepResult::Stepped) => {}
+                Ok(StepResult::Eof) => break Ok(None),
+                Ok(StepResult::Exit(output)) => break Ok(Some(output)),
+                Err(err) => {
+                    info!("pc: {pc}");
+                    return Err(err);
+                }
             }
 
             self.cycles += 1;
