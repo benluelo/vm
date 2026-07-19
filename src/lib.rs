@@ -199,6 +199,21 @@ impl Vm {
                     .copied()
                     .ok_or(Error::InvalidStackIdx)?;
             }
+            Op::DUP0 => {
+                trace!("dup0");
+                let stack_idx = self
+                    .stack
+                    .len()
+                    .checked_sub(1)
+                    .ok_or(Error::InvalidStackIdx)?;
+
+                self.stack.push(
+                    self.stack
+                        .get(stack_idx)
+                        .copied()
+                        .ok_or(Error::InvalidStackIdx)?,
+                )
+            }
             Op::SWAP => {
                 trace!("swap");
                 let idx = pop!() as usize;
@@ -207,6 +222,17 @@ impl Vm {
                 }
                 let a_idx = self.stack.len().checked_sub(1).ok_or(Error::StackEmpty)?;
                 let b_idx = a_idx.checked_sub(idx + 1).ok_or(Error::InvalidStackIdx)?;
+                self.stack.swap(a_idx, b_idx);
+            }
+            Op::SWAP0 => {
+                trace!("swap0");
+                let b_idx = self
+                    .stack
+                    .len()
+                    .checked_sub(2)
+                    .ok_or(Error::InvalidStackIdx)?;
+                // SAFETY: Len is at least 2 as per above
+                let a_idx = unsafe { self.stack.len().unchecked_sub(1) };
                 self.stack.swap(a_idx, b_idx);
             }
             Op::POP => {
@@ -407,7 +433,9 @@ impl Vm {
             raw::PUSH7 => Op::PUSH7(push_n(pc, &self.code)?),
             raw::PUSH8 => Op::PUSH8(push_n(pc, &self.code)?),
             raw::DUP => Op::DUP,
+            raw::DUP0 => Op::DUP0,
             raw::SWAP => Op::SWAP,
+            raw::SWAP0 => Op::SWAP0,
             raw::POP => Op::POP,
             raw::ALLOC => Op::ALLOC,
             raw::WRITE1 => Op::WRITE1,
@@ -649,26 +677,38 @@ op! {
 
         /// Pop the item on the top of the stack as N and duplicate the Nth stack item.
         ///
-        /// | Stack Input | Stack Output  |
-        /// | ----------- | ------------- |
-        /// | `[..., a]`  | `[..., a, a]` |
+        /// | Stack Input   | Stack Output  |
+        /// | ------------- | ------------- |
+        /// | `[..., a, N]` | `[..., a, a]` |
         DUP = 0x09,
+
+        /// Duplicate the item on the top of the stack.
+        ///
+        /// | Stack Input | Stack Output  |
+        /// | ------------| ------------- |
+        /// | `[..., a]`  | `[..., a, a]` |
+        DUP0 = 0x0a,
 
         /// Pop the item on the top of the stack as N and swap the first and (N-1)th stack items.
         ///
         /// | Stack Input                  | Stack Output                 |
         /// | ---------------------------- | ---------------------------- |
         /// | `[..., a, (...{n-1}), b, n]` | `[..., b, (...{n-1}), a, n]` |
+        SWAP = 0x0b,
+
+        /// Swap the top two items on the stack.
         ///
-        ///
-        SWAP = 0x0a,
+        /// | Stack Input   | Stack Output  |
+        /// | ------------- | ------------- |
+        /// | `[..., a, b]` | `[..., b, a]` |
+        SWAP0 = 0x0c,
 
         /// Pop the top of the stack, returning an error if the stack is empty.
         ///
         /// | Stack Input | Stack Output |
         /// | ----------- | ------------ |
         /// | `[..., a]`  | `[...]`      |
-        POP = 0x0b,
+        POP = 0x0d,
 
         // MEMORY OPERATIONS (0x20-0x3f)
 
@@ -935,7 +975,9 @@ impl Op {
             Op::PUSH7(v) => [raw::PUSH7].into_iter().chain(v).collect(),
             Op::PUSH8(v) => [raw::PUSH8].into_iter().chain(v).collect(),
             Op::DUP => vec![raw::DUP],
+            Op::DUP0 => vec![raw::DUP0],
             Op::SWAP => vec![raw::SWAP],
+            Op::SWAP0 => vec![raw::SWAP0],
             Op::POP => vec![raw::POP],
             Op::ALLOC => vec![raw::ALLOC],
             Op::WRITE1 => vec![raw::WRITE1],

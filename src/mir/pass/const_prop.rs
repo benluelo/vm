@@ -1,9 +1,4 @@
-use chumsky::span::Spanned;
-
-use crate::mir::{
-    CheckCtx, VarValue, Visitor,
-    ast::{BuiltinOrDef, Expr},
-};
+use crate::mir::{CheckCtx, VarValue, Visitor, ast::Expr};
 
 pub struct ConstProp;
 

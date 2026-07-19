@@ -1,8 +1,8 @@
-use tracing::{info, trace};
+use tracing::trace;
 
 use crate::mir::{
     CheckCtx, Visitor,
-    ast::{Block, Builtin, BuiltinOrDef, Else, Expr, Ident, If, Statement, Val},
+    ast::{Block, Builtin, BuiltinOrDef, Else, Expr, Ident, If, Statement},
 };
 
 pub struct DeadCodeRemoval;
@@ -15,7 +15,7 @@ impl DeadCodeRemoval {
 }
 
 impl Visitor for DeadCodeRemoval {
-    fn visit_block<'a>(&mut self, ctx: &CheckCtx, block: &Block<'a>) -> Option<Block<'a>> {
+    fn visit_block<'a>(&mut self, _ctx: &CheckCtx, block: &Block<'a>) -> Option<Block<'a>> {
         let mut new_block = vec![];
         let mut removed_dead_code = false;
 

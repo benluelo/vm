@@ -152,31 +152,8 @@ def writeLane(x, y, lane) {
   store64(mul(8, i(x, y)), lane)
 }
 
-def writeLaneBE(x, y, lane) {
-  write8(mul(8, i(x, y)), lane)
-}
-
 def XORLane(x, y, lane) {
   xor64(mul(8, i(x, y)), lane)
-}
-
-def iota(u) {
-  write8(
-    0,
-    xor(
-      read8(0),
-      or(
-        shl(or(
-          and(shl(or(and(shl(u, 8),  0xFF00FF00FF00FF00), and(shr(u, 8),  0x00FF00FF00FF00FF)), 16), 0xFFFF0000FFFF0000),
-          and(shr(or(and(shl(u, 8),  0xFF00FF00FF00FF00), and(shr(u, 8),  0x00FF00FF00FF00FF)), 16), 0x0000FFFF0000FFFF)
-        ), 32),
-        shr(or(
-          and(shl(or(and(shl(u, 8),  0xFF00FF00FF00FF00), and(shr(u, 8),  0x00FF00FF00FF00FF)), 16), 0xFFFF0000FFFF0000),
-          and(shr(or(and(shl(u, 8),  0xFF00FF00FF00FF00), and(shr(u, 8),  0x00FF00FF00FF00FF)), 16), 0x0000FFFF0000FFFF)
-        ), 32)
-      )
-    )
-  )
 }
 
 # alloc state (1600 bits)
@@ -204,9 +181,9 @@ write1(
   or(read1(add(sub(blocks_ptr, 1), mul(136, block_count))), 0x80)
 )
 
-inner_block_ptr <- 0
+block_number <- 0
 loop :blocks {
-  if gt(inner_block_ptr, dlen()) {
+  if eq(block_number, block_count) {
     break :blocks
   }
 
@@ -223,7 +200,7 @@ loop :blocks {
       mul(i, 8),
       xor(
         read8(mul(i, 8)),
-        read8(add(blocks_ptr, add(inner_block_ptr, mul(i, 8))))
+        read8(add(blocks_ptr, add(mul(block_number, 136), mul(i, 8))))
       )
     )
     i <- add(i, 1)
@@ -242,6 +219,11 @@ loop :blocks {
     # === θ step (see [Keccak Reference, Section 2.3.2]) ===
 
     C <- temp_arr_ptr
+    c0 <- 0
+    c1 <- 0
+    c2 <- 0
+    c3 <- 0
+    c4 <- 0
 
     # Compute the parity of the columns
     x <- 0
@@ -249,11 +231,26 @@ loop :blocks {
       if eq(x, 5) {
         break :theta_parity
       }
+      if eq(x, 0) {
+        c0 <- xor(xor(xor(xor(readLane(0, 0), readLane(0, 1)), readLane(0, 2)), readLane(0, 3)), readLane(0, 4))
+      }
+      if eq(x, 1) {
+        c1 <- xor(xor(xor(xor(readLane(1, 0), readLane(1, 1)), readLane(1, 2)), readLane(1, 3)), readLane(1, 4))
+      }
+      if eq(x, 2) {
+        c2 <- xor(xor(xor(xor(readLane(2, 0), readLane(2, 1)), readLane(2, 2)), readLane(2, 3)), readLane(2, 4))
+      }
+      if eq(x, 3) {
+        c3 <- xor(xor(xor(xor(readLane(3, 0), readLane(3, 1)), readLane(3, 2)), readLane(3, 3)), readLane(3, 4))
+      }
+      if eq(x, 4) {
+        c4 <- xor(xor(xor(xor(readLane(4, 0), readLane(4, 1)), readLane(4, 2)), readLane(4, 3)), readLane(4, 4))
+      }
       # write to C[x]
-      store64(
-        add(C, mul(x, 8)),
-        xor(xor(xor(xor(readLaneBE(x, 0), readLaneBE(x, 1)), readLaneBE(x, 2)), readLaneBE(x, 3)), readLaneBE(x, 4))
-      )
+      # store64(
+      #   add(C, mul(x, 8)),
+      #   xor(xor(xor(xor(readLaneBE(x, 0), readLaneBE(x, 1)), readLaneBE(x, 2)), readLaneBE(x, 3)), readLaneBE(x, 4))
+      # )
       x <- add(x, 1)
     }
 
@@ -263,13 +260,53 @@ loop :blocks {
       if eq(x, 5) {
         break :theta_effect_x
       }
-      # Compute the θ effect for a given column
-      D <- xor(
-        # C[(x+4)%5]
-        read8(add(C, mul(mod(add(x, 4), 5), 8))),
-        # C[(x+1)%5]
-        ROTL64(read8(add(C, mul(mod(add(x, 1), 5), 8))), 1)
-      )
+      if eq(x, 0) {
+        D <- xor(
+          # C[(x+4)%5]
+          c4,
+          # C[(x+1)%5]
+          ROTL64(c1, 1)
+        )
+      }
+      if eq(x, 1) {
+        D <- xor(
+          # C[(x+4)%5]
+          c0,
+          # C[(x+1)%5]
+          ROTL64(c2, 1)
+        )
+      }
+      if eq(x, 2) {
+        D <- xor(
+          # C[(x+4)%5]
+          c1,
+          # C[(x+1)%5]
+          ROTL64(c3, 1)
+        )
+      }
+      if eq(x, 3) {
+        D <- xor(
+          # C[(x+4)%5]
+          c2,
+          # C[(x+1)%5]
+          ROTL64(c4, 1)
+        )
+      }
+      if eq(x, 4) {
+        D <- xor(
+          # C[(x+4)%5]
+          c3,
+          # C[(x+1)%5]
+          ROTL64(c0, 1)
+        )
+      }
+      # # Compute the θ effect for a given column
+      # D <- xor(
+      #   # C[(x+4)%5]
+      #   read8(add(C, mul(mod(add(x, 4), 5), 8))),
+      #   # C[(x+1)%5]
+      #   ROTL64(read8(add(C, mul(mod(add(x, 1), 5), 8))), 1)
+      # )
 
       # Add the θ effect to the whole column
       y <- 0
@@ -330,7 +367,7 @@ loop :blocks {
         }
         write8(
           add(temp_arr_ptr, mul(x, 8)),
-          readLaneBE(x, y)
+          readLane(x, y)
         )
         x <- add(x, 1)
       }
@@ -340,7 +377,7 @@ loop :blocks {
         if eq(x, 5) {
           break :chi_compute
         }
-        writeLaneBE(
+        writeLane(
           x, y,
           xor(
             read8(add(temp_arr_ptr, mul(x, 8))),
@@ -359,83 +396,83 @@ loop :blocks {
     # inlinedd iota round constants
     # TODO: Make these stack variables once I add arrays
     if eq(round, 0) {
-      iota(0x0000000000000001)
+      XORLane(0, 0, 0x0000000000000001)
     }
     if eq(round, 1) {
-      iota(0x0000000000008082)
+      XORLane(0, 0, 0x0000000000008082)
     }
     if eq(round, 2) {
-      iota(0x800000000000808A)
+      XORLane(0, 0, 0x800000000000808A)
     }
     if eq(round, 3) {
-      iota(0x8000000080008000)
+      XORLane(0, 0, 0x8000000080008000)
     }
     if eq(round, 4) {
-      iota(0x000000000000808B)
+      XORLane(0, 0, 0x000000000000808B)
     }
     if eq(round, 5) {
-      iota(0x0000000080000001)
+      XORLane(0, 0, 0x0000000080000001)
     }
     if eq(round, 6) {
-      iota(0x8000000080008081)
+      XORLane(0, 0, 0x8000000080008081)
     }
     if eq(round, 7) {
-      iota(0x8000000000008009)
+      XORLane(0, 0, 0x8000000000008009)
     }
     if eq(round, 8) {
-      iota(0x000000000000008A)
+      XORLane(0, 0, 0x000000000000008A)
     }
     if eq(round, 9) {
-      iota(0x0000000000000088)
+      XORLane(0, 0, 0x0000000000000088)
     }
     if eq(round, 10) {
-      iota(0x0000000080008009)
+      XORLane(0, 0, 0x0000000080008009)
     }
     if eq(round, 11) {
-      iota(0x000000008000000A)
+      XORLane(0, 0, 0x000000008000000A)
     }
     if eq(round, 12) {
-      iota(0x000000008000808B)
+      XORLane(0, 0, 0x000000008000808B)
     }
     if eq(round, 13) {
-      iota(0x800000000000008B)
+      XORLane(0, 0, 0x800000000000008B)
     }
     if eq(round, 14) {
-      iota(0x8000000000008089)
+      XORLane(0, 0, 0x8000000000008089)
     }
     if eq(round, 15) {
-      iota(0x8000000000008003)
+      XORLane(0, 0, 0x8000000000008003)
     }
     if eq(round, 16) {
-      iota(0x8000000000008002)
+      XORLane(0, 0, 0x8000000000008002)
     }
     if eq(round, 17) {
-      iota(0x8000000000000080)
+      XORLane(0, 0, 0x8000000000000080)
     }
     if eq(round, 18) {
-      iota(0x000000000000800A)
+      XORLane(0, 0, 0x000000000000800A)
     }
     if eq(round, 19) {
-      iota(0x800000008000000A)
+      XORLane(0, 0, 0x800000008000000A)
     }
     if eq(round, 20) {
-      iota(0x8000000080008081)
+      XORLane(0, 0, 0x8000000080008081)
     }
     if eq(round, 21) {
-      iota(0x8000000000008080)
+      XORLane(0, 0, 0x8000000000008080)
     }
     if eq(round, 22) {
-      iota(0x0000000080000001)
+      XORLane(0, 0, 0x0000000080000001)
     }
     if eq(round, 23) {
-      iota(0x8000000080008008)
+      XORLane(0, 0, 0x8000000080008008)
     }
 
     round <- add(round, 1)
   
   }
 
-  inner_block_ptr <- add(inner_block_ptr, 136)
+  block_number <- add(block_number, 1)
 }
 
 exit(0, 32)

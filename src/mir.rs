@@ -402,107 +402,6 @@ impl<'a> Ctx<'a> {
                         ]);
                     }
                     Statement::If(if_) => {
-                        fn go_if<'a>(
-                            ctx: &mut Ctx<'a>,
-                            If { cond, block, else_ }: If<'a>,
-                            depth: usize,
-                        ) -> CompileResult {
-                            // dbg!(&if_);
-
-                            let cond_id = ctx.get_salt();
-
-                            let (if_false_label, end_label_if_tail) = match &else_ {
-                                Some(else_) => match else_ {
-                                    // jump to the next condition check if the preceeding if
-                                    // condition is false
-                                    Else::ElseIf { if_ } => {
-                                        let id = ctx.get_salt();
-                                        (format!("{}:if_cond_[{}]", ctx.prefix, id), None)
-                                    }
-                                    // if this is a tail else block, jump to the block if the
-                                    // preceeding condition is false, and set the end of the entire
-                                    // statement to jump to
-                                    Else::Tail { block } => {
-                                        let tail_id = ctx.get_salt();
-                                        let end_id = ctx.get_salt();
-                                        // on false, if the next block is a tail else block, then
-                                        // jump to the start of the tail block
-                                        (
-                                            format!("{}:if_tail_block_[{tail_id}]", ctx.prefix),
-                                            Some(format!("{}:if_tail_end_[{end_id}]", ctx.prefix)),
-                                        )
-                                    }
-                                },
-                                None => {
-                                    let id = ctx.get_salt();
-                                    (format!("{}:if_end_[{}]", ctx.prefix, id), None)
-                                }
-                            };
-
-                            let if_cond_label = format!("{}:if_cond_[{}]", ctx.prefix, cond_id);
-                            ctx.push_section(&if_cond_label);
-
-                            trace!("if {if_cond_label}");
-
-                            // evaluate condition expression
-                            ctx.compile_expr(&cond)?;
-
-                            // jump to end of the if statement (past the block code) if the expr is
-                            // false
-                            ctx.current_section().extend_from_slice(&[
-                                AsmOp::NOT,
-                                AsmOp::PUSHL(if_false_label.clone().into()),
-                                AsmOp::JNZ,
-                            ]);
-                            ctx.dec_stack();
-
-                            let block_id = ctx.get_salt();
-                            ctx.push_section(&format!("{}:if_block_[{}]", ctx.prefix, block_id));
-
-                            ctx.push_scope("if block".to_owned(), ScopeLabel::None);
-                            go(ctx, depth + 1, &block)?;
-                            ctx.pop_scope(ScopeLabel::None, true)?;
-
-                            if let Some(end_label) = end_label_if_tail {
-                                ctx.current_section()
-                                    .extend([AsmOp::PUSHL(end_label.into()), AsmOp::JUMP]);
-                            }
-
-                            match else_ {
-                                Some(else_) => match else_ {
-                                    Else::ElseIf { if_ } => {
-                                        trace!("else if");
-                                        go_if(ctx, if_.inner, depth + 1)?
-                                    }
-                                    Else::Tail { block } => {
-                                        let tail_end_label = format!(
-                                            "{}:if_tail_end_[{}]",
-                                            ctx.prefix,
-                                            block.span()
-                                        );
-                                        let tail_block_label = format!(
-                                            "{}:if_tail_block_[{}]",
-                                            ctx.prefix,
-                                            block.span()
-                                        );
-                                        trace!("else");
-                                        ctx.push_section(&tail_block_label);
-                                        go(ctx, depth + 1, &block)?;
-                                        ctx.push_section(&tail_end_label);
-                                    }
-                                },
-                                None => {
-                                    ctx.push_section(&if_false_label);
-                                }
-                            }
-
-                            Ok(())
-                        }
-
-                        trace!("if");
-
-                        // go_if(ctx, if_.clone(), depth)?;
-
                         let prefix = ctx.prefix.clone();
                         let mk_id =
                             move |id| Cow::<'static, str>::Owned(format!("{}:if_{}", prefix, id));
@@ -633,11 +532,16 @@ impl<'a> Ctx<'a> {
                                     let stack_location_from_top =
                                         (ctx.stack_depth - var_stack_idx) - 2;
                                     trace!("stack_location_from_top: {stack_location_from_top}");
-                                    ctx.current_section().extend_from_slice(&[
-                                        AsmOp::push(stack_location_from_top as u64),
-                                        AsmOp::SWAP,
-                                        AsmOp::POP,
-                                    ]);
+                                    if stack_location_from_top == 0 {
+                                        ctx.current_section()
+                                            .extend_from_slice(&[AsmOp::SWAP0, AsmOp::POP]);
+                                    } else {
+                                        ctx.current_section().extend_from_slice(&[
+                                            AsmOp::push(stack_location_from_top as u64),
+                                            AsmOp::SWAP,
+                                            AsmOp::POP,
+                                        ]);
+                                    }
                                     ctx.dec_stack();
                                 }
                             }
@@ -933,8 +837,12 @@ impl<'a> Ctx<'a> {
                     trace!("stack_depth: {}", ctx.stack_depth);
                     let dup_idx = (ctx.stack_depth - 1) - idx;
                     trace!("dup_idx: {dup_idx}");
-                    ctx.current_section()
-                        .extend_from_slice(&[AsmOp::push(dup_idx as u64), AsmOp::DUP]);
+                    if dup_idx == 0 {
+                        ctx.current_section().extend_from_slice(&[AsmOp::DUP0]);
+                    } else {
+                        ctx.current_section()
+                            .extend_from_slice(&[AsmOp::push(dup_idx as u64), AsmOp::DUP]);
+                    }
                     ctx.inc_stack();
                 }
                 Expr::Call {

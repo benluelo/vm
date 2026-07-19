@@ -84,7 +84,7 @@ fn nist_vectors() {
 
     let mut ast = ast;
 
-    for i in 1..=3 {
+    for _ in 1..=5 {
         let mut ctx = CheckCtx::new("root");
         ast = ctx.check_with(&ast, &mut LoopUnroll).unwrap();
 

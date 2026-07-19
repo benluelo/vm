@@ -12,7 +12,7 @@ use chumsky::{
     },
 };
 use indexmap::IndexMap;
-use tracing::trace;
+use tracing::{info, trace};
 
 use crate::Op;
 
@@ -37,8 +37,67 @@ impl<'a> Object<'a> {
         Self([("".into(), ops)].into_iter().collect())
     }
 
-    pub fn assemble(&self) -> Vec<u8> {
+    pub fn assemble(mut self) -> Vec<u8> {
         let mut out = vec![];
+
+        // jump threading
+        loop {
+            let mut changed = false;
+            let mut it = self.0.iter_mut().peekable();
+            while let Some((label, ops)) = it.next() {
+                if let [.., AsmOp::PUSHL(dst), AsmOp::JUMP] = &**ops
+                    && let Some((next_label, _)) = it.peek()
+                    && dst == *next_label
+                {
+                    info!("threading {label} into {next_label}");
+                    changed = true;
+                    ops.pop();
+                    ops.pop();
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        // replace duplicate push ops with a dup
+        loop {
+            let mut changed = false;
+            for (_, x) in &mut self.0 {
+                let mut new_ops = Vec::with_capacity(x.len());
+                let mut it = x.iter().peekable();
+                while let Some(a) = it.next() {
+                    match a {
+                        // deduping push1 doesn't make a binary size difference and just costs more
+                        // cycles only worth it if there is a sequence of
+                        // more than 2 AsmOp::PUSH1(_)
+                        AsmOp::PUSH2(_)
+                        | AsmOp::PUSH3(_)
+                        | AsmOp::PUSH4(_)
+                        | AsmOp::PUSH5(_)
+                        | AsmOp::PUSH6(_)
+                        | AsmOp::PUSH7(_)
+                        | AsmOp::PUSH8(_) => {
+                            new_ops.push(a.clone());
+                            while it.next_if_eq(a).is_some() {
+                                info!("deduplicating {a}");
+                                changed = true;
+                                new_ops.push(AsmOp::PUSH0);
+                                new_ops.push(AsmOp::DUP);
+                            }
+                        }
+                        // AsmOp::PUSHL(cow) => todo!(),
+                        _ => {
+                            new_ops.push(a.clone());
+                        }
+                    }
+                }
+                *x = new_ops;
+            }
+            if !changed {
+                break;
+            }
+        }
 
         let label_ptrs = self
             .0
@@ -69,7 +128,9 @@ impl<'a> Object<'a> {
                     AsmOp::PUSH8(v) => Op::PUSH8(*v),
                     AsmOp::PUSHL(label) => Op::PUSH8(label_ptrs[&**label].to_be_bytes()),
                     AsmOp::DUP => Op::DUP,
+                    AsmOp::DUP0 => Op::DUP0,
                     AsmOp::SWAP => Op::SWAP,
+                    AsmOp::SWAP0 => Op::SWAP0,
                     AsmOp::POP => Op::POP,
                     AsmOp::ALLOC => Op::ALLOC,
                     AsmOp::WRITE1 => Op::WRITE1,
@@ -143,7 +204,9 @@ pub enum AsmOp<'a> {
     PUSH8([u8; 8]),
     PUSHL(Cow<'a, str>),
     DUP,
+    DUP0,
     SWAP,
+    SWAP0,
     POP,
     ALLOC,
     WRITE1,
@@ -196,6 +259,18 @@ pub enum AsmOp<'a> {
     TRAP,
 }
 
+impl PartialEq<&AsmOp<'_>> for AsmOp<'_> {
+    fn eq(&self, other: &&AsmOp) -> bool {
+        self == *other
+    }
+}
+
+impl PartialEq<AsmOp<'_>> for &AsmOp<'_> {
+    fn eq(&self, other: &AsmOp) -> bool {
+        *self == other
+    }
+}
+
 impl<'a> AsmOp<'a> {
     pub fn push(n: u64) -> Self {
         let bz = n.to_be_bytes();
@@ -243,7 +318,9 @@ impl<'a> Display for AsmOp<'a> {
             }
             AsmOp::PUSHL(label) => write!(f, "pushl @{label}"),
             AsmOp::DUP => write!(f, "dup"),
+            AsmOp::DUP0 => write!(f, "dup0"),
             AsmOp::SWAP => write!(f, "swap"),
+            AsmOp::SWAP0 => write!(f, "swap0"),
             AsmOp::POP => write!(f, "pop"),
             AsmOp::ALLOC => write!(f, "alloc"),
             AsmOp::WRITE1 => write!(f, "write1"),
@@ -312,7 +389,9 @@ impl<'a> fmt::Debug for AsmOp<'a> {
             Self::PUSH8(n) => f.write_fmt(format_args!("PUSH8({})", u64::from_be_bytes(*n))),
             Self::PUSHL(label) => f.debug_tuple("PUSHL").field(label).finish(),
             Self::DUP => write!(f, "DUP"),
+            Self::DUP0 => write!(f, "DUP0"),
             Self::SWAP => write!(f, "SWAP"),
+            Self::SWAP0 => write!(f, "SWAP0"),
             Self::POP => write!(f, "POP"),
             Self::ALLOC => write!(f, "ALLOC"),
             Self::WRITE1 => write!(f, "WRITE1"),
@@ -543,6 +622,15 @@ mod tests {
     use super::*;
     use crate::Vm;
 
+    fn init() {
+        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_subscriber::filter::EnvFilter::from_default_env())
+            .try_init();
+    }
+
     #[test]
     fn asm_op_push() {
         for (i, o) in [(1, AsmOp::PUSH1([1])), (0x01ff, AsmOp::PUSH2([0x01, 0xff]))] {
@@ -622,6 +710,39 @@ mod tests {
         push1 0x01 ; len
         exit
         ";
+
+        let object = parse_asm().parse(asm).unwrap();
+
+        dbg!(&object);
+
+        let asm = object.assemble();
+
+        println!("{}", asm.encode_hex());
+
+        let mut vm = Vm::new(asm, vec![]);
+
+        let res = vm.run().unwrap();
+
+        match res {
+            Some(res) => {
+                println!("res: {}", res.encode_hex());
+            }
+            None => {
+                println!("res: <none>");
+            }
+        }
+    }
+
+    #[test]
+    fn dedup() {
+        init();
+
+        let asm = r"
+:start
+        push1 0x01
+        push1 0x01
+        push1 0x01
+";
 
         let object = parse_asm().parse(asm).unwrap();
 

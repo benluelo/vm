@@ -157,26 +157,13 @@ fn main() -> anyhow::Result<()> {
                 }
             } else {
                 match mir::parse::grammar().block.parse(&source).into_result() {
-                    Ok(obj) => {
-                        let mut ctx = CheckCtx::new("root");
-                        ctx.check(&obj)?;
-                        let obj = ConstEval::new().run(&ctx, obj);
+                    Ok(ast) => {
+                        let ast = optimize(ast)?;
 
-                        let mut ctx = CheckCtx::new("root");
-                        ctx.check(&obj)?;
-                        let obj = DefInline::new().run(&ctx, obj);
-
-                        let mut ctx = CheckCtx::new("root");
-                        ctx.check(&obj)?;
-                        let obj = DefInline::new().run(&ctx, obj);
-
-                        let mut ctx = CheckCtx::new("root");
-                        let obj = ctx.check_with(&obj, &mut LoopUnroll)?;
-
-                        println!("{}", print_ast(&obj));
+                        // println!("{}", print_ast(&ast));
 
                         let mut ctx = Ctx::new_root();
-                        ctx.compile(&obj)?;
+                        ctx.compile(&ast)?;
                         match emit {
                             Emit::Asm => {
                                 let obj = ctx.into_object();
@@ -226,43 +213,7 @@ fn main() -> anyhow::Result<()> {
                 let file = fs::read_to_string(&file)?;
                 match mir::parse::grammar().block.parse(&file).into_result() {
                     Ok(ast) => {
-                        let mut ctx = CheckCtx::new("root");
-                        ctx.check(&ast)?;
-                        let ast = DefInline::new().run(&ctx, ast);
-
-                        let mut ctx = CheckCtx::new("root");
-                        ctx.check(&ast)?;
-                        let ast = DefInline::new().run(&ctx, ast);
-
-                        let mut ast = ast;
-
-                        for i in 1..=3 {
-                            let mut ctx = CheckCtx::new("root");
-                            ast = ctx.check_with(&ast, &mut LoopUnroll)?;
-
-                            for i in 1.. {
-                                let mut ctx = CheckCtx::new("root");
-                                let new_ast = ctx.check_with(&ast, &mut ConstProp)?;
-
-                                let mut ctx = CheckCtx::new("root");
-                                ctx.check(&new_ast)?;
-                                let new_ast = DefInline::new().run(&ctx, new_ast);
-
-                                let mut ctx = CheckCtx::new("root");
-                                ctx.check(&new_ast)?;
-                                let new_ast = ConstEval::new().run(&ctx, new_ast);
-
-                                let mut ctx = CheckCtx::new("root");
-                                let new_ast = ctx.check_with(&new_ast, &mut DeadCodeRemoval)?;
-
-                                if new_ast == ast {
-                                    info!("ran const prop/eval loop {i} times");
-                                    break;
-                                } else {
-                                    ast = new_ast;
-                                }
-                            }
-                        }
+                        let ast = optimize(ast)?;
 
                         #[expect(
                             clippy::unwrap_in_result,
@@ -328,6 +279,44 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn optimize(ast: mir::ast::Block<'_>) -> Result<mir::ast::Block<'_>, anyhow::Error> {
+    let mut ctx = CheckCtx::new("root");
+    ctx.check(&ast)?;
+    let ast = DefInline::new().run(&ctx, ast);
+    let mut ctx = CheckCtx::new("root");
+    ctx.check(&ast)?;
+    let ast = DefInline::new().run(&ctx, ast);
+    let mut ast = ast;
+    for i in 1..=2 {
+        let mut ctx = CheckCtx::new("root");
+        ast = ctx.check_with(&ast, &mut LoopUnroll)?;
+
+        for i in 1.. {
+            let mut ctx = CheckCtx::new("root");
+            let new_ast = ctx.check_with(&ast, &mut ConstProp)?;
+
+            let mut ctx = CheckCtx::new("root");
+            ctx.check(&new_ast)?;
+            let new_ast = DefInline::new().run(&ctx, new_ast);
+
+            let mut ctx = CheckCtx::new("root");
+            ctx.check(&new_ast)?;
+            let new_ast = ConstEval::new().run(&ctx, new_ast);
+
+            let mut ctx = CheckCtx::new("root");
+            let new_ast = ctx.check_with(&new_ast, &mut DeadCodeRemoval)?;
+
+            if new_ast == ast {
+                info!("ran const prop/eval loop {i} times");
+                break;
+            } else {
+                ast = new_ast;
+            }
+        }
+    }
+    Ok(ast)
 }
 
 fn report_errors(file: &str, errs: Vec<Rich<'_, char>>) {

@@ -3,7 +3,7 @@ use std::{
     iter::{self},
 };
 
-use tracing::{info, trace};
+use tracing::trace;
 
 use crate::{
     mir::{
@@ -12,7 +12,6 @@ use crate::{
             Assignment, Block, Builtin, BuiltinOrDef, Else, Expr, Ident, If, Label, Loop,
             Statement, Val,
         },
-        parse::print_ast,
     },
     op,
 };
@@ -281,7 +280,7 @@ fn inline_var<'a>(s: &mut Statement<'a>, var: &Ident<'a>, val: u64) {
     }
 }
 
-fn eval_update_expr(update: &Expr<'_>, var: &Ident<'_>, val: u64) -> u64 {
+fn eval_update_expr(update: &Expr<'_>, _var: &Ident<'_>, val: u64) -> u64 {
     match update {
         Expr::Val(_) => todo!(),
         Expr::Var(_) => todo!(),
