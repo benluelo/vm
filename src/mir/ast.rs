@@ -314,6 +314,14 @@ impl Expr<'_> {
             } => f.span,
         }
     }
+
+    /// Returns `true` if the expr is [`Val`].
+    ///
+    /// [`Val`]: Expr::Val
+    #[must_use]
+    pub fn is_val(&self) -> bool {
+        matches!(self, Self::Val(..))
+    }
 }
 
 impl<'a> fmt::Display for Expr<'a> {

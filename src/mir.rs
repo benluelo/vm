@@ -1,11 +1,12 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     fmt, iter,
 };
 
 use chumsky::span::Spanned;
 use indexmap::IndexMap;
-use tracing::{info, info_span, instrument, trace};
+use tracing::{info_span, instrument, trace};
 
 use crate::{
     assembler::{AsmOp, Object},
@@ -282,6 +283,20 @@ impl<'a> Ctx<'a> {
     }
 
     #[track_caller]
+    fn current_section_label(&self) -> String {
+        self.sections
+            .keys()
+            .last()
+            .expect("main section exists")
+            .clone()
+    }
+
+    #[track_caller]
+    fn section(&mut self, label: &str) -> &mut Vec<AsmOp<'a>> {
+        self.sections.get_mut(label).expect("main section exists")
+    }
+
+    #[track_caller]
     fn find_labelled_section(&self, label: Label<'a>) -> Option<&IdentifiedLabel<'a>> {
         self.scopes
             .iter()
@@ -392,6 +407,8 @@ impl<'a> Ctx<'a> {
                             If { cond, block, else_ }: If<'a>,
                             depth: usize,
                         ) -> CompileResult {
+                            // dbg!(&if_);
+
                             let cond_id = ctx.get_salt();
 
                             let (if_false_label, end_label_if_tail) = match &else_ {
@@ -484,7 +501,85 @@ impl<'a> Ctx<'a> {
 
                         trace!("if");
 
-                        go_if(ctx, if_.clone(), depth)?;
+                        // go_if(ctx, if_.clone(), depth)?;
+
+                        let prefix = ctx.prefix.clone();
+                        let mk_id =
+                            move |id| Cow::<'static, str>::Owned(format!("{}:if_{}", prefix, id));
+
+                        let mut current_if = Some(if_.clone());
+
+                        // end of the entire if statement, all blocks will eventually end up here
+                        // unless they exit to another scope (break/continue)
+                        let tail_block_id = mk_id(ctx.get_salt());
+
+                        // let mut current_block_id: Cow<_> =
+                        //     ctx.sections.last_entry().unwrap().key().to_owned().into();
+
+                        while let Some(if_) = current_if.take() {
+                            ctx.compile_expr(&if_.cond)?;
+
+                            let then_block_id = mk_id(ctx.get_salt());
+                            let else_block_id = mk_id(ctx.get_salt());
+
+                            ctx.current_section().extend([
+                                // jump to the then block if the condition is truthy
+                                AsmOp::PUSHL(then_block_id.clone()),
+                                AsmOp::JNZ,
+                            ]);
+                            ctx.dec_stack();
+
+                            let cond_id = ctx.current_section_label();
+
+                            ctx.push_section(&then_block_id);
+                            ctx.push_scope("if block".to_owned(), ScopeLabel::None);
+                            go(ctx, depth + 1, &if_.block)?;
+                            ctx.pop_scope(ScopeLabel::None, true)?;
+                            // the then block in an if-else chain always jumps to the end of the if
+                            // statement
+                            ctx.current_section()
+                                .extend([AsmOp::PUSHL(tail_block_id.clone()), AsmOp::JUMP]);
+
+                            match if_.else_ {
+                                Some(else_) => match else_ {
+                                    Else::ElseIf { if_: else_if } => {
+                                        // if there is an else block, jump to that if the cond is
+                                        // false
+                                        ctx.push_section(&else_block_id);
+                                        ctx.section(&cond_id).extend([
+                                            AsmOp::PUSHL(else_block_id.clone()),
+                                            AsmOp::JUMP,
+                                        ]);
+                                        current_if = Some(else_if.inner);
+                                    }
+                                    Else::Tail { block } => {
+                                        // if there is an else block, jump to that if the cond is
+                                        // false
+                                        ctx.push_section(&else_block_id);
+                                        ctx.section(&cond_id).extend([
+                                            AsmOp::PUSHL(else_block_id.clone()),
+                                            AsmOp::JUMP,
+                                        ]);
+                                        ctx.push_scope("if block".to_owned(), ScopeLabel::None);
+                                        go(ctx, depth + 1, &block)?;
+                                        ctx.pop_scope(ScopeLabel::None, true)?;
+
+                                        // tail block, jump to the end of the if statement
+                                        ctx.current_section().extend([
+                                            AsmOp::PUSHL(tail_block_id.clone()),
+                                            AsmOp::JUMP,
+                                        ]);
+                                    }
+                                },
+                                None => {
+                                    // no tail block, jump to the end of the if statement
+                                    ctx.section(&cond_id)
+                                        .extend([AsmOp::PUSHL(tail_block_id.clone()), AsmOp::JUMP]);
+                                }
+                            }
+                        }
+
+                        ctx.push_section(&tail_block_id);
                     }
                     Statement::Assignment(Assignment { vars, expr }) => {
                         let arity = ctx.expr_arity(0, expr, true)?;

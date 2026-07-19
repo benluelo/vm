@@ -2,7 +2,7 @@ use tracing::{info, trace};
 
 use crate::mir::{
     CheckCtx, Visitor,
-    ast::{Block, Builtin, BuiltinOrDef, Else, Expr, Ident, If, Statement},
+    ast::{Block, Builtin, BuiltinOrDef, Else, Expr, Ident, If, Statement, Val},
 };
 
 pub struct DeadCodeRemoval;
@@ -43,7 +43,28 @@ impl Visitor for DeadCodeRemoval {
                 Statement::Break(_) => new_block.push(statement),
                 Statement::Continue(_) => new_block.push(statement),
                 // TODO: Drop empty if blocks with pure conditions
-                Statement::If(_) => new_block.push(statement),
+                Statement::If(if_) => {
+                    // TODO: Handle more complex if statements
+                    if if_.else_.is_some() {
+                        new_block.push(Statement::If(if_));
+                    } else {
+                        match if_.cond {
+                            Expr::Val(val) => {
+                                if val.value() == 0 {
+                                    // drop completely, unreachable block
+                                    removed_dead_code = true;
+                                } else {
+                                    // trivially true condition, inline the block
+                                    removed_dead_code = true;
+                                    new_block.extend(if_.block);
+                                }
+                            }
+                            _ => {
+                                new_block.push(Statement::If(if_));
+                            }
+                        }
+                    }
+                }
                 Statement::Assignment(assignment) => {
                     if let [var] = &*assignment.vars
                         && is_pure(&assignment.expr)

@@ -1,3 +1,4 @@
+// #![feature(deref_patterns)]
 #![warn(clippy::panic, clippy::unwrap_in_result)]
 use std::{
     fs,
@@ -242,6 +243,10 @@ fn main() -> anyhow::Result<()> {
                             for i in 1.. {
                                 let mut ctx = CheckCtx::new("root");
                                 let new_ast = ctx.check_with(&ast, &mut ConstProp)?;
+
+                                let mut ctx = CheckCtx::new("root");
+                                ctx.check(&new_ast)?;
+                                let new_ast = DefInline::new().run(&ctx, new_ast);
 
                                 let mut ctx = CheckCtx::new("root");
                                 ctx.check(&new_ast)?;

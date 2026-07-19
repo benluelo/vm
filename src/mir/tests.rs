@@ -176,7 +176,7 @@ fn compile_if_else_else_branch() {
 
     let obj = ctx.into_object();
 
-    // dbg!(&obj);
+    dbg!(&obj);
 
     let asm = obj.assemble();
 
@@ -408,6 +408,8 @@ fn compile_def_shadowing() {
 
     let obj = ctx.into_object();
 
+    println!("{obj}");
+
     let asm = obj.assemble();
 
     let mut vm = Vm::new(asm, b"123".to_vec());
@@ -415,6 +417,45 @@ fn compile_def_shadowing() {
     let res = vm.run().unwrap();
 
     assert_eq!(res, Some(123_u64.to_be_bytes().to_vec()));
+}
+
+#[test]
+fn multiple_if_statements() {
+    init();
+
+    let raw = "
+    alloc(8)
+
+    if 1 {
+      write1(0, 1)
+    }
+
+    if 0 {
+      write1(1, 2)
+    }
+    ";
+
+    let ast = grammar().block.parse(raw).unwrap();
+
+    let mut ctx = Ctx::new_root();
+
+    ctx.compile(&ast).unwrap();
+
+    let obj = ctx.into_object();
+
+    // dbg!(&obj);
+
+    let asm = obj.assemble();
+
+    let mut vm = Vm::new(asm, vec![]);
+
+    let res = vm.run().unwrap();
+
+    assert_eq!(res, None);
+
+    assert_eq!(vm.stack, []);
+
+    assert_eq!(vm.memory, [1, 0, 0, 0, 0, 0, 0, 0]);
 }
 
 #[test]

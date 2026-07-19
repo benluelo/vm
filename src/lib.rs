@@ -317,19 +317,8 @@ impl Vm {
                 let a = last!();
                 *a = op::not(*a);
             }
-            Op::SHL => {
-                trace!("shl");
-                let shift = pop!();
-                let a = last!();
-                *a = a.unbounded_shl(shift.try_into().unwrap_or(u32::MAX));
-            }
-            Op::SHR => {
-                trace!("shr");
-                let shift = pop!();
-                let a = last!();
-                trace!("a: {a:x}, shift: {shift:x}");
-                *a = a.unbounded_shr(shift.try_into().unwrap_or(u32::MAX));
-            }
+            Op::SHR => binop!("shr", shr),
+            Op::SHL => binop!("shl", shl),
             Op::NEG => {
                 trace!("neg");
                 let a = last!();
@@ -576,6 +565,14 @@ pub mod op {
             exp >>= 1;
             base = base.strict_mul(base).rem_euclid(u64::MAX as _);
         }
+    }
+
+    pub fn shr(a: u64, shift: u64) -> u64 {
+        a.unbounded_shr(shift.try_into().unwrap_or(u32::MAX))
+    }
+
+    pub fn shl(a: u64, shift: u64) -> u64 {
+        a.unbounded_shl(shift.try_into().unwrap_or(u32::MAX))
     }
 
     #[cfg(test)]

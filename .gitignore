@@ -1,5 +1,7 @@
 /target
 
+out-*.mir
+
 *.o
 
 .nist-vectors/

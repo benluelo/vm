@@ -1,4 +1,9 @@
-use crate::mir::{CheckCtx, VarValue, Visitor, ast::Expr};
+use chumsky::span::Spanned;
+
+use crate::mir::{
+    CheckCtx, VarValue, Visitor,
+    ast::{BuiltinOrDef, Expr},
+};
 
 pub struct ConstProp;
 
@@ -21,6 +26,23 @@ fn visit_expr(ctx: &CheckCtx<'_>, expr: &mut Expr<'_>) -> bool {
                 false
             }
         }
+        // Expr::Call {
+        //     // TODO: Handle spread
+        //     spread: false,
+        //     f:
+        //         Spanned {
+        //             inner: BuiltinOrDef::Def(def),
+        //             span,
+        //         },
+        //     args,
+        // } if args.iter().all(|a| a.is_val()) => {
+        //     let def = ctx.get_def(def).unwrap();
+        //     if def.rets.len() <= 1 {
+        //         false
+        //     } else {
+        //         // try to const eval the fn in a loop to make it inlinable
+        //     }
+        // }
         Expr::Call { args, .. } => {
             let mut changed = false;
             for arg in args {

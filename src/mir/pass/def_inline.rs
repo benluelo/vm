@@ -94,8 +94,7 @@ fn def_inline<'a>(check_ctx: &CheckCtx<'a>, expr: Expr<'a>) -> Expr<'a> {
             if let BuiltinOrDef::Def(f_) = &*f {
                 let def = check_ctx.get_def(f_).unwrap();
                 if def.rets.len() == 1
-                    && def.body.len() == 1
-                    && let Statement::Assignment(assignment) = def.body.iter().next().unwrap()
+                    && let [Statement::Assignment(assignment)] = def.body.statements()
                     && assignment.vars.len() == 1
                     && assignment.vars[0] == def.rets[0]
                 {
@@ -105,8 +104,8 @@ fn def_inline<'a>(check_ctx: &CheckCtx<'a>, expr: Expr<'a>) -> Expr<'a> {
                     inline_def_args(&mut a, &args, &def.args);
 
                     a
-                } else if def.body.len() == 1
-                    && let Statement::Expr(expr) = def.body.iter().next().unwrap()
+                } else if def.rets.is_empty()
+                    && let [Statement::Expr(expr)] = def.body.statements()
                 {
                     trace!("inlining");
                     let mut expr = expr.clone();
@@ -114,6 +113,13 @@ fn def_inline<'a>(check_ctx: &CheckCtx<'a>, expr: Expr<'a>) -> Expr<'a> {
                     inline_def_args(&mut expr, &args, &def.args);
 
                     expr
+                // } else if def.rets.is_empty() && args.iter().all(|a|
+                // a.is_val()) {     trace!("inlining");
+                //     let mut expr = expr.clone();
+
+                //     inline_def_args(&mut expr, &args, &def.args);
+
+                //     expr
                 } else {
                     inline_args(f, args)
                 }
