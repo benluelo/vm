@@ -186,10 +186,37 @@ alloc(200)
 temp_arr_ptr <- 200
 alloc(40)
 
+round_constants_ptr <- add(40, temp_arr_ptr)
+alloc(mul(24, 8))
+write8(add(round_constants_ptr, mul(8, 0)), 0x0000000000000001)
+write8(add(round_constants_ptr, mul(8, 1)), 0x0000000000008082)
+write8(add(round_constants_ptr, mul(8, 2)), 0x800000000000808A)
+write8(add(round_constants_ptr, mul(8, 3)), 0x8000000080008000)
+write8(add(round_constants_ptr, mul(8, 4)), 0x000000000000808B)
+write8(add(round_constants_ptr, mul(8, 5)), 0x0000000080000001)
+write8(add(round_constants_ptr, mul(8, 6)), 0x8000000080008081)
+write8(add(round_constants_ptr, mul(8, 7)), 0x8000000000008009)
+write8(add(round_constants_ptr, mul(8, 8)), 0x000000000000008A)
+write8(add(round_constants_ptr, mul(8, 9)), 0x0000000000000088)
+write8(add(round_constants_ptr, mul(8, 10)), 0x0000000080008009)
+write8(add(round_constants_ptr, mul(8, 11)), 0x000000008000000A)
+write8(add(round_constants_ptr, mul(8, 12)), 0x000000008000808B)
+write8(add(round_constants_ptr, mul(8, 13)), 0x800000000000008B)
+write8(add(round_constants_ptr, mul(8, 14)), 0x8000000000008089)
+write8(add(round_constants_ptr, mul(8, 15)), 0x8000000000008003)
+write8(add(round_constants_ptr, mul(8, 16)), 0x8000000000008002)
+write8(add(round_constants_ptr, mul(8, 17)), 0x8000000000000080)
+write8(add(round_constants_ptr, mul(8, 18)), 0x000000000000800A)
+write8(add(round_constants_ptr, mul(8, 19)), 0x800000008000000A)
+write8(add(round_constants_ptr, mul(8, 20)), 0x8000000080008081)
+write8(add(round_constants_ptr, mul(8, 21)), 0x8000000000008080)
+write8(add(round_constants_ptr, mul(8, 22)), 0x0000000080000001)
+write8(add(round_constants_ptr, mul(8, 23)), 0x8000000080008008)
+
 # alloc blocks
 block_count <- add(1, div(dlen(), 136))
 # data starts after state and temp array
-blocks_ptr <- add(200, 40)
+blocks_ptr <- add(round_constants_ptr, mul(24, 8))
 alloc(mul(136, block_count))
 
 # copy data to memory
@@ -358,78 +385,80 @@ loop :blocks {
     # === ι step (see [Keccak Reference, Section 2.3.5]) ===
     # inlinedd iota round constants
     # TODO: Make these stack variables once I add arrays
-    if eq(round, 0) {
-      iota(0x0000000000000001)
-    }
-    if eq(round, 1) {
-      iota(0x0000000000008082)
-    }
-    if eq(round, 2) {
-      iota(0x800000000000808A)
-    }
-    if eq(round, 3) {
-      iota(0x8000000080008000)
-    }
-    if eq(round, 4) {
-      iota(0x000000000000808B)
-    }
-    if eq(round, 5) {
-      iota(0x0000000080000001)
-    }
-    if eq(round, 6) {
-      iota(0x8000000080008081)
-    }
-    if eq(round, 7) {
-      iota(0x8000000000008009)
-    }
-    if eq(round, 8) {
-      iota(0x000000000000008A)
-    }
-    if eq(round, 9) {
-      iota(0x0000000000000088)
-    }
-    if eq(round, 10) {
-      iota(0x0000000080008009)
-    }
-    if eq(round, 11) {
-      iota(0x000000008000000A)
-    }
-    if eq(round, 12) {
-      iota(0x000000008000808B)
-    }
-    if eq(round, 13) {
-      iota(0x800000000000008B)
-    }
-    if eq(round, 14) {
-      iota(0x8000000000008089)
-    }
-    if eq(round, 15) {
-      iota(0x8000000000008003)
-    }
-    if eq(round, 16) {
-      iota(0x8000000000008002)
-    }
-    if eq(round, 17) {
-      iota(0x8000000000000080)
-    }
-    if eq(round, 18) {
-      iota(0x000000000000800A)
-    }
-    if eq(round, 19) {
-      iota(0x800000008000000A)
-    }
-    if eq(round, 20) {
-      iota(0x8000000080008081)
-    }
-    if eq(round, 21) {
-      iota(0x8000000000008080)
-    }
-    if eq(round, 22) {
-      iota(0x0000000080000001)
-    }
-    if eq(round, 23) {
-      iota(0x8000000080008008)
-    }
+    # if eq(round, 0) {
+    #   iota(0x0000000000000001)
+    # }
+    # if eq(round, 1) {
+    #   iota(0x0000000000008082)
+    # }
+    # if eq(round, 2) {
+    #   iota(0x800000000000808A)
+    # }
+    # if eq(round, 3) {
+    #   iota(0x8000000080008000)
+    # }
+    # if eq(round, 4) {
+    #   iota(0x000000000000808B)
+    # }
+    # if eq(round, 5) {
+    #   iota(0x0000000080000001)
+    # }
+    # if eq(round, 6) {
+    #   iota(0x8000000080008081)
+    # }
+    # if eq(round, 7) {
+    #   iota(0x8000000000008009)
+    # }
+    # if eq(round, 8) {
+    #   iota(0x000000000000008A)
+    # }
+    # if eq(round, 9) {
+    #   iota(0x0000000000000088)
+    # }
+    # if eq(round, 10) {
+    #   iota(0x0000000080008009)
+    # }
+    # if eq(round, 11) {
+    #   iota(0x000000008000000A)
+    # }
+    # if eq(round, 12) {
+    #   iota(0x000000008000808B)
+    # }
+    # if eq(round, 13) {
+    #   iota(0x800000000000008B)
+    # }
+    # if eq(round, 14) {
+    #   iota(0x8000000000008089)
+    # }
+    # if eq(round, 15) {
+    #   iota(0x8000000000008003)
+    # }
+    # if eq(round, 16) {
+    #   iota(0x8000000000008002)
+    # }
+    # if eq(round, 17) {
+    #   iota(0x8000000000000080)
+    # }
+    # if eq(round, 18) {
+    #   iota(0x000000000000800A)
+    # }
+    # if eq(round, 19) {
+    #   iota(0x800000008000000A)
+    # }
+    # if eq(round, 20) {
+    #   iota(0x8000000080008081)
+    # }
+    # if eq(round, 21) {
+    #   iota(0x8000000000008080)
+    # }
+    # if eq(round, 22) {
+    #   iota(0x0000000080000001)
+    # }
+    # if eq(round, 23) {
+    #   iota(0x8000000080008008)
+    # }
+
+    XORLane(0, 0, read8(add(mul(8, round), round_constants_ptr)))
 
     round <- add(round, 1)
   

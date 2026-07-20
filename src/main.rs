@@ -289,7 +289,7 @@ fn optimize(ast: mir::ast::Block<'_>) -> Result<mir::ast::Block<'_>, anyhow::Err
     ctx.check(&ast)?;
     let ast = DefInline::new().run(&ctx, ast);
     let mut ast = ast;
-    for i in 1..=2 {
+    for _ in 1..=2 {
         let mut ctx = CheckCtx::new("root");
         ast = ctx.check_with(&ast, &mut LoopUnroll)?;
 
