@@ -1,3 +1,4 @@
+#![feature(slice_swap_unchecked)]
 // #![warn(clippy::panic, clippy::unwrap_in_result)]
 
 use std::fmt;
@@ -117,9 +118,14 @@ impl Vm {
             u64::from_be_bytes(v)
         }
 
-        let Some(op) = try_!(self.eat_op(pc)) else {
-            return Ok(StepResult::Eof);
-        };
+        #[inline(always)]
+        fn push_n<const N: usize>(pc: &mut usize, code: &[u8]) -> Result<u64, Error> {
+            *pc += 8;
+            let mut v = [0; 8];
+            let res = ok_or!(code.get(*pc - N..*pc), Error::Eof);
+            v.copy_from_slice(res);
+            Ok(u64::from_be_bytes(v))
+        }
 
         macro_rules! pop {
             () => {
@@ -134,8 +140,12 @@ impl Vm {
         }
 
         macro_rules! push_n {
-            ($n:literal, $v:ident) => {{
-                let v = u64_from_bytes(&$v);
+            ($n:literal) => {{
+                *pc += $n;
+                let mut v = [0_u8; 8];
+                let res = ok_or!(self.code.get(*pc - $n..*pc), Error::Eof);
+                v[8 - $n..].copy_from_slice(res);
+                let v = u64::from_be_bytes(v);
                 trace!("push{} {v:x}", $n);
                 self.stack.push(v);
             }};
@@ -178,8 +188,6 @@ impl Vm {
             }};
         }
 
-        trace!("");
-
         macro_rules! binop {
             ($op:literal, $f:ident) => {{
                 trace!($op);
@@ -201,20 +209,29 @@ impl Vm {
             }};
         }
 
-        match op {
-            Op::PUSH0 => {
+        if *pc >= self.code.len() {
+            return Ok(StepResult::Eof);
+        }
+        let op = unsafe { self.code.get_unchecked(*pc) };
+
+        *pc += 1;
+
+        trace!("");
+
+        match *op {
+            raw::PUSH0 => {
                 trace!("push0");
                 self.stack.push(0);
             }
-            Op::PUSH1(v) => push_n!(1, v),
-            Op::PUSH2(v) => push_n!(2, v),
-            Op::PUSH3(v) => push_n!(3, v),
-            Op::PUSH4(v) => push_n!(4, v),
-            Op::PUSH5(v) => push_n!(5, v),
-            Op::PUSH6(v) => push_n!(6, v),
-            Op::PUSH7(v) => push_n!(7, v),
-            Op::PUSH8(v) => push_n!(8, v),
-            Op::DUP => {
+            raw::PUSH1 => push_n!(1),
+            raw::PUSH2 => push_n!(2),
+            raw::PUSH3 => push_n!(3),
+            raw::PUSH4 => push_n!(4),
+            raw::PUSH5 => push_n!(5),
+            raw::PUSH6 => push_n!(6),
+            raw::PUSH7 => push_n!(7),
+            raw::PUSH8 => push_n!(8),
+            raw::DUP => {
                 trace!("dup");
                 let idx = as_ptr!(*last!());
                 trace!("idx = {idx:x}");
@@ -231,81 +248,86 @@ impl Vm {
                         *self.stack.get_unchecked(stack_idx);
                 };
             }
-            Op::DUP0 => {
+            raw::DUP0 => {
                 trace!("dup0");
                 let stack_idx = ok_or!(self.stack.len().checked_sub(1), Error::InvalidStackIdx);
 
                 self.stack
                     .push(*ok_or!(self.stack.get(stack_idx), Error::InvalidStackIdx))
             }
-            Op::SWAP => {
+            raw::SWAP => {
                 trace!("swap");
-                let idx = pop!() as usize;
-                if self.stack.len() < idx + 1 {
+                let idx = as_ptr!(pop!());
+                let Some(idx) = idx.checked_add(1) else {
+                    return Err(Error::InvalidStackValue);
+                };
+                if self.stack.len() < idx {
                     return Err(Error::InvalidStackIdx);
                 }
-                let a_idx = ok_or!(self.stack.len().checked_sub(1), Error::StackEmpty);
-                let b_idx = ok_or!(a_idx.checked_sub(idx + 1), Error::InvalidStackIdx);
+                // SAFETY: Len is at least 1 as per above
+                let a_idx = unsafe { self.stack.len().unchecked_sub(1) };
+                // SAFETY: Len is at least idx as per above
+                let b_idx = unsafe { a_idx.unchecked_sub(idx) };
                 self.stack.swap(a_idx, b_idx);
             }
-            Op::SWAP0 => {
+            raw::SWAP0 => {
                 trace!("swap0");
                 let b_idx = ok_or!(self.stack.len().checked_sub(2), Error::InvalidStackIdx);
                 // SAFETY: Len is at least 2 as per above
                 let a_idx = unsafe { self.stack.len().unchecked_sub(1) };
                 self.stack.swap(a_idx, b_idx);
             }
-            Op::POP => {
+            raw::POP => {
                 trace!("pop");
                 pop!();
             }
-            Op::ALLOC => {
+            raw::ALLOC => {
                 trace!("alloc");
                 let size = as_ptr!(pop!());
                 self.memory.extend(vec![0; size]);
             }
 
-            Op::WRITE1 => write_n!(1),
-            Op::WRITE2 => write_n!(2),
-            Op::WRITE3 => write_n!(3),
-            Op::WRITE4 => write_n!(4),
-            Op::WRITE5 => write_n!(5),
-            Op::WRITE6 => write_n!(6),
-            Op::WRITE7 => write_n!(7),
-            Op::WRITE8 => write_n!(8),
+            raw::WRITE1 => write_n!(1),
+            raw::WRITE2 => write_n!(2),
+            raw::WRITE3 => write_n!(3),
+            raw::WRITE4 => write_n!(4),
+            raw::WRITE5 => write_n!(5),
+            raw::WRITE6 => write_n!(6),
+            raw::WRITE7 => write_n!(7),
+            raw::WRITE8 => write_n!(8),
 
-            Op::READ1 => read_n!(1),
-            Op::READ2 => read_n!(2),
-            Op::READ3 => read_n!(3),
-            Op::READ4 => read_n!(4),
-            Op::READ5 => read_n!(5),
-            Op::READ6 => read_n!(6),
-            Op::READ7 => read_n!(7),
-            Op::READ8 => read_n!(8),
+            raw::READ1 => read_n!(1),
+            raw::READ2 => read_n!(2),
+            raw::READ3 => read_n!(3),
+            raw::READ4 => read_n!(4),
+            raw::READ5 => read_n!(5),
+            raw::READ6 => read_n!(6),
+            raw::READ7 => read_n!(7),
+            raw::READ8 => read_n!(8),
 
-            Op::DREAD1 => dread_n!(1),
-            Op::DREAD2 => dread_n!(2),
-            Op::DREAD3 => dread_n!(3),
-            Op::DREAD4 => dread_n!(4),
-            Op::DREAD5 => dread_n!(5),
-            Op::DREAD6 => dread_n!(6),
-            Op::DREAD7 => dread_n!(7),
-            Op::DREAD8 => dread_n!(8),
+            raw::DREAD1 => dread_n!(1),
+            raw::DREAD2 => dread_n!(2),
+            raw::DREAD3 => dread_n!(3),
+            raw::DREAD4 => dread_n!(4),
+            raw::DREAD5 => dread_n!(5),
+            raw::DREAD6 => dread_n!(6),
+            raw::DREAD7 => dread_n!(7),
+            raw::DREAD8 => dread_n!(8),
 
-            Op::DCOPY => {
+            raw::DCOPY => {
                 trace!("dcopy");
                 if self.stack.len() < 3 {
                     return Err(Error::StackEmpty);
                 };
 
-                let Some([src, dst, len]) = self.stack.get(self.stack.len() - 3..) else {
+                let [src, dst, len] = &self.stack[self.stack.len() - 3..] else {
                     // unsafe { unreachable_unchecked() }
                     unreachable!();
                 };
 
-                let len = *len as usize;
-                let dst = *dst as usize;
-                let src = *src as usize;
+                let len = as_ptr!(*len);
+                let dst = as_ptr!(*dst);
+                let src = as_ptr!(*src);
 
                 unsafe { self.stack.set_len(self.stack.len() - 3) };
                 // self.stack.truncate(self.stack.len() - 3);
@@ -316,15 +338,15 @@ impl Vm {
                     .copy_from_slice(ok_or!(self.data.get(src..src + len), Error::Segfault));
             }
 
-            Op::DLEN => {
+            raw::DLEN => {
                 trace!("dlen");
                 self.stack.push(self.data.len() as u64);
             }
 
-            Op::ADD => binop!("add", add),
-            Op::SUB => binop!("sub", sub),
-            Op::MUL => binop!("mul", mul),
-            Op::DIV => {
+            raw::ADD => binop!("add", add),
+            raw::SUB => binop!("sub", sub),
+            raw::MUL => binop!("mul", mul),
+            raw::DIV => {
                 trace!("div");
                 let len = self.stack.len();
                 if len < 2 {
@@ -340,47 +362,47 @@ impl Vm {
                 };
                 unsafe { self.stack.set_len(a) };
             }
-            // Op::DIV => {
+            // raw::DIV => {
             //     trace!("div");
             //     let a = pop!();
             //     let b = last!();
             //     *b = op::div(a, *b)?;
             // }
-            Op::EXP => binop!("exp", expmod),
-            Op::MOD => {
+            raw::EXP => binop!("exp", expmod),
+            raw::MOD => {
                 trace!("mod");
                 let a = pop!();
                 let b = last!();
                 trace!("{b:x} % {a:x}");
                 *b = try_!(op::r#mod(*b, a));
             }
-            Op::EQ => binop!("eq", eq),
-            Op::NEQ => binop!("neq", neq),
-            Op::LT => binop!("lt", lt),
-            Op::GT => binop!("gt", gt),
-            Op::NOT => {
+            raw::EQ => binop!("eq", eq),
+            raw::NEQ => binop!("neq", neq),
+            raw::LT => binop!("lt", lt),
+            raw::GT => binop!("gt", gt),
+            raw::NOT => {
                 trace!("not");
                 let a = last!();
                 *a = op::not(*a);
             }
-            Op::SHR => binop!("shr", shr),
-            Op::SHL => binop!("shl", shl),
-            Op::NEG => {
+            raw::SHR => binop!("shr", shr),
+            raw::SHL => binop!("shl", shl),
+            raw::NEG => {
                 trace!("neg");
                 let a = last!();
                 *a = op::neg(*a);
             }
-            Op::OR => binop!("or", or),
-            Op::XOR => binop!("xor", xor),
-            Op::AND => binop!("and", and),
+            raw::OR => binop!("or", or),
+            raw::XOR => binop!("xor", xor),
+            raw::AND => binop!("and", and),
 
-            Op::JUMP => {
+            raw::JUMP => {
                 trace!("jump");
                 let dst = pop!();
                 trace!("dst = {dst:x}");
                 *pc = as_ptr!(dst);
             }
-            Op::JNZ => {
+            raw::JNZ => {
                 trace!("jnz");
                 let dst = pop!();
                 trace!("dst = {dst:x}");
@@ -390,14 +412,14 @@ impl Vm {
                     *pc = as_ptr!(dst);
                 }
             }
-            Op::CALL => {
+            raw::CALL => {
                 trace!("call");
                 let top = last!();
                 let address = *top;
                 *top = *pc as u64;
                 *pc = as_ptr!(address);
             }
-            Op::EXIT => {
+            raw::EXIT => {
                 trace!("exit");
                 let len = as_ptr!(pop!());
                 let ptr = as_ptr!(pop!());
@@ -406,11 +428,12 @@ impl Vm {
                     ok_or!(self.memory.get(ptr..ptr + len), Error::Segfault).to_vec(),
                 ));
             }
-            Op::TRAP => {
+            raw::TRAP => {
                 trace!("trap");
                 let value = pop!();
                 return Err(Error::Trap(value));
             }
+            op => return Err(Error::UnknownOp(op)),
         }
 
         trace!("pc: {pc:x}");
