@@ -6,6 +6,7 @@ edition = "2024"
 [profile.profiling]
 inherits = "release"
 debug = true
+lto = "fat"
 
 [dependencies]
 anyhow = "1.0.102"

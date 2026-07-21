@@ -31,6 +31,40 @@ impl fmt::Debug for Vm {
     }
 }
 
+macro_rules! try_ {
+    ($e:expr) => {
+        match $e {
+            Ok(ok) => ok,
+            Err(err) => return Err(err),
+        }
+    };
+}
+
+macro_rules! ok_or {
+    ($e:expr, $err:expr) => {
+        match $e {
+            Some(t) => t,
+            None => return Err($err),
+        }
+    };
+}
+
+macro_rules! as_ptr {
+    ($e:expr) => {{
+        #[cfg(target_pointer_width = "64")]
+        { $e as usize }
+        #[cfg(not(target_pointer_width = "64"))]
+        {
+            let n = $e;
+            if n > (usize::MAX as u64) {
+                return Error::PointerTooBig(n);
+            } else {
+                $e as u64
+            }
+        }
+    }};
+}
+
 impl Vm {
     pub fn new(code: Vec<u8>, data: Vec<u8>) -> Self {
         Self {
@@ -64,7 +98,9 @@ impl Vm {
 
             self.cycles += 1;
 
-            if max_cycles.is_some_and(|m| self.cycles > m) {
+            if let Some(x) = max_cycles
+                && self.cycles > x
+            {
                 return Ok(None);
             }
 
@@ -72,27 +108,28 @@ impl Vm {
         }
     }
 
+    #[warn(clippy::question_mark_used)]
     fn step(&mut self, pc: &mut usize) -> Result<StepResult, Error> {
-        #[inline]
+        #[inline(always)]
         fn u64_from_bytes(arr: &[u8]) -> u64 {
             let mut v = [0; 8];
             v[8 - arr.len()..].copy_from_slice(arr);
             u64::from_be_bytes(v)
         }
 
-        let Some(op) = self.eat_op(pc)? else {
+        let Some(op) = try_!(self.eat_op(pc)) else {
             return Ok(StepResult::Eof);
         };
 
         macro_rules! pop {
             () => {
-                self.stack.pop().ok_or(Error::StackEmpty)?
+                ok_or!(self.stack.pop(), Error::StackEmpty)
             };
         }
 
         macro_rules! last {
             () => {
-                self.stack.last_mut().ok_or(Error::StackEmpty)?
+                ok_or!(self.stack.last_mut(), Error::StackEmpty)
             };
         }
 
@@ -108,14 +145,11 @@ impl Vm {
             ($n:literal) => {{
                 trace!("write{}", $n);
                 let value = pop!();
-                let ptr = pop!() as usize;
+                let ptr = as_ptr!(pop!());
                 trace!("{value:x} @ {ptr:x}");
                 let bytes = value.to_be_bytes();
-                self.memory
-                    .get_mut(ptr..ptr + $n)
-                    .ok_or(Error::Segfault)?
+                ok_or!(self.memory.get_mut(ptr..ptr + $n), Error::Segfault)
                     .copy_from_slice(&bytes[8 - $n..]);
-                Ok(())
             }};
         }
 
@@ -123,14 +157,13 @@ impl Vm {
             ($n:literal) => {{
                 trace!("read{}", $n);
                 let top = last!();
-                let ptr = *top as usize;
+                let ptr = as_ptr!(*top);
                 trace!("ptr: {ptr:x}");
-                let res = self
-                    .memory
-                    .get(ptr..((ptr + 8) - (8 - $n)))
-                    .ok_or(Error::Segfault)?;
+                let res = ok_or!(
+                    self.memory.get(ptr..((ptr + 8) - (8 - $n))),
+                    Error::Segfault
+                );
                 *top = u64_from_bytes(res);
-                Ok(())
             }};
         }
 
@@ -138,11 +171,10 @@ impl Vm {
             ($n:literal) => {{
                 trace!("dread{}", $n);
                 let top = last!();
-                let ptr = *top as usize;
+                let ptr = as_ptr!(*top);
                 trace!("ptr: {ptr:x}");
-                let res = self.data.get(ptr..ptr + $n).ok_or(Error::Segfault)?;
+                let res = ok_or!(self.data.get(ptr..ptr + $n), Error::Segfault);
                 *top = u64_from_bytes(res);
-                Ok(())
             }};
         }
 
@@ -157,8 +189,8 @@ impl Vm {
                     return Err(Error::StackEmpty);
                 };
 
-                let b = len - 2;
-                let a = len - 1;
+                let b = unsafe { len.unchecked_sub(2) };
+                let a = unsafe { len.unchecked_sub(1) };
 
                 unsafe {
                     *self.stack.get_unchecked_mut(b) =
@@ -184,35 +216,27 @@ impl Vm {
             Op::PUSH8(v) => push_n!(8, v),
             Op::DUP => {
                 trace!("dup");
-                let idx = *(last!()) as usize;
+                let idx = as_ptr!(*last!());
                 trace!("idx = {idx:x}");
-                let stack_idx = self
-                    .stack
-                    .len()
-                    .checked_sub(idx)
-                    .and_then(|i| i.checked_sub(2))
-                    .ok_or(Error::InvalidStackIdx)?;
+                let stack_idx = ok_or!(
+                    self.stack
+                        .len()
+                        .checked_sub(idx)
+                        .and_then(|i| i.checked_sub(2)),
+                    Error::InvalidStackIdx
+                );
 
-                *unsafe { self.stack.last_mut().unwrap_unchecked() } = self
-                    .stack
-                    .get(stack_idx)
-                    .copied()
-                    .ok_or(Error::InvalidStackIdx)?;
+                unsafe {
+                    *self.stack.last_mut().unwrap_unchecked() =
+                        *self.stack.get_unchecked(stack_idx);
+                };
             }
             Op::DUP0 => {
                 trace!("dup0");
-                let stack_idx = self
-                    .stack
-                    .len()
-                    .checked_sub(1)
-                    .ok_or(Error::InvalidStackIdx)?;
+                let stack_idx = ok_or!(self.stack.len().checked_sub(1), Error::InvalidStackIdx);
 
-                self.stack.push(
-                    self.stack
-                        .get(stack_idx)
-                        .copied()
-                        .ok_or(Error::InvalidStackIdx)?,
-                )
+                self.stack
+                    .push(*ok_or!(self.stack.get(stack_idx), Error::InvalidStackIdx))
             }
             Op::SWAP => {
                 trace!("swap");
@@ -220,17 +244,13 @@ impl Vm {
                 if self.stack.len() < idx + 1 {
                     return Err(Error::InvalidStackIdx);
                 }
-                let a_idx = self.stack.len().checked_sub(1).ok_or(Error::StackEmpty)?;
-                let b_idx = a_idx.checked_sub(idx + 1).ok_or(Error::InvalidStackIdx)?;
+                let a_idx = ok_or!(self.stack.len().checked_sub(1), Error::StackEmpty);
+                let b_idx = ok_or!(a_idx.checked_sub(idx + 1), Error::InvalidStackIdx);
                 self.stack.swap(a_idx, b_idx);
             }
             Op::SWAP0 => {
                 trace!("swap0");
-                let b_idx = self
-                    .stack
-                    .len()
-                    .checked_sub(2)
-                    .ok_or(Error::InvalidStackIdx)?;
+                let b_idx = ok_or!(self.stack.len().checked_sub(2), Error::InvalidStackIdx);
                 // SAFETY: Len is at least 2 as per above
                 let a_idx = unsafe { self.stack.len().unchecked_sub(1) };
                 self.stack.swap(a_idx, b_idx);
@@ -241,36 +261,36 @@ impl Vm {
             }
             Op::ALLOC => {
                 trace!("alloc");
-                let size = pop!();
-                self.memory.extend(vec![0; size as usize]);
+                let size = as_ptr!(pop!());
+                self.memory.extend(vec![0; size]);
             }
 
-            Op::WRITE1 => write_n!(1)?,
-            Op::WRITE2 => write_n!(2)?,
-            Op::WRITE3 => write_n!(3)?,
-            Op::WRITE4 => write_n!(4)?,
-            Op::WRITE5 => write_n!(5)?,
-            Op::WRITE6 => write_n!(6)?,
-            Op::WRITE7 => write_n!(7)?,
-            Op::WRITE8 => write_n!(8)?,
+            Op::WRITE1 => write_n!(1),
+            Op::WRITE2 => write_n!(2),
+            Op::WRITE3 => write_n!(3),
+            Op::WRITE4 => write_n!(4),
+            Op::WRITE5 => write_n!(5),
+            Op::WRITE6 => write_n!(6),
+            Op::WRITE7 => write_n!(7),
+            Op::WRITE8 => write_n!(8),
 
-            Op::READ1 => read_n!(1)?,
-            Op::READ2 => read_n!(2)?,
-            Op::READ3 => read_n!(3)?,
-            Op::READ4 => read_n!(4)?,
-            Op::READ5 => read_n!(5)?,
-            Op::READ6 => read_n!(6)?,
-            Op::READ7 => read_n!(7)?,
-            Op::READ8 => read_n!(8)?,
+            Op::READ1 => read_n!(1),
+            Op::READ2 => read_n!(2),
+            Op::READ3 => read_n!(3),
+            Op::READ4 => read_n!(4),
+            Op::READ5 => read_n!(5),
+            Op::READ6 => read_n!(6),
+            Op::READ7 => read_n!(7),
+            Op::READ8 => read_n!(8),
 
-            Op::DREAD1 => dread_n!(1)?,
-            Op::DREAD2 => dread_n!(2)?,
-            Op::DREAD3 => dread_n!(3)?,
-            Op::DREAD4 => dread_n!(4)?,
-            Op::DREAD5 => dread_n!(5)?,
-            Op::DREAD6 => dread_n!(6)?,
-            Op::DREAD7 => dread_n!(7)?,
-            Op::DREAD8 => dread_n!(8)?,
+            Op::DREAD1 => dread_n!(1),
+            Op::DREAD2 => dread_n!(2),
+            Op::DREAD3 => dread_n!(3),
+            Op::DREAD4 => dread_n!(4),
+            Op::DREAD5 => dread_n!(5),
+            Op::DREAD6 => dread_n!(6),
+            Op::DREAD7 => dread_n!(7),
+            Op::DREAD8 => dread_n!(8),
 
             Op::DCOPY => {
                 trace!("dcopy");
@@ -292,10 +312,8 @@ impl Vm {
 
                 trace!("len: {len:x}, dst: {dst:x}, src: {src:x}");
 
-                self.memory
-                    .get_mut(dst..dst + len)
-                    .ok_or(Error::Segfault)?
-                    .copy_from_slice(self.data.get(src..src + len).ok_or(Error::Segfault)?);
+                ok_or!(self.memory.get_mut(dst..dst + len), Error::Segfault)
+                    .copy_from_slice(ok_or!(self.data.get(src..src + len), Error::Segfault));
             }
 
             Op::DLEN => {
@@ -315,8 +333,10 @@ impl Vm {
                 let b = len - 2;
                 let a = len - 1;
                 unsafe {
-                    *self.stack.get_unchecked_mut(b) =
-                        op::div(*self.stack.get_unchecked(b), *self.stack.get_unchecked(a))?
+                    *self.stack.get_unchecked_mut(b) = try_!(op::div(
+                        *self.stack.get_unchecked(b),
+                        *self.stack.get_unchecked(a)
+                    ))
                 };
                 unsafe { self.stack.set_len(a) };
             }
@@ -332,7 +352,7 @@ impl Vm {
                 let a = pop!();
                 let b = last!();
                 trace!("{b:x} % {a:x}");
-                *b = op::r#mod(*b, a)?;
+                *b = try_!(op::r#mod(*b, a));
             }
             Op::EQ => binop!("eq", eq),
             Op::NEQ => binop!("neq", neq),
@@ -358,7 +378,7 @@ impl Vm {
                 trace!("jump");
                 let dst = pop!();
                 trace!("dst = {dst:x}");
-                *pc = dst.try_into().map_err(|_| Error::PointerTooBig(dst))?;
+                *pc = as_ptr!(dst);
             }
             Op::JNZ => {
                 trace!("jnz");
@@ -367,7 +387,7 @@ impl Vm {
                 let value = pop!();
                 trace!("value = {value:x}");
                 if value != 0 {
-                    *pc = dst.try_into().map_err(|_| Error::PointerTooBig(dst))?;
+                    *pc = as_ptr!(dst);
                 }
             }
             Op::CALL => {
@@ -375,22 +395,15 @@ impl Vm {
                 let top = last!();
                 let address = *top;
                 *top = *pc as u64;
-                *pc = address
-                    .try_into()
-                    .map_err(|_| Error::PointerTooBig(address))?;
+                *pc = as_ptr!(address);
             }
             Op::EXIT => {
                 trace!("exit");
-                let len = pop!();
-                let len: usize = len.try_into().map_err(|_| Error::PointerTooBig(len))?;
-                let ptr = pop!();
-                let ptr: usize = ptr.try_into().map_err(|_| Error::PointerTooBig(ptr))?;
+                let len = as_ptr!(pop!());
+                let ptr = as_ptr!(pop!());
 
                 return Ok(StepResult::Exit(
-                    self.memory
-                        .get(ptr..ptr + len)
-                        .ok_or(Error::Segfault)?
-                        .to_vec(),
+                    ok_or!(self.memory.get(ptr..ptr + len), Error::Segfault).to_vec(),
                 ));
             }
             Op::TRAP => {
@@ -407,11 +420,13 @@ impl Vm {
         Ok(StepResult::Stepped)
     }
 
+    #[warn(clippy::question_mark_used)]
     fn eat_op(&self, pc: &mut usize) -> Result<Option<Op>, Error> {
+        #[inline(always)]
         fn push_n<const N: usize>(pc: &mut usize, code: &[u8]) -> Result<[u8; N], Error> {
             *pc += N;
             let mut v = [0; N];
-            let res = code.get(*pc - N..*pc).ok_or(Error::Eof)?;
+            let res = try_!(code.get(*pc - N..*pc).ok_or(Error::Eof));
             v.copy_from_slice(res);
             Ok(v)
         }
@@ -424,14 +439,14 @@ impl Vm {
 
         Ok(Some(match *op {
             raw::PUSH0 => Op::PUSH0,
-            raw::PUSH1 => Op::PUSH1(push_n(pc, &self.code)?),
-            raw::PUSH2 => Op::PUSH2(push_n(pc, &self.code)?),
-            raw::PUSH3 => Op::PUSH3(push_n(pc, &self.code)?),
-            raw::PUSH4 => Op::PUSH4(push_n(pc, &self.code)?),
-            raw::PUSH5 => Op::PUSH5(push_n(pc, &self.code)?),
-            raw::PUSH6 => Op::PUSH6(push_n(pc, &self.code)?),
-            raw::PUSH7 => Op::PUSH7(push_n(pc, &self.code)?),
-            raw::PUSH8 => Op::PUSH8(push_n(pc, &self.code)?),
+            raw::PUSH1 => Op::PUSH1(try_!(push_n(pc, &self.code))),
+            raw::PUSH2 => Op::PUSH2(try_!(push_n(pc, &self.code))),
+            raw::PUSH3 => Op::PUSH3(try_!(push_n(pc, &self.code))),
+            raw::PUSH4 => Op::PUSH4(try_!(push_n(pc, &self.code))),
+            raw::PUSH5 => Op::PUSH5(try_!(push_n(pc, &self.code))),
+            raw::PUSH6 => Op::PUSH6(try_!(push_n(pc, &self.code))),
+            raw::PUSH7 => Op::PUSH7(try_!(push_n(pc, &self.code))),
+            raw::PUSH8 => Op::PUSH8(try_!(push_n(pc, &self.code))),
             raw::DUP => Op::DUP,
             raw::DUP0 => Op::DUP0,
             raw::SWAP => Op::SWAP,
@@ -1060,6 +1075,7 @@ pub enum Error {
     #[error("unknown op: {0:#x}")]
     UnknownOp(u8),
 
+    #[cfg(not(target_pointer_width = "64"))]
     /// Attempted to use more memory than is addressable by the host system the
     /// vm was compiled for.
     #[error(
