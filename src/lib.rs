@@ -81,6 +81,7 @@ impl Vm {
         self.run_to(None)
     }
 
+    #[inline]
     pub fn run_to(&mut self, max_cycles: Option<u32>) -> Result<Option<Vec<u8>>, Error> {
         let mut pc = 0;
 
@@ -118,19 +119,19 @@ impl Vm {
             u64::from_be_bytes(v)
         }
 
-        #[inline(always)]
-        fn push_n<const N: usize>(pc: &mut usize, code: &[u8]) -> Result<u64, Error> {
-            *pc += 8;
-            let mut v = [0; 8];
-            let res = ok_or!(code.get(*pc - N..*pc), Error::Eof);
-            v.copy_from_slice(res);
-            Ok(u64::from_be_bytes(v))
-        }
-
         macro_rules! pop {
-            () => {
-                ok_or!(self.stack.pop(), Error::StackEmpty)
-            };
+            () => {{
+                let len = self.stack.len();
+                if len == 0 {
+                    return Err(Error::StackEmpty);
+                } else {
+                    unsafe {
+                        let x = *self.stack.get_unchecked(len - 1);
+                        self.stack.set_len(len - 1);
+                        x
+                    }
+                }
+            }};
         }
 
         macro_rules! last {
@@ -258,14 +259,13 @@ impl Vm {
             raw::SWAP => {
                 trace!("swap");
                 let idx = as_ptr!(pop!());
-                let Some(idx) = idx.checked_add(1) else {
-                    return Err(Error::InvalidStackValue);
-                };
-                if self.stack.len() < idx {
+                let idx = ok_or!(idx.checked_add(1), Error::InvalidStackValue);
+                let len = self.stack.len();
+                if len < idx {
                     return Err(Error::InvalidStackIdx);
                 }
                 // SAFETY: Len is at least 1 as per above
-                let a_idx = unsafe { self.stack.len().unchecked_sub(1) };
+                let a_idx = unsafe { len.unchecked_sub(1) };
                 // SAFETY: Len is at least idx as per above
                 let b_idx = unsafe { a_idx.unchecked_sub(idx) };
                 self.stack.swap(a_idx, b_idx);
@@ -321,8 +321,8 @@ impl Vm {
                 };
 
                 let [src, dst, len] = &self.stack[self.stack.len() - 3..] else {
-                    // unsafe { unreachable_unchecked() }
-                    unreachable!();
+                    unsafe { std::hint::unreachable_unchecked() }
+                    // unreachable!();
                 };
 
                 let len = as_ptr!(*len);
