@@ -77,11 +77,7 @@ impl Visitor for LoopUnroll {
                 }
                 // TODO: Allow for the check to be "inverted", i.e. for the exit point to be in the
                 // else block
-                Statement::If(If {
-                    cond: if_cond,
-                    block,
-                    else_: _,
-                }) => {
+                Statement::If(If { cond: if_cond, block, else_: _ }) => {
                     if let [Statement::Break(break_label)] = block.statements()
                         && break_label.0 == *label
                     {
@@ -124,7 +120,10 @@ impl Visitor for LoopUnroll {
         // dbg!(lcond_var);
 
         let initial_value = match ctx.var_value(cond_var) {
-            VarValue::Dyn => todo!(),
+            VarValue::Dyn => {
+                trace!("condition variable is not constant, can't unroll");
+                return None;
+            }
             VarValue::Const(val) => val.value(),
         };
 
@@ -352,10 +351,7 @@ fn cond_var<'a, 'b>(expr: &'b Expr<'a>) -> Option<&'b Ident<'a>> {
 fn has_exit_point(block: &Block, label: &Label) -> bool {
     block.iter().any(|s| match s {
         Statement::Expr(_) => false,
-        Statement::Loop(Loop {
-            label: nested_label,
-            block,
-        }) => {
+        Statement::Loop(Loop { label: nested_label, block }) => {
             if label == nested_label {
                 // TODO: Handle nested loops with shadowed labels, for now assume it can't be
                 // unrolled
@@ -366,11 +362,7 @@ fn has_exit_point(block: &Block, label: &Label) -> bool {
         }
         Statement::Break(_) => true,
         Statement::Continue(_) => true,
-        Statement::If(If {
-            cond: _,
-            block,
-            else_,
-        }) => {
+        Statement::If(If { cond: _, block, else_ }) => {
             has_exit_point(block, label)
                 || match else_ {
                     Some(else_) => match else_ {

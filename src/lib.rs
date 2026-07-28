@@ -1,11 +1,14 @@
-#![feature(slice_swap_unchecked)]
+#![feature(slice_swap_unchecked, never_type, split_array)]
 // #![warn(clippy::panic, clippy::unwrap_in_result)]
 
-use std::fmt;
+use std::{
+    error::Error as StdError,
+    fmt::{self, Debug},
+};
 
 use anyhow::Result;
 use const_hex::ToHexExt;
-use tracing::{info, trace};
+use tracing::trace;
 
 pub mod assembler;
 pub mod mir;
@@ -13,32 +16,26 @@ pub mod mir;
 #[cfg(test)]
 mod vm_tests;
 
-pub struct Vm {
+pub struct Vm<H: Hook = ()> {
     pub code: Vec<u8>,
     pub data: Vec<u8>,
     pub stack: Vec<u64>,
     pub memory: Vec<u8>,
-    pub cycles: u32,
+    pub hook: H,
+    pub pc: usize,
 }
 
-impl fmt::Debug for Vm {
+impl<H: Hook + Debug> fmt::Debug for Vm<H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Vm")
             .field("code", &self.code.encode_hex())
             .field("data", &self.data.encode_hex())
             .field("stack", &self.stack)
             .field("memory", &self.memory.encode_hex())
+            .field("hook", &self.hook)
+            .field("pc", &self.pc)
             .finish()
     }
-}
-
-macro_rules! try_ {
-    ($e:expr) => {
-        match $e {
-            Ok(ok) => ok,
-            Err(err) => return Err(err),
-        }
-    };
 }
 
 macro_rules! ok_or {
@@ -68,42 +65,27 @@ macro_rules! as_ptr {
 
 impl Vm {
     pub fn new(code: Vec<u8>, data: Vec<u8>) -> Self {
-        Self {
-            code,
-            data,
-            stack: vec![],
-            memory: vec![],
-            cycles: 0,
-        }
+        Self::new_with(code, data, ())
+    }
+}
+
+impl<H: Hook> Vm<H> {
+    pub fn new_with(code: Vec<u8>, data: Vec<u8>, hook: H) -> Self {
+        Self { code, data, stack: vec![], memory: vec![], hook, pc: 0 }
     }
 
-    pub fn run(&mut self) -> Result<Option<Vec<u8>>, Error> {
-        self.run_to(None)
-    }
-
-    #[inline]
-    pub fn run_to(&mut self, max_cycles: Option<u32>) -> Result<Option<Vec<u8>>, Error> {
-        let mut pc = 0;
-
+    pub fn run(&mut self) -> Result<Option<Vec<u8>>, Error<H>> {
         trace!("data: {}", self.data.encode_hex());
 
         loop {
-            match self.step(&mut pc) {
+            match self.step() {
                 Ok(StepResult::Stepped) => {}
                 Ok(StepResult::Eof) => break Ok(None),
                 Ok(StepResult::Exit(output)) => break Ok(Some(output)),
                 Err(err) => {
-                    info!("pc: {pc}");
+                    // info!("pc: {pc}");
                     return Err(err);
                 }
-            }
-
-            self.cycles += 1;
-
-            if let Some(x) = max_cycles
-                && self.cycles > x
-            {
-                return Ok(None);
             }
 
             // std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -111,7 +93,11 @@ impl Vm {
     }
 
     #[warn(clippy::question_mark_used)]
-    fn step(&mut self, pc: &mut usize) -> Result<StepResult, Error> {
+    pub fn step(&mut self) -> Result<StepResult, Error<H>> {
+        if let Err(err) = self.hook.pre_cycle() {
+            return Err(Error::Hook(err));
+        };
+
         #[inline(always)]
         fn u64_from_bytes(arr: &[u8]) -> u64 {
             let mut v = [0; 8];
@@ -119,11 +105,20 @@ impl Vm {
             u64::from_be_bytes(v)
         }
 
+        macro_rules! hook {
+            ($($op:tt)+) => {
+                match self.hook.cycle(self.pc, Op::$($op)+, &self.stack, &self.memory) {
+                    Ok(ok) => ok,
+                    Err(err) => return Err(Error::Hook(err)),
+                }
+            };
+        }
+
         macro_rules! pop {
             () => {{
                 let len = self.stack.len();
                 if len == 0 {
-                    return Err(Error::StackEmpty);
+                    return Err(Error::<H>::StackEmpty);
                 } else {
                     unsafe {
                         let x = *self.stack.get_unchecked(len - 1);
@@ -136,66 +131,69 @@ impl Vm {
 
         macro_rules! last {
             () => {
-                ok_or!(self.stack.last_mut(), Error::StackEmpty)
+                ok_or!(self.stack.last_mut(), Error::<H>::StackEmpty)
             };
         }
 
         macro_rules! push_n {
-            ($n:literal) => {{
-                *pc += $n;
+            ($op:ident, $n:literal) => {{
+                self.pc += $n;
                 let mut v = [0_u8; 8];
-                let res = ok_or!(self.code.get(*pc - $n..*pc), Error::Eof);
+                let res = ok_or!(self.code.get(self.pc - $n..self.pc), Error::<H>::Eof);
                 v[8 - $n..].copy_from_slice(res);
-                let v = u64::from_be_bytes(v);
-                trace!("push{} {v:x}", $n);
-                self.stack.push(v);
+                let n = u64::from_be_bytes(v);
+                trace!("push{} {n:x}", $n);
+                hook!($op(*v.rsplit_array_ref::<$n>().1));
+                self.stack.push(n);
             }};
         }
 
         macro_rules! write_n {
-            ($n:literal) => {{
+            ($op:ident, $n:literal) => {{
                 trace!("write{}", $n);
+                hook!($op);
                 let value = pop!();
                 let ptr = as_ptr!(pop!());
                 trace!("{value:x} @ {ptr:x}");
                 let bytes = value.to_be_bytes();
-                ok_or!(self.memory.get_mut(ptr..ptr + $n), Error::Segfault)
+                ok_or!(self.memory.get_mut(ptr..ptr + $n), Error::<H>::Segfault)
                     .copy_from_slice(&bytes[8 - $n..]);
             }};
         }
 
         macro_rules! read_n {
-            ($n:literal) => {{
+            ($op:ident, $n:literal) => {{
                 trace!("read{}", $n);
+                hook!($op);
                 let top = last!();
                 let ptr = as_ptr!(*top);
                 trace!("ptr: {ptr:x}");
-                let res = ok_or!(
-                    self.memory.get(ptr..((ptr + 8) - (8 - $n))),
-                    Error::Segfault
-                );
+                let res =
+                    ok_or!(self.memory.get(ptr..((ptr + 8) - (8 - $n))), Error::<H>::Segfault);
                 *top = u64_from_bytes(res);
             }};
         }
 
         macro_rules! dread_n {
-            ($n:literal) => {{
+            ($op:ident, $n:literal) => {{
                 trace!("dread{}", $n);
+                hook!($op);
                 let top = last!();
                 let ptr = as_ptr!(*top);
                 trace!("ptr: {ptr:x}");
-                let res = ok_or!(self.data.get(ptr..ptr + $n), Error::Segfault);
+                let res = ok_or!(self.data.get(ptr..ptr + $n), Error::<H>::Segfault);
                 *top = u64_from_bytes(res);
             }};
         }
 
         macro_rules! binop {
-            ($op:literal, $f:ident) => {{
-                trace!($op);
+            ($op:ident, $op_name:literal, $f:ident) => {{
+                trace!($op_name);
+                hook!($op);
                 let len = self.stack.len();
 
                 if len < 2 {
-                    return Err(Error::StackEmpty);
+                    return Err(Error::<H>::StackEmpty);
                 };
 
                 let b = unsafe { len.unchecked_sub(2) };
@@ -210,38 +208,37 @@ impl Vm {
             }};
         }
 
-        if *pc >= self.code.len() {
+        if self.pc >= self.code.len() {
             return Ok(StepResult::Eof);
         }
-        let op = unsafe { self.code.get_unchecked(*pc) };
+        let op = unsafe { self.code.get_unchecked(self.pc) };
 
-        *pc += 1;
+        self.pc += 1;
 
         trace!("");
 
         match *op {
             raw::PUSH0 => {
+                hook!(PUSH0);
                 trace!("push0");
                 self.stack.push(0);
             }
-            raw::PUSH1 => push_n!(1),
-            raw::PUSH2 => push_n!(2),
-            raw::PUSH3 => push_n!(3),
-            raw::PUSH4 => push_n!(4),
-            raw::PUSH5 => push_n!(5),
-            raw::PUSH6 => push_n!(6),
-            raw::PUSH7 => push_n!(7),
-            raw::PUSH8 => push_n!(8),
+            raw::PUSH1 => push_n!(PUSH1, 1),
+            raw::PUSH2 => push_n!(PUSH2, 2),
+            raw::PUSH3 => push_n!(PUSH3, 3),
+            raw::PUSH4 => push_n!(PUSH4, 4),
+            raw::PUSH5 => push_n!(PUSH5, 5),
+            raw::PUSH6 => push_n!(PUSH6, 6),
+            raw::PUSH7 => push_n!(PUSH7, 7),
+            raw::PUSH8 => push_n!(PUSH8, 8),
             raw::DUP => {
                 trace!("dup");
+                hook!(DUP);
                 let idx = as_ptr!(*last!());
                 trace!("idx = {idx:x}");
                 let stack_idx = ok_or!(
-                    self.stack
-                        .len()
-                        .checked_sub(idx)
-                        .and_then(|i| i.checked_sub(2)),
-                    Error::InvalidStackIdx
+                    self.stack.len().checked_sub(idx).and_then(|i| i.checked_sub(2)),
+                    Error::<H>::InvalidStackIdx
                 );
 
                 unsafe {
@@ -251,18 +248,20 @@ impl Vm {
             }
             raw::DUP0 => {
                 trace!("dup0");
-                let stack_idx = ok_or!(self.stack.len().checked_sub(1), Error::InvalidStackIdx);
+                hook!(DUP0);
+                let stack_idx =
+                    ok_or!(self.stack.len().checked_sub(1), Error::<H>::InvalidStackIdx);
 
-                self.stack
-                    .push(*ok_or!(self.stack.get(stack_idx), Error::InvalidStackIdx))
+                self.stack.push(*ok_or!(self.stack.get(stack_idx), Error::<H>::InvalidStackIdx))
             }
             raw::SWAP => {
                 trace!("swap");
+                hook!(SWAP);
                 let idx = as_ptr!(pop!());
-                let idx = ok_or!(idx.checked_add(1), Error::InvalidStackValue);
+                let idx = ok_or!(idx.checked_add(1), Error::<H>::InvalidStackValue);
                 let len = self.stack.len();
                 if len < idx {
-                    return Err(Error::InvalidStackIdx);
+                    return Err(Error::<H>::InvalidStackIdx);
                 }
                 // SAFETY: Len is at least 1 as per above
                 let a_idx = unsafe { len.unchecked_sub(1) };
@@ -272,52 +271,56 @@ impl Vm {
             }
             raw::SWAP0 => {
                 trace!("swap0");
-                let b_idx = ok_or!(self.stack.len().checked_sub(2), Error::InvalidStackIdx);
+                hook!(SWAP0);
+                let b_idx = ok_or!(self.stack.len().checked_sub(2), Error::<H>::InvalidStackIdx);
                 // SAFETY: Len is at least 2 as per above
                 let a_idx = unsafe { self.stack.len().unchecked_sub(1) };
                 self.stack.swap(a_idx, b_idx);
             }
             raw::POP => {
                 trace!("pop");
+                hook!(POP);
                 pop!();
             }
             raw::ALLOC => {
                 trace!("alloc");
+                hook!(ALLOC);
                 let size = as_ptr!(pop!());
                 self.memory.extend(vec![0; size]);
             }
 
-            raw::WRITE1 => write_n!(1),
-            raw::WRITE2 => write_n!(2),
-            raw::WRITE3 => write_n!(3),
-            raw::WRITE4 => write_n!(4),
-            raw::WRITE5 => write_n!(5),
-            raw::WRITE6 => write_n!(6),
-            raw::WRITE7 => write_n!(7),
-            raw::WRITE8 => write_n!(8),
+            raw::WRITE1 => write_n!(WRITE1, 1),
+            raw::WRITE2 => write_n!(WRITE2, 2),
+            raw::WRITE3 => write_n!(WRITE3, 3),
+            raw::WRITE4 => write_n!(WRITE4, 4),
+            raw::WRITE5 => write_n!(WRITE5, 5),
+            raw::WRITE6 => write_n!(WRITE6, 6),
+            raw::WRITE7 => write_n!(WRITE7, 7),
+            raw::WRITE8 => write_n!(WRITE8, 8),
 
-            raw::READ1 => read_n!(1),
-            raw::READ2 => read_n!(2),
-            raw::READ3 => read_n!(3),
-            raw::READ4 => read_n!(4),
-            raw::READ5 => read_n!(5),
-            raw::READ6 => read_n!(6),
-            raw::READ7 => read_n!(7),
-            raw::READ8 => read_n!(8),
+            raw::READ1 => read_n!(READ1, 1),
+            raw::READ2 => read_n!(READ2, 2),
+            raw::READ3 => read_n!(READ3, 3),
+            raw::READ4 => read_n!(READ4, 4),
+            raw::READ5 => read_n!(READ5, 5),
+            raw::READ6 => read_n!(READ6, 6),
+            raw::READ7 => read_n!(READ7, 7),
+            raw::READ8 => read_n!(READ8, 8),
 
-            raw::DREAD1 => dread_n!(1),
-            raw::DREAD2 => dread_n!(2),
-            raw::DREAD3 => dread_n!(3),
-            raw::DREAD4 => dread_n!(4),
-            raw::DREAD5 => dread_n!(5),
-            raw::DREAD6 => dread_n!(6),
-            raw::DREAD7 => dread_n!(7),
-            raw::DREAD8 => dread_n!(8),
+            raw::DREAD1 => dread_n!(DREAD1, 1),
+            raw::DREAD2 => dread_n!(DREAD2, 2),
+            raw::DREAD3 => dread_n!(DREAD3, 3),
+            raw::DREAD4 => dread_n!(DREAD4, 4),
+            raw::DREAD5 => dread_n!(DREAD5, 5),
+            raw::DREAD6 => dread_n!(DREAD6, 6),
+            raw::DREAD7 => dread_n!(DREAD7, 7),
+            raw::DREAD8 => dread_n!(DREAD8, 8),
 
             raw::DCOPY => {
                 trace!("dcopy");
+                hook!(DCOPY);
                 if self.stack.len() < 3 {
-                    return Err(Error::StackEmpty);
+                    return Err(Error::<H>::StackEmpty);
                 };
 
                 let [src, dst, len] = &self.stack[self.stack.len() - 3..] else {
@@ -334,198 +337,183 @@ impl Vm {
 
                 trace!("len: {len:x}, dst: {dst:x}, src: {src:x}");
 
-                ok_or!(self.memory.get_mut(dst..dst + len), Error::Segfault)
-                    .copy_from_slice(ok_or!(self.data.get(src..src + len), Error::Segfault));
+                ok_or!(self.memory.get_mut(dst..dst + len), Error::<H>::Segfault)
+                    .copy_from_slice(ok_or!(self.data.get(src..src + len), Error::<H>::Segfault));
             }
 
             raw::DLEN => {
                 trace!("dlen");
+                hook!(DLEN);
                 self.stack.push(self.data.len() as u64);
             }
 
-            raw::ADD => binop!("add", add),
-            raw::SUB => binop!("sub", sub),
-            raw::MUL => binop!("mul", mul),
+            raw::ADD => binop!(ADD, "add", add),
+            raw::SUB => binop!(SUB, "sub", sub),
+            raw::MUL => binop!(MUL, "mul", mul),
             raw::DIV => {
                 trace!("div");
+                hook!(DIV);
                 let len = self.stack.len();
                 if len < 2 {
-                    return Err(Error::StackEmpty);
+                    return Err(Error::<H>::StackEmpty);
                 };
                 let b = len - 2;
                 let a = len - 1;
                 unsafe {
-                    *self.stack.get_unchecked_mut(b) = try_!(op::div(
-                        *self.stack.get_unchecked(b),
-                        *self.stack.get_unchecked(a)
-                    ))
+                    *self.stack.get_unchecked_mut(b) =
+                        match op::div(*self.stack.get_unchecked(b), *self.stack.get_unchecked(a)) {
+                            Ok(ok) => ok,
+                            Err(err) => return Err(err.widen()),
+                        }
                 };
                 unsafe { self.stack.set_len(a) };
             }
-            // raw::DIV => {
-            //     trace!("div");
-            //     let a = pop!();
-            //     let b = last!();
-            //     *b = op::div(a, *b)?;
-            // }
-            raw::EXP => binop!("exp", expmod),
+            raw::EXP => binop!(EXP, "exp", expmod),
             raw::MOD => {
                 trace!("mod");
+                hook!(MOD);
                 let a = pop!();
                 let b = last!();
                 trace!("{b:x} % {a:x}");
-                *b = try_!(op::r#mod(*b, a));
+                *b = match op::r#mod(*b, a) {
+                    Ok(ok) => ok,
+                    Err(err) => return Err(err.widen()),
+                };
             }
-            raw::EQ => binop!("eq", eq),
-            raw::NEQ => binop!("neq", neq),
-            raw::LT => binop!("lt", lt),
-            raw::GT => binop!("gt", gt),
+            raw::EQ => binop!(EQ, "eq", eq),
+            raw::NEQ => binop!(NEQ, "neq", neq),
+            raw::LT => binop!(LT, "lt", lt),
+            raw::GT => binop!(GT, "gt", gt),
             raw::NOT => {
                 trace!("not");
+                hook!(NOT);
                 let a = last!();
                 *a = op::not(*a);
             }
-            raw::SHR => binop!("shr", shr),
-            raw::SHL => binop!("shl", shl),
+            raw::SHR => binop!(SHR, "shr", shr),
+            raw::SHL => binop!(SHL, "shl", shl),
             raw::NEG => {
                 trace!("neg");
+                hook!(NEG);
                 let a = last!();
                 *a = op::neg(*a);
             }
-            raw::OR => binop!("or", or),
-            raw::XOR => binop!("xor", xor),
-            raw::AND => binop!("and", and),
+            raw::OR => binop!(OR, "or", or),
+            raw::XOR => binop!(XOR, "xor", xor),
+            raw::AND => binop!(AND, "and", and),
 
             raw::JUMP => {
                 trace!("jump");
+                hook!(JUMP);
                 let dst = pop!();
                 trace!("dst = {dst:x}");
-                *pc = as_ptr!(dst);
+                self.pc = as_ptr!(dst);
             }
             raw::JNZ => {
                 trace!("jnz");
+                hook!(JNZ);
                 let dst = pop!();
                 trace!("dst = {dst:x}");
                 let value = pop!();
                 trace!("value = {value:x}");
                 if value != 0 {
-                    *pc = as_ptr!(dst);
+                    self.pc = as_ptr!(dst);
                 }
             }
             raw::CALL => {
                 trace!("call");
+                hook!(CALL);
                 let top = last!();
                 let address = *top;
-                *top = *pc as u64;
-                *pc = as_ptr!(address);
+                *top = self.pc as u64;
+                self.pc = as_ptr!(address);
             }
             raw::EXIT => {
                 trace!("exit");
+                hook!(EXIT);
                 let len = as_ptr!(pop!());
                 let ptr = as_ptr!(pop!());
 
                 return Ok(StepResult::Exit(
-                    ok_or!(self.memory.get(ptr..ptr + len), Error::Segfault).to_vec(),
+                    ok_or!(self.memory.get(ptr..ptr + len), Error::<H>::Segfault).to_vec(),
                 ));
             }
             raw::TRAP => {
                 trace!("trap");
+                hook!(TRAP);
                 let value = pop!();
-                return Err(Error::Trap(value));
+                return Err(Error::<H>::Trap(value));
             }
-            op => return Err(Error::UnknownOp(op)),
+            op => return Err(Error::<H>::UnknownOp(op)),
         }
 
-        trace!("pc: {pc:x}");
+        trace!("pc: {:x}", self.pc);
         trace!("stack: {:x?}", self.stack);
         trace!("memory: {}", self.memory.encode_hex());
 
-        Ok(StepResult::Stepped)
-    }
-
-    #[warn(clippy::question_mark_used)]
-    fn eat_op(&self, pc: &mut usize) -> Result<Option<Op>, Error> {
-        #[inline(always)]
-        fn push_n<const N: usize>(pc: &mut usize, code: &[u8]) -> Result<[u8; N], Error> {
-            *pc += N;
-            let mut v = [0; N];
-            let res = try_!(code.get(*pc - N..*pc).ok_or(Error::Eof));
-            v.copy_from_slice(res);
-            Ok(v)
-        }
-
-        let Some(op) = self.code.get(*pc) else {
-            return Ok(None);
+        if let Err(err) = self.hook.post_cycle() {
+            return Err(Error::Hook(err));
         };
 
-        *pc += 1;
+        Ok(StepResult::Stepped)
+    }
+}
 
-        Ok(Some(match *op {
-            raw::PUSH0 => Op::PUSH0,
-            raw::PUSH1 => Op::PUSH1(try_!(push_n(pc, &self.code))),
-            raw::PUSH2 => Op::PUSH2(try_!(push_n(pc, &self.code))),
-            raw::PUSH3 => Op::PUSH3(try_!(push_n(pc, &self.code))),
-            raw::PUSH4 => Op::PUSH4(try_!(push_n(pc, &self.code))),
-            raw::PUSH5 => Op::PUSH5(try_!(push_n(pc, &self.code))),
-            raw::PUSH6 => Op::PUSH6(try_!(push_n(pc, &self.code))),
-            raw::PUSH7 => Op::PUSH7(try_!(push_n(pc, &self.code))),
-            raw::PUSH8 => Op::PUSH8(try_!(push_n(pc, &self.code))),
-            raw::DUP => Op::DUP,
-            raw::DUP0 => Op::DUP0,
-            raw::SWAP => Op::SWAP,
-            raw::SWAP0 => Op::SWAP0,
-            raw::POP => Op::POP,
-            raw::ALLOC => Op::ALLOC,
-            raw::WRITE1 => Op::WRITE1,
-            raw::WRITE2 => Op::WRITE2,
-            raw::WRITE3 => Op::WRITE3,
-            raw::WRITE4 => Op::WRITE4,
-            raw::WRITE5 => Op::WRITE5,
-            raw::WRITE6 => Op::WRITE6,
-            raw::WRITE7 => Op::WRITE7,
-            raw::WRITE8 => Op::WRITE8,
-            raw::READ1 => Op::READ1,
-            raw::READ2 => Op::READ2,
-            raw::READ3 => Op::READ3,
-            raw::READ4 => Op::READ4,
-            raw::READ5 => Op::READ5,
-            raw::READ6 => Op::READ6,
-            raw::READ7 => Op::READ7,
-            raw::READ8 => Op::READ8,
-            raw::DREAD1 => Op::DREAD1,
-            raw::DREAD2 => Op::DREAD2,
-            raw::DREAD3 => Op::DREAD3,
-            raw::DREAD4 => Op::DREAD4,
-            raw::DREAD5 => Op::DREAD5,
-            raw::DREAD6 => Op::DREAD6,
-            raw::DREAD7 => Op::DREAD7,
-            raw::DREAD8 => Op::DREAD8,
-            raw::DCOPY => Op::DCOPY,
-            raw::DLEN => Op::DLEN,
-            raw::ADD => Op::ADD,
-            raw::SUB => Op::SUB,
-            raw::MUL => Op::MUL,
-            raw::DIV => Op::DIV,
-            raw::EXP => Op::EXP,
-            raw::MOD => Op::MOD,
-            raw::EQ => Op::EQ,
-            raw::NEQ => Op::NEQ,
-            raw::LT => Op::LT,
-            raw::GT => Op::GT,
-            raw::NOT => Op::NOT,
-            raw::SHL => Op::SHL,
-            raw::SHR => Op::SHR,
-            raw::NEG => Op::NEG,
-            raw::OR => Op::OR,
-            raw::XOR => Op::XOR,
-            raw::AND => Op::AND,
-            raw::JUMP => Op::JUMP,
-            raw::JNZ => Op::JNZ,
-            raw::CALL => Op::CALL,
-            raw::EXIT => Op::EXIT,
-            raw::TRAP => Op::TRAP,
-            op => return Err(Error::UnknownOp(op)),
-        }))
+pub trait Hook {
+    type Error: StdError;
+
+    fn pre_cycle(&mut self) -> Result<(), Self::Error>;
+
+    fn cycle(&mut self, pc: usize, op: Op, stack: &[u64], mem: &[u8]) -> Result<(), Self::Error>;
+
+    fn post_cycle(&mut self) -> Result<(), Self::Error>;
+}
+
+impl Hook for () {
+    type Error = !;
+
+    fn pre_cycle(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn cycle(&mut self, _: usize, _: Op, _: &[u64], _: &[u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn post_cycle(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CycleCountHook {
+    cycles: u64,
+}
+
+impl CycleCountHook {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cycles(&self) -> u64 {
+        self.cycles
+    }
+}
+
+impl Hook for CycleCountHook {
+    type Error = !;
+
+    fn pre_cycle(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn cycle(&mut self, _: usize, _: Op, _: &[u64], _: &[u8]) -> Result<(), Self::Error> {
+        self.cycles += 1;
+        Ok(())
+    }
+
+    fn post_cycle(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 
@@ -549,11 +537,7 @@ pub mod op {
 
     #[inline(always)]
     pub const fn div(a: u64, b: u64) -> Result<u64, Error> {
-        if b == 0 {
-            Err(Error::DivideByZero)
-        } else {
-            Ok(a.wrapping_div(b))
-        }
+        if b == 0 { Err(Error::DivideByZero) } else { Ok(a.wrapping_div(b)) }
     }
 
     #[inline(always)]
@@ -583,11 +567,7 @@ pub mod op {
 
     #[inline(always)]
     pub const fn r#mod(a: u64, b: u64) -> Result<u64, Error> {
-        if a == 0 {
-            Err(Error::DivideByZero)
-        } else {
-            Ok(a.wrapping_rem(b))
-        }
+        if a == 0 { Err(Error::DivideByZero) } else { Ok(a.wrapping_rem(b)) }
     }
 
     #[inline(always)]
@@ -651,14 +631,12 @@ pub mod op {
 
             assert_eq!(expmod(3, 65), 7752514819847767473);
 
-            assert_eq!(
-                expmod(1844674407370955164, 18446744073709551),
-                8344168819056270514
-            );
+            assert_eq!(expmod(1844674407370955164, 18446744073709551), 8344168819056270514);
         }
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum StepResult {
     Stepped,
     Eof,
@@ -1000,6 +978,83 @@ op! {
     }
 }
 
+impl fmt::Display for Op {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[inline(always)]
+        fn u64_from_bytes(arr: &[u8]) -> u64 {
+            let mut v = [0; 8];
+            v[8 - arr.len()..].copy_from_slice(arr);
+            u64::from_be_bytes(v)
+        }
+
+        match self {
+            Op::PUSH0 => f.write_str("PUSH0"),
+            Op::PUSH1(arr) => f.write_fmt(format_args!("PUSH1 0x{:x}", u64_from_bytes(arr))),
+            Op::PUSH2(arr) => f.write_fmt(format_args!("PUSH2 0x{:x}", u64_from_bytes(arr))),
+            Op::PUSH3(arr) => f.write_fmt(format_args!("PUSH3 0x{:x}", u64_from_bytes(arr))),
+            Op::PUSH4(arr) => f.write_fmt(format_args!("PUSH4 0x{:x}", u64_from_bytes(arr))),
+            Op::PUSH5(arr) => f.write_fmt(format_args!("PUSH5 0x{:x}", u64_from_bytes(arr))),
+            Op::PUSH6(arr) => f.write_fmt(format_args!("PUSH6 0x{:x}", u64_from_bytes(arr))),
+            Op::PUSH7(arr) => f.write_fmt(format_args!("PUSH7 0x{:x}", u64_from_bytes(arr))),
+            Op::PUSH8(arr) => f.write_fmt(format_args!("PUSH8 0x{:x}", u64_from_bytes(arr))),
+            Op::DUP => f.write_str("DUP"),
+            Op::DUP0 => f.write_str("DUP0"),
+            Op::SWAP => f.write_str("SWAP"),
+            Op::SWAP0 => f.write_str("SWAP0"),
+            Op::POP => f.write_str("POP"),
+            Op::ALLOC => f.write_str("ALLOC"),
+            Op::WRITE1 => f.write_str("WRITE1"),
+            Op::WRITE2 => f.write_str("WRITE2"),
+            Op::WRITE3 => f.write_str("WRITE3"),
+            Op::WRITE4 => f.write_str("WRITE4"),
+            Op::WRITE5 => f.write_str("WRITE5"),
+            Op::WRITE6 => f.write_str("WRITE6"),
+            Op::WRITE7 => f.write_str("WRITE7"),
+            Op::WRITE8 => f.write_str("WRITE8"),
+            Op::READ1 => f.write_str("READ1"),
+            Op::READ2 => f.write_str("READ2"),
+            Op::READ3 => f.write_str("READ3"),
+            Op::READ4 => f.write_str("READ4"),
+            Op::READ5 => f.write_str("READ5"),
+            Op::READ6 => f.write_str("READ6"),
+            Op::READ7 => f.write_str("READ7"),
+            Op::READ8 => f.write_str("READ8"),
+            Op::DREAD1 => f.write_str("DREAD1"),
+            Op::DREAD2 => f.write_str("DREAD2"),
+            Op::DREAD3 => f.write_str("DREAD3"),
+            Op::DREAD4 => f.write_str("DREAD4"),
+            Op::DREAD5 => f.write_str("DREAD5"),
+            Op::DREAD6 => f.write_str("DREAD6"),
+            Op::DREAD7 => f.write_str("DREAD7"),
+            Op::DREAD8 => f.write_str("DREAD8"),
+            Op::DCOPY => f.write_str("DCOPY"),
+            Op::DLEN => f.write_str("DLEN"),
+            Op::ADD => f.write_str("ADD"),
+            Op::SUB => f.write_str("SUB"),
+            Op::MUL => f.write_str("MUL"),
+            Op::DIV => f.write_str("DIV"),
+            Op::EXP => f.write_str("EXP"),
+            Op::MOD => f.write_str("MOD"),
+            Op::EQ => f.write_str("EQ"),
+            Op::NEQ => f.write_str("NEQ"),
+            Op::LT => f.write_str("LT"),
+            Op::GT => f.write_str("GT"),
+            Op::NOT => f.write_str("NOT"),
+            Op::SHL => f.write_str("SHL"),
+            Op::SHR => f.write_str("SHR"),
+            Op::NEG => f.write_str("NEG"),
+            Op::OR => f.write_str("OR"),
+            Op::XOR => f.write_str("XOR"),
+            Op::AND => f.write_str("AND"),
+            Op::JUMP => f.write_str("JUMP"),
+            Op::JNZ => f.write_str("JNZ"),
+            Op::CALL => f.write_str("CALL"),
+            Op::EXIT => f.write_str("EXIT"),
+            Op::TRAP => f.write_str("TRAP"),
+        }
+    }
+}
+
 impl Op {
     pub fn to_bytes(self) -> Vec<u8> {
         match self {
@@ -1070,8 +1125,8 @@ impl Op {
     }
 }
 
-#[derive(Debug, PartialEq, thiserror::Error)]
-pub enum Error {
+#[derive(PartialEq, thiserror::Error)]
+pub enum Error<H: Hook = ()> {
     /// Attempted to pop off of an empty stack.
     #[error("stack empty")]
     StackEmpty,
@@ -1098,6 +1153,9 @@ pub enum Error {
     #[error("unknown op: {0:#x}")]
     UnknownOp(u8),
 
+    #[error(transparent)]
+    Hook(H::Error),
+
     #[cfg(not(target_pointer_width = "64"))]
     /// Attempted to use more memory than is addressable by the host system the
     /// vm was compiled for.
@@ -1106,4 +1164,55 @@ pub enum Error {
         pw = usize::BITS,
     )]
     PointerTooBig(u64),
+}
+
+impl<H: Hook<Error: Debug>> Debug for Error<H> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StackEmpty => write!(f, "StackEmpty"),
+            Self::InvalidStackIdx => write!(f, "InvalidStackIdx"),
+            Self::Segfault => write!(f, "Segfault"),
+            Self::Eof => write!(f, "Eof"),
+            Self::DivideByZero => write!(f, "DivideByZero"),
+            Self::InvalidStackValue => write!(f, "InvalidStackValue"),
+            Self::Trap(code) => f.debug_tuple("Trap").field(code).finish(),
+            Self::UnknownOp(op) => f.debug_tuple("UnknownOp").field(op).finish(),
+            Self::Hook(err) => f.debug_tuple("Hook").field(err).finish(),
+            #[cfg(not(target_pointer_width = "64"))]
+            Self::PointerTooBig(ptr) => f.debug_tuple("PointerTooBig").field(ptr).finish(),
+        }
+    }
+}
+
+impl<H: Hook<Error: Clone>> Clone for Error<H> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::StackEmpty => Self::StackEmpty,
+            Self::InvalidStackIdx => Self::InvalidStackIdx,
+            Self::Segfault => Self::Segfault,
+            Self::Eof => Self::Eof,
+            Self::DivideByZero => Self::DivideByZero,
+            Self::InvalidStackValue => Self::InvalidStackValue,
+            Self::Trap(code) => Self::Trap(*code),
+            Self::UnknownOp(op) => Self::UnknownOp(*op),
+            Self::Hook(err) => Self::Hook(err.clone()),
+            #[cfg(not(target_pointer_width = "64"))]
+            Self::PointerTooBig(ptr) => Self::PointerTooBig(ptr.clone()),
+        }
+    }
+}
+
+impl Error<()> {
+    pub fn widen<H: Hook>(self) -> Error<H> {
+        match self {
+            Error::StackEmpty => Error::StackEmpty,
+            Error::InvalidStackIdx => Error::InvalidStackIdx,
+            Error::Segfault => Error::Segfault,
+            Error::Eof => Error::Eof,
+            Error::DivideByZero => Error::DivideByZero,
+            Error::InvalidStackValue => Error::InvalidStackValue,
+            Error::Trap(code) => Error::Trap(code),
+            Error::UnknownOp(op) => Error::UnknownOp(op),
+        }
+    }
 }

@@ -1,3 +1,5 @@
+use tracing::info;
+
 use crate::mir::{CheckCtx, VarValue, Visitor, ast::Expr};
 
 pub struct ConstProp;
@@ -15,6 +17,7 @@ fn visit_expr(ctx: &CheckCtx<'_>, expr: &mut Expr<'_>) -> bool {
         Expr::Val(_) => false,
         Expr::Var(ident) => {
             if let VarValue::Const(val) = ctx.var_value(ident) {
+                info!("'{ident}' has const value {val}, inlining");
                 *expr = Expr::Val(*val);
                 true
             } else {
@@ -59,13 +62,36 @@ mod tests {
     };
 
     #[test]
-    fn const_prop() {
+    fn basic() {
         init();
 
         let raw = r#"
 a <- 1
 b <- a
 "#;
+
+        let ast = grammar().block.parse(raw).unwrap();
+
+        let mut ctx = CheckCtx::new("");
+
+        let ast = ctx.check_with(&ast, &mut ConstProp).unwrap();
+
+        println!("{}", print_ast(&ast));
+    }
+
+    #[test]
+    fn broken() {
+        init();
+
+        let raw = r#"
+n <- 0
+
+if 0 {
+  n <- 1
+}
+
+a <- n
+        "#;
 
         let ast = grammar().block.parse(raw).unwrap();
 

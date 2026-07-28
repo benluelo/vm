@@ -80,17 +80,9 @@ pub enum CompileError {
     #[error("def '{def}' can not be used as an expression as it does not return any values")]
     StatementDef { def: String },
     #[error("builtin '{builtin}' takes {expected} argument(s), but {provided} were provided")]
-    InvalidArgCountBuiltin {
-        builtin: &'static str,
-        expected: usize,
-        provided: usize,
-    },
+    InvalidArgCountBuiltin { builtin: &'static str, expected: usize, provided: usize },
     #[error("def '{def}' takes {expected} argument(s), but {provided} were provided")]
-    InvalidArgCountDef {
-        def: String,
-        expected: usize,
-        provided: usize,
-    },
+    InvalidArgCountDef { def: String, expected: usize, provided: usize },
     #[error("'{def}' returns more than one value, ... must be used on the expression")]
     SpreadRequired { def: String },
     #[error("'{def}' does not return more than one value, ... can not be used")]
@@ -144,16 +136,8 @@ impl<'a> Ctx<'a> {
     }
 
     pub fn into_object(self) -> Object<'a> {
-        let root_label = self
-            .scopes
-            .first()
-            .unwrap()
-            .label
-            .as_label()
-            .unwrap()
-            .to_owned()
-            .to_string()
-            .into();
+        let root_label =
+            self.scopes.first().unwrap().label.as_label().unwrap().to_owned().to_string().into();
 
         Object(
             [("@start".into(), vec![AsmOp::PUSHL(root_label), AsmOp::JUMP])]
@@ -180,12 +164,7 @@ impl<'a> Ctx<'a> {
 
     fn push_scope(&mut self, tag: String, label: ScopeLabel<'a>) {
         trace!("pushing scope {label} ({tag})",);
-        self.scopes.push(Scope {
-            tag,
-            label,
-            vars: Default::default(),
-            defs: Default::default(),
-        });
+        self.scopes.push(Scope { tag, label, vars: Default::default(), defs: Default::default() });
     }
 
     fn pop_scope(&mut self, label: ScopeLabel<'a>, cleanup_asm: bool) -> CompileResult {
@@ -241,9 +220,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn get_var(&self, var: &Ident<'a>) -> Option<usize> {
-        self.scopes
-            .iter()
-            .find_map(|s| s.vars.iter().find_map(|(v, i)| v.eq(var).then_some(*i)))
+        self.scopes.iter().find_map(|s| s.vars.iter().find_map(|(v, i)| v.eq(var).then_some(*i)))
     }
 
     fn init_var<'b>(&'b mut self, var: &Ident<'a>) -> usize {
@@ -253,18 +230,12 @@ impl<'a> Ctx<'a> {
     fn init_var_with_depth_offset(&mut self, var: &Ident<'a>, depth: isize) -> usize {
         trace!("PUSHING VAR {var} @ {depth}");
         let var_idx = self.stack_depth.strict_add_signed(depth);
-        self.scopes
-            .last_mut()
-            .expect("no scopes?")
-            .vars
-            .insert(var.clone(), var_idx);
+        self.scopes.last_mut().expect("no scopes?").vars.insert(var.clone(), var_idx);
         var_idx
     }
 
     fn get_def(&self, def: &Ident<'a>) -> Option<&(Def<'a>, String)> {
-        self.scopes
-            .iter()
-            .find_map(|s| s.defs.iter().find_map(|(d, i)| d.eq(def).then_some(i)))
+        self.scopes.iter().find_map(|s| s.defs.iter().find_map(|(d, i)| d.eq(def).then_some(i)))
     }
 
     fn current_scope(&mut self) -> &mut Scope<'a> {
@@ -284,11 +255,7 @@ impl<'a> Ctx<'a> {
 
     #[track_caller]
     fn current_section_label(&self) -> String {
-        self.sections
-            .keys()
-            .last()
-            .expect("main section exists")
-            .clone()
+        self.sections.keys().last().expect("main section exists").clone()
     }
 
     #[track_caller]
@@ -321,11 +288,7 @@ impl<'a> Ctx<'a> {
 
             trace!(
                 "go: {}",
-                ctx.scopes
-                    .iter()
-                    .map(|s| s.label.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
+                ctx.scopes.iter().map(|s| s.label.to_string()).collect::<Vec<_>>().join(",")
             );
 
             for (i, s) in block.iter().enumerate() {
@@ -334,8 +297,7 @@ impl<'a> Ctx<'a> {
                         trace!("expr");
                         let arity = ctx.expr_arity(0, expr, false)?;
                         ctx.compile_expr(expr)?;
-                        ctx.current_section()
-                            .extend(iter::repeat_n(AsmOp::POP, arity));
+                        ctx.current_section().extend(iter::repeat_n(AsmOp::POP, arity));
                     }
                     Statement::Loop(Loop { label, block }) => {
                         trace!("loop");
@@ -581,9 +543,7 @@ impl<'a> Ctx<'a> {
 
                             // new ctx values for this fn call
 
-                            def_ctx
-                                .sections
-                                .insert(format!("{def_label}/RETS_INIT"), vec![]);
+                            def_ctx.sections.insert(format!("{def_label}/RETS_INIT"), vec![]);
 
                             // init return values
                             for ret in def.rets.iter().rev() {
@@ -609,9 +569,7 @@ impl<'a> Ctx<'a> {
                             go(&mut def_ctx, depth + 1, &def.body)?;
                             def_ctx.pop_scope(ScopeLabel::None, true)?;
 
-                            def_ctx
-                                .sections
-                                .insert(format!("{def_label}/CLEANUP"), vec![]);
+                            def_ctx.sections.insert(format!("{def_label}/CLEANUP"), vec![]);
 
                             // go from [...args, @caller_ptr, ...rets] to [...rets, @caller_ptr,
                             // ...args]
@@ -637,11 +595,7 @@ impl<'a> Ctx<'a> {
 
             trace!(
                 "go end: {}",
-                ctx.scopes
-                    .iter()
-                    .map(|s| s.label.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
+                ctx.scopes.iter().map(|s| s.label.to_string()).collect::<Vec<_>>().join(",")
             );
 
             let stack_depth_after = ctx.stack_depth;
@@ -675,11 +629,7 @@ impl<'a> Ctx<'a> {
             Expr::Val(_) | Expr::Var(_) => Ok(1),
             Expr::Call {
                 spread,
-                f:
-                    Spanned {
-                        inner: BuiltinOrDef::Builtin(builtin),
-                        ..
-                    },
+                f: Spanned { inner: BuiltinOrDef::Builtin(builtin), .. },
                 args: _,
             } if matches!(
                 builtin,
@@ -719,20 +669,14 @@ impl<'a> Ctx<'a> {
             ) =>
             {
                 if depth > 0 && *spread {
-                    Err(CompileError::InvalidSpread {
-                        def: builtin.to_string(),
-                    })
+                    Err(CompileError::InvalidSpread { def: builtin.to_string() })
                 } else {
                     Ok(1)
                 }
             }
             Expr::Call {
                 spread,
-                f:
-                    Spanned {
-                        inner: BuiltinOrDef::Builtin(builtin),
-                        ..
-                    },
+                f: Spanned { inner: BuiltinOrDef::Builtin(builtin), .. },
                 args: _,
             } if matches!(
                 builtin,
@@ -751,31 +695,21 @@ impl<'a> Ctx<'a> {
             ) =>
             {
                 if *spread {
-                    Err(CompileError::InvalidSpread {
-                        def: builtin.to_string(),
-                    })
+                    Err(CompileError::InvalidSpread { def: builtin.to_string() })
                 } else if depth > 0 || ensure_expr {
-                    Err(CompileError::StatementBuiltin {
-                        builtin: builtin.to_string(),
-                    })
+                    Err(CompileError::StatementBuiltin { builtin: builtin.to_string() })
                 } else {
                     Ok(0)
                 }
             }
-            Expr::Call {
-                spread,
-                f: def,
-                args: _,
-            } => {
+            Expr::Call { spread, f: def, args: _ } => {
                 let BuiltinOrDef::Def(def) = &def.inner else {
                     bug!("attempted to call builtin {} as a def", def.inner)
                 };
 
                 let arity = self
                     .get_def(def)
-                    .ok_or_else(|| CompileError::DefNotFound {
-                        def: def.to_string(),
-                    })?
+                    .ok_or_else(|| CompileError::DefNotFound { def: def.to_string() })?
                     .0
                     .rets
                     .len();
@@ -783,20 +717,18 @@ impl<'a> Ctx<'a> {
                 match (ensure_expr, depth, spread, arity) {
                     // statement def, invalid at top level if ensuring expression, invalid at any
                     // depth greater than top level, arity zero otherwise
-                    (true, _, _, 0) | (_, 1.., _, 0) => Err(CompileError::StatementDef {
-                        def: def.to_string(),
-                    }),
+                    (true, _, _, 0) | (_, 1.., _, 0) => {
+                        Err(CompileError::StatementDef { def: def.to_string() })
+                    }
                     (false, _, _, 0) => Ok(0),
                     // '...' provided at top level, always invalid
                     (_, 0, true, _) => Err(CompileError::SpreadTopLevel {}),
                     // '...' provided but only 1 return value
-                    (_, 1.., true, 1) => Err(CompileError::InvalidSpread {
-                        def: def.to_string(),
-                    }),
+                    (_, 1.., true, 1) => Err(CompileError::InvalidSpread { def: def.to_string() }),
                     // '...' not provided but more than 1 return value
-                    (_, 1.., false, 2..) => Err(CompileError::SpreadRequired {
-                        def: def.to_string(),
-                    }),
+                    (_, 1.., false, 2..) => {
+                        Err(CompileError::SpreadRequired { def: def.to_string() })
+                    }
                     _ => Ok(arity),
                 }
             }
@@ -816,9 +748,7 @@ impl<'a> Ctx<'a> {
                 }
                 Expr::Var(var) => {
                     let Some(idx) = ctx.get_var(var) else {
-                        return Err(CompileError::VarNotFound {
-                            var: var.to_string(),
-                        });
+                        return Err(CompileError::VarNotFound { var: var.to_string() });
                     };
                     // dbg!(&ctx.scopes);
                     trace!("var '{var}' (idx: {idx}, depth: {})", ctx.stack_depth);
@@ -845,11 +775,7 @@ impl<'a> Ctx<'a> {
                     }
                     ctx.inc_stack();
                 }
-                Expr::Call {
-                    spread,
-                    f,
-                    args: exprs,
-                } => {
+                Expr::Call { spread, f, args: exprs } => {
                     if depth == 0 && *spread {
                         return Err(CompileError::SpreadTopLevel {});
                     }
@@ -1177,9 +1103,7 @@ impl<'a> CheckCtx<'a> {
             }
         }
 
-        Err(CompileError::LabelNotFound {
-            label: label.to_string(),
-        })
+        Err(CompileError::LabelNotFound { label: label.to_string() })
     }
 
     fn expr_arity(&self, depth: usize, expr: &Expr<'_>, ensure_expr: bool) -> CompileResult<usize> {
@@ -1187,11 +1111,7 @@ impl<'a> CheckCtx<'a> {
             Expr::Val(_) | Expr::Var(_) => Ok(1),
             Expr::Call {
                 spread,
-                f:
-                    Spanned {
-                        inner: BuiltinOrDef::Builtin(builtin),
-                        ..
-                    },
+                f: Spanned { inner: BuiltinOrDef::Builtin(builtin), .. },
                 args: _,
             } if matches!(
                 builtin,
@@ -1231,20 +1151,14 @@ impl<'a> CheckCtx<'a> {
             ) =>
             {
                 if depth > 0 && *spread {
-                    Err(CompileError::InvalidSpread {
-                        def: builtin.to_string(),
-                    })
+                    Err(CompileError::InvalidSpread { def: builtin.to_string() })
                 } else {
                     Ok(1)
                 }
             }
             Expr::Call {
                 spread,
-                f:
-                    Spanned {
-                        inner: BuiltinOrDef::Builtin(builtin),
-                        ..
-                    },
+                f: Spanned { inner: BuiltinOrDef::Builtin(builtin), .. },
                 args: _,
             } if matches!(
                 builtin,
@@ -1263,51 +1177,39 @@ impl<'a> CheckCtx<'a> {
             ) =>
             {
                 if *spread {
-                    Err(CompileError::InvalidSpread {
-                        def: builtin.to_string(),
-                    })
+                    Err(CompileError::InvalidSpread { def: builtin.to_string() })
                 } else if depth > 0 || ensure_expr {
-                    Err(CompileError::StatementBuiltin {
-                        builtin: builtin.to_string(),
-                    })
+                    Err(CompileError::StatementBuiltin { builtin: builtin.to_string() })
                 } else {
                     Ok(0)
                 }
             }
-            Expr::Call {
-                spread,
-                f: def,
-                args: _,
-            } => {
+            Expr::Call { spread, f: def, args: _ } => {
                 let BuiltinOrDef::Def(def) = &def.inner else {
                     bug!("attempted to call builtin {} as a def", def.inner)
                 };
 
                 let arity = self
                     .get_def(def)
-                    .ok_or_else(|| CompileError::DefNotFound {
-                        def: def.to_string(),
-                    })?
+                    .ok_or_else(|| CompileError::DefNotFound { def: def.to_string() })?
                     .rets
                     .len();
 
                 match (ensure_expr, depth, spread, arity) {
                     // statement def, invalid at top level if ensuring expression, invalid at any
                     // depth greater than top level, arity zero otherwise
-                    (true, _, _, 0) | (_, 1.., _, 0) => Err(CompileError::StatementDef {
-                        def: def.to_string(),
-                    }),
+                    (true, _, _, 0) | (_, 1.., _, 0) => {
+                        Err(CompileError::StatementDef { def: def.to_string() })
+                    }
                     (false, _, _, 0) => Ok(0),
                     // '...' provided at top level, always invalid
                     (_, 0, true, _) => Err(CompileError::SpreadTopLevel {}),
                     // '...' provided but only 1 return value
-                    (_, 1.., true, 1) => Err(CompileError::InvalidSpread {
-                        def: def.to_string(),
-                    }),
+                    (_, 1.., true, 1) => Err(CompileError::InvalidSpread { def: def.to_string() }),
                     // '...' not provided but more than 1 return value
-                    (_, 1.., false, 2..) => Err(CompileError::SpreadRequired {
-                        def: def.to_string(),
-                    }),
+                    (_, 1.., false, 2..) => {
+                        Err(CompileError::SpreadRequired { def: def.to_string() })
+                    }
                     _ => Ok(arity),
                 }
             }
@@ -1315,9 +1217,7 @@ impl<'a> CheckCtx<'a> {
     }
 
     fn get_def(&self, def: &Ident<'a>) -> Option<&Def<'a>> {
-        self.scopes
-            .iter()
-            .find_map(|s| s.defs.iter().find_map(|(d, i)| d.eq(def).then_some(i)))
+        self.scopes.iter().find_map(|s| s.defs.iter().find_map(|(d, i)| d.eq(def).then_some(i)))
     }
 
     pub fn check<'b>(&mut self, block: &'b Block<'a>) -> CompileResult
@@ -1346,11 +1246,7 @@ impl<'a> CheckCtx<'a> {
         ) -> CompileResult<Block<'a>> {
             trace!(
                 "go: {}",
-                ctx.scopes
-                    .iter()
-                    .map(|s| s.label.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
+                ctx.scopes.iter().map(|s| s.label.to_string()).collect::<Vec<_>>().join(",")
             );
 
             let mut out = vec![];
@@ -1398,7 +1294,7 @@ impl<'a> CheckCtx<'a> {
                                         trace!(
                                             "'{var}' is assigned in the loop '{label}', value is dynamic"
                                         );
-                                        ctx.set_var_value(&var, VarValue::Dyn);
+                                        ctx.set_var_value_dyn(&var);
                                     }
                                 }
 
@@ -1440,11 +1336,7 @@ impl<'a> CheckCtx<'a> {
                     Statement::If(if_) => {
                         fn go_if<'a, V: Visitor>(
                             ctx: &mut CheckCtx<'a>,
-                            If {
-                                cond,
-                                block,
-                                mut else_,
-                            }: If<'a>,
+                            If { cond, block, mut else_ }: If<'a>,
                             depth: usize,
                             visitor: &mut V,
                         ) -> CompileResult<If<'a>> {
@@ -1468,9 +1360,7 @@ impl<'a> CheckCtx<'a> {
                                     }
                                     Else::Tail { block } => {
                                         trace!("else");
-                                        Else::Tail {
-                                            block: go(ctx, depth + 1, &block, visitor)?,
-                                        }
+                                        Else::Tail { block: go(ctx, depth + 1, &block, visitor)? }
                                     }
                                 })
                             } else {
@@ -1502,7 +1392,7 @@ impl<'a> CheckCtx<'a> {
                                 trace!("var decl '{var}'");
                                 ctx.init_var(var, VarValue::Dyn);
                             } else {
-                                ctx.set_var_value(var, VarValue::Dyn);
+                                ctx.set_var_value_dyn(var);
                             }
                         }
 
@@ -1512,7 +1402,7 @@ impl<'a> CheckCtx<'a> {
                             if var == "temp_arr_ptr" {
                                 trace!("var '{var}' has const value {val}");
                             }
-                            ctx.set_var_value(var, VarValue::Const(*val))
+                            ctx.set_var_value_const(var, *val)
                         }
 
                         // evaluate the expression
@@ -1600,11 +1490,7 @@ impl<'a> CheckCtx<'a> {
 
             trace!(
                 "go end: {}",
-                ctx.scopes
-                    .iter()
-                    .map(|s| s.label.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
+                ctx.scopes.iter().map(|s| s.label.to_string()).collect::<Vec<_>>().join(",")
             );
 
             Ok(Block::new(out, block.span()))
@@ -1618,19 +1504,26 @@ impl<'a> CheckCtx<'a> {
     }
 
     fn init_var<'b>(&'b mut self, var: &Ident<'a>, value: VarValue) {
-        self.scopes
-            .last_mut()
-            .expect("no scopes?")
-            .vars
-            .insert(var.clone(), value);
+        self.scopes.last_mut().expect("no scopes?").vars.insert(var.clone(), value);
     }
 
-    fn set_var_value<'b>(&'b mut self, var: &Ident<'a>, value: VarValue) {
+    fn set_var_value_const<'b>(&'b mut self, var: &Ident<'a>, value: Val) {
+        assert!(self.has_var(var), "bug: var {var} not found");
+
+        // for s in self.scopes.iter_mut().rev() {
+        if let Some(old_value) = self.scopes.last_mut().unwrap().vars.get_mut(var) {
+            trace!("var '{var}' exists in this scope, setting it's value to {value}");
+            *old_value = VarValue::Const(value);
+        }
+        // }
+    }
+
+    fn set_var_value_dyn<'b>(&'b mut self, var: &Ident<'a>) {
         assert!(self.has_var(var), "bug: var {var} not found");
 
         for s in self.scopes.iter_mut().rev() {
             if let Some(val) = s.vars.get_mut(var) {
-                *val = value.clone();
+                *val = VarValue::Dyn;
                 return;
             };
         }
@@ -1651,16 +1544,10 @@ impl<'a> CheckCtx<'a> {
                 }
                 Expr::Var(var) => {
                     if !ctx.has_var(var) {
-                        return Err(CompileError::VarNotFound {
-                            var: var.to_string(),
-                        });
+                        return Err(CompileError::VarNotFound { var: var.to_string() });
                     };
                 }
-                Expr::Call {
-                    spread,
-                    f,
-                    args: exprs,
-                } => {
+                Expr::Call { spread, f, args: exprs } => {
                     if depth == 0 && *spread {
                         return Err(CompileError::SpreadTopLevel {});
                     }
@@ -1867,11 +1754,7 @@ impl<'a> CheckCtx<'a> {
     }
 
     fn var_value<'b>(&'b self, var: &Ident<'a>) -> &'b VarValue {
-        self.scopes
-            .iter()
-            .rev()
-            .find_map(|s| s.vars.get(var))
-            .unwrap()
+        self.scopes.iter().rev().find_map(|s| s.vars.get(var)).unwrap()
     }
 }
 
@@ -1924,20 +1807,10 @@ pub trait Visitor {
 impl Visitor for () {}
 
 pub enum Scope2<'a> {
-    Loop {
-        label: Label<'a>,
-        locals: BTreeMap<Ident<'a>, usize>,
-    },
-    IfElse {
-        locals: BTreeMap<Ident<'a>, usize>,
-    },
-    DefOuter {
-        args: BTreeMap<Ident<'a>, usize>,
-        rets: BTreeMap<Ident<'a>, usize>,
-    },
-    DefBody {
-        locals: BTreeMap<Ident<'a>, usize>,
-    },
+    Loop { label: Label<'a>, locals: BTreeMap<Ident<'a>, usize> },
+    IfElse { locals: BTreeMap<Ident<'a>, usize> },
+    DefOuter { args: BTreeMap<Ident<'a>, usize>, rets: BTreeMap<Ident<'a>, usize> },
+    DefBody { locals: BTreeMap<Ident<'a>, usize> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -1985,11 +1858,7 @@ pub enum ScopeLabel<'a> {
 
 impl<'a> ScopeLabel<'a> {
     pub fn as_label(&self) -> Option<&IdentifiedLabel<'a>> {
-        if let Self::Label(v) = self {
-            Some(v)
-        } else {
-            None
-        }
+        if let Self::Label(v) = self { Some(v) } else { None }
     }
 
     pub fn matches_scope_label(&self, other: &ScopeLabel<'_>) -> bool {

@@ -41,9 +41,9 @@ macro_rules! test_cases {
                 let mut vm = Vm::new(code, data);
                 vm.stack = before_stack;
                 vm.memory = before_memory;
-                let mut pc = before_pc;
-                vm.step(&mut pc).unwrap();
-                assert_eq!(pc, after_pc);
+                vm.pc = before_pc;
+                vm.step().unwrap();
+                assert_eq!(vm.pc, after_pc);
                 assert_eq!(vm.stack, after_stack);
                 assert_eq!(vm.memory, after_memory);
             }

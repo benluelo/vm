@@ -1,0 +1,17 @@
+def f() {
+  alloc(1)
+  write1(0, 1)
+  read1(0)
+}
+
+def g() {
+  alloc(1)
+  write1(0, 1)
+  read1(0)
+}
+
+if eq(dlen(), 1) {
+  f()
+  g()
+  write1(1, 2)
+}

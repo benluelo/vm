@@ -84,6 +84,7 @@
                 samply
                 cargo-pgo
                 cargo-criterion
+                hexyl
               ]);
             };
           };

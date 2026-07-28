@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::{self, Display},
 };
 
@@ -69,9 +69,10 @@ impl<'a> Object<'a> {
                 while let Some(a) = it.next() {
                     match a {
                         // deduping push1 doesn't make a binary size difference and just costs more
-                        // cycles only worth it if there is a sequence of
-                        // more than 2 AsmOp::PUSH1(_)
-                        AsmOp::PUSH2(_)
+                        // cycles
+                        // only worth it if there is a sequence of more than 2 AsmOp::PUSH1(_)
+                        AsmOp::PUSH1(_)
+                        | AsmOp::PUSH2(_)
                         | AsmOp::PUSH3(_)
                         | AsmOp::PUSH4(_)
                         | AsmOp::PUSH5(_)
@@ -82,8 +83,8 @@ impl<'a> Object<'a> {
                             while it.next_if_eq(a).is_some() {
                                 info!("deduplicating {a}");
                                 changed = true;
-                                new_ops.push(AsmOp::PUSH0);
-                                new_ops.push(AsmOp::DUP);
+                                // new_ops.push(AsmOp::PUSH0);
+                                new_ops.push(AsmOp::DUP0);
                             }
                         }
                         // AsmOp::PUSHL(cow) => todo!(),
@@ -99,18 +100,15 @@ impl<'a> Object<'a> {
             }
         }
 
-        let label_ptrs = self
-            .0
-            .iter()
-            .map(|(label, asm)| (label.clone(), asm.iter().map(|op| op.size()).sum::<usize>()))
-            .collect::<Vec<_>>()
-            .iter()
-            .scan(0, |acc, (label, size)| {
-                let ptr = *acc as u64;
-                *acc += size;
-                Some((label.clone(), ptr))
-            })
-            .collect::<HashMap<_, _>>();
+        let max_ptr_8 = self.label_ptrs(8).iter().map(|x| *x.1).max().unwrap();
+        let max_ptr_size_8 = bytes_needed_for_number(max_ptr_8);
+        info!("max ptr with ptr size 8 is {max_ptr_8}, width {max_ptr_size_8}");
+
+        let label_ptrs = self.label_ptrs(max_ptr_size_8 as usize);
+
+        let max_ptr = self.label_ptrs(max_ptr_size_8 as usize).iter().map(|x| *x.1).max().unwrap();
+        let max_ptr_size = bytes_needed_for_number(max_ptr);
+        info!("max ptr with size {max_ptr_size} is {max_ptr}, width {max_ptr_size}");
 
         trace!("label_ptrs: {label_ptrs:x?}");
 
@@ -126,7 +124,39 @@ impl<'a> Object<'a> {
                     AsmOp::PUSH6(v) => Op::PUSH6(*v),
                     AsmOp::PUSH7(v) => Op::PUSH7(*v),
                     AsmOp::PUSH8(v) => Op::PUSH8(*v),
-                    AsmOp::PUSHL(label) => Op::PUSH8(label_ptrs[&**label].to_be_bytes()),
+                    AsmOp::PUSHL(label) => {
+                        // dbg!(&label, label_ptrs[&**label]);
+                        let op = match max_ptr_size {
+                            1 => {
+                                Op::PUSH1(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
+                            }
+                            2 => {
+                                Op::PUSH2(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
+                            }
+                            3 => {
+                                Op::PUSH3(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
+                            }
+                            4 => {
+                                Op::PUSH4(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
+                            }
+                            5 => {
+                                Op::PUSH5(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
+                            }
+                            6 => {
+                                Op::PUSH6(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
+                            }
+                            7 => {
+                                Op::PUSH7(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
+                            }
+                            8 => {
+                                Op::PUSH8(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        // dbg!(op)
+                        op
+                    }
                     AsmOp::DUP => Op::DUP,
                     AsmOp::DUP0 => Op::DUP0,
                     AsmOp::SWAP => Op::SWAP,
@@ -188,6 +218,22 @@ impl<'a> Object<'a> {
         }
 
         out
+    }
+
+    fn label_ptrs(&self, label_ptr_size: usize) -> BTreeMap<Cow<'a, str>, u64> {
+        self.0
+            .iter()
+            .map(|(label, asm)| {
+                (label.clone(), asm.iter().map(|op| op.size(label_ptr_size)).sum::<usize>())
+            })
+            .collect::<Vec<_>>()
+            .iter()
+            .scan(0, |acc, (label, size)| {
+                let ptr = *acc as u64;
+                *acc += size;
+                Some((label.clone(), ptr))
+            })
+            .collect::<BTreeMap<_, _>>()
     }
 }
 
@@ -300,15 +346,11 @@ impl<'a> Display for AsmOp<'a> {
             AsmOp::PUSH5([a, b, c, d, e]) => {
                 write!(f, "push5 0x{a:0>2x}{b:0>2x}{c:0>2x}{d:0>2x}{e:0>2x}")
             }
-            AsmOp::PUSH6([a, b, c, d, e, g]) => write!(
-                f,
-                "push6 0x{a:0>2x}{b:0>2x}{c:0>2x}{d:0>2x}{e:0>2x}{g:0>2x}"
-            ),
+            AsmOp::PUSH6([a, b, c, d, e, g]) => {
+                write!(f, "push6 0x{a:0>2x}{b:0>2x}{c:0>2x}{d:0>2x}{e:0>2x}{g:0>2x}")
+            }
             AsmOp::PUSH7([a, b, c, d, e, g, h]) => {
-                write!(
-                    f,
-                    "push7 0x{a:0>2x}{b:0>2x}{c:0>2x}{d:0>2x}{e:0>2x}{g:0>2x}{h:0>2x}"
-                )
+                write!(f, "push7 0x{a:0>2x}{b:0>2x}{c:0>2x}{d:0>2x}{e:0>2x}{g:0>2x}{h:0>2x}")
             }
             AsmOp::PUSH8([a, b, c, d, e, g, h, i]) => {
                 write!(
@@ -447,7 +489,7 @@ impl<'a> fmt::Debug for AsmOp<'a> {
 }
 
 impl<'a> AsmOp<'a> {
-    pub fn size(&self) -> usize {
+    pub fn size(&self, label_ptr_size: usize) -> usize {
         match self {
             AsmOp::PUSH1(_) => 2,
             AsmOp::PUSH2(_) => 3,
@@ -457,7 +499,7 @@ impl<'a> AsmOp<'a> {
             AsmOp::PUSH6(_) => 7,
             AsmOp::PUSH7(_) => 8,
             AsmOp::PUSH8(_) => 9,
-            AsmOp::PUSHL(_) => 9,
+            AsmOp::PUSHL(_) => 1 + label_ptr_size,
             _ => 1,
         }
     }
@@ -474,10 +516,7 @@ fn ref_<'a>() -> impl Parser<'a, &'a str, &'a str, extra::Err<Rich<'a, char>>> {
 }
 
 fn comment<'a>() -> impl Parser<'a, &'a str, (), extra::Err<Rich<'a, char>>> {
-    just(";")
-        .then(any().and_is(newline().not()).repeated())
-        .padded()
-        .ignored()
+    just(";").then(any().and_is(newline().not()).repeated()).padded().ignored()
 }
 
 fn lit<'a, const N: usize>() -> impl Parser<'a, &'a str, [u8; N], extra::Err<Rich<'a, char>>> {
@@ -502,33 +541,15 @@ fn parse_op<'a>() -> impl Parser<'a, &'a str, AsmOp<'a>, extra::Err<Rich<'a, cha
     choice((
         choice((
             keyword("push0").padded().to(AsmOp::PUSH0),
-            keyword("push1")
-                .padded()
-                .ignore_then(lit().map(AsmOp::PUSH1)),
-            keyword("push2")
-                .padded()
-                .ignore_then(lit().map(AsmOp::PUSH2)),
-            keyword("push3")
-                .padded()
-                .ignore_then(lit().map(AsmOp::PUSH3)),
-            keyword("push4")
-                .padded()
-                .ignore_then(lit().map(AsmOp::PUSH4)),
-            keyword("push5")
-                .padded()
-                .ignore_then(lit().map(AsmOp::PUSH5)),
-            keyword("push6")
-                .padded()
-                .ignore_then(lit().map(AsmOp::PUSH6)),
-            keyword("push7")
-                .padded()
-                .ignore_then(lit().map(AsmOp::PUSH7)),
-            keyword("push8")
-                .padded()
-                .ignore_then(lit().map(AsmOp::PUSH8)),
-            keyword("pushl")
-                .padded()
-                .ignore_then(ref_().map(|s| AsmOp::PUSHL(s.into()))),
+            keyword("push1").padded().ignore_then(lit().map(AsmOp::PUSH1)),
+            keyword("push2").padded().ignore_then(lit().map(AsmOp::PUSH2)),
+            keyword("push3").padded().ignore_then(lit().map(AsmOp::PUSH3)),
+            keyword("push4").padded().ignore_then(lit().map(AsmOp::PUSH4)),
+            keyword("push5").padded().ignore_then(lit().map(AsmOp::PUSH5)),
+            keyword("push6").padded().ignore_then(lit().map(AsmOp::PUSH6)),
+            keyword("push7").padded().ignore_then(lit().map(AsmOp::PUSH7)),
+            keyword("push8").padded().ignore_then(lit().map(AsmOp::PUSH8)),
+            keyword("pushl").padded().ignore_then(ref_().map(|s| AsmOp::PUSHL(s.into()))),
         )),
         keyword("dup").padded().to(AsmOp::DUP),
         keyword("swap").padded().to(AsmOp::SWAP),
@@ -592,6 +613,7 @@ fn parse_op<'a>() -> impl Parser<'a, &'a str, AsmOp<'a>, extra::Err<Rich<'a, cha
     ))
     .padded()
     .padded_by(comment().repeated())
+    .padded()
 }
 
 pub fn parse_asm<'a>() -> impl Parser<'a, &'a str, Object<'a>, extra::Err<Rich<'a, char>>> {
@@ -613,6 +635,20 @@ pub fn parse_asm<'a>() -> impl Parser<'a, &'a str, Object<'a>, extra::Err<Rich<'
 
             Object(out.into_iter().map(|(k, (_, v))| (k.into(), v)).collect())
         })
+        .padded_by(comment().repeated())
+}
+
+fn bytes_needed_for_number(n: u64) -> u64 {
+    match n {
+        0..=0xFF => 1,
+        0x01_00..=0xFF_FF => 2,
+        0x01_00_00..=0xFF_FF_FF => 3,
+        0x01_00_00_00..=0xFF_FF_FF_FF => 4,
+        0x01_00_00_00_00..=0xFF_FF_FF_FF_FF => 5,
+        0x01_00_00_00_00_00..=0xFF_FF_FF_FF_FF_FF => 6,
+        0x01_00_00_00_00_00_00..=0xFF_FF_FF_FF_FF_FF_FF => 7,
+        0x01_00_00_00_00_00_00_00..=0xFF_FF_FF_FF_FF_FF_FF_FF => 8,
+    }
 }
 
 #[cfg(test)]
@@ -644,10 +680,7 @@ mod tests {
             assert_eq!(lit::<1>().parse(i).unwrap(), o);
         }
 
-        for (i, o) in [
-            ("0x010203ff", [1, 2, 3, 0xff]),
-            (" 0x00000000 ", [0, 0, 0, 0]),
-        ] {
+        for (i, o) in [("0x010203ff", [1, 2, 3, 0xff]), (" 0x00000000 ", [0, 0, 0, 0])] {
             assert_eq!(lit::<4>().parse(i).unwrap(), o);
         }
     }

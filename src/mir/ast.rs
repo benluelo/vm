@@ -25,17 +25,11 @@ impl<'a> Eq for Ident<'a> {}
 
 impl<'a> Ident<'a> {
     pub fn new_spanned(spanned: Spanned<impl Into<Cow<'a, str>>>) -> Self {
-        Self(Spanned {
-            inner: spanned.inner.into(),
-            span: spanned.span,
-        })
+        Self(Spanned { inner: spanned.inner.into(), span: spanned.span })
     }
 
     pub fn new(ident: impl Into<Cow<'a, str>>) -> Self {
-        Self::new_spanned(Spanned {
-            inner: ident.into(),
-            span: (0..0).into(),
-        })
+        Self::new_spanned(Spanned { inner: ident.into(), span: (0..0).into() })
     }
 }
 
@@ -96,10 +90,7 @@ impl Val {
     }
 
     pub fn new(ident: u64) -> Self {
-        Self::new_spanned(Spanned {
-            inner: ident,
-            span: (0..0).into(),
-        })
+        Self::new_spanned(Spanned { inner: ident, span: (0..0).into() })
     }
 }
 
@@ -124,10 +115,7 @@ impl<'a> Label<'a> {
     }
 
     pub fn new(label: &'a str) -> Self {
-        Self(Spanned {
-            inner: label,
-            span: (0..0).into(),
-        })
+        Self(Spanned { inner: label, span: (0..0).into() })
     }
 
     pub fn span(&self) -> SimpleSpan {
@@ -180,10 +168,7 @@ impl<'a> Block<'a> {
     }
 
     pub fn new(statements: Vec<Statement<'a>>, span: impl Into<SimpleSpan>) -> Self {
-        Self(Spanned {
-            inner: statements,
-            span: span.into(),
-        })
+        Self(Spanned { inner: statements, span: span.into() })
     }
 
     pub fn len(&self) -> usize {
@@ -239,11 +224,22 @@ pub enum Statement<'a> {
 pub enum Expr<'a> {
     Val(Val),
     Var(Ident<'a>),
-    Call {
-        spread: bool,
-        f: Spanned<BuiltinOrDef<'a>>,
-        args: Vec<Expr<'a>>,
-    },
+    Call { spread: bool, f: Spanned<BuiltinOrDef<'a>>, args: Vec<Expr<'a>> },
+}
+
+impl<'a> Expr<'a> {
+    pub fn val(val: u64, span: SimpleSpan) -> Expr<'a> {
+        Expr::Val(Val::new_spanned(Spanned { inner: val, span }))
+    }
+
+    // pub fn call(f: impl Into<BuiltinOrDef<'a>>, span: SimpleSpan) -> Expr<'a> {
+    //     Expr::Val(Val::new_spanned(Spanned { inner: f.into(), span }))
+    // }
+
+    pub fn builtin(f: Builtin, span: SimpleSpan, args: Vec<Expr<'a>>) -> Expr<'a> {
+        // builtins only ever return 0 or 1 value, can never spread
+        Expr::Call { spread: false, f: Spanned { inner: BuiltinOrDef::Builtin(f), span }, args }
+    }
 }
 
 impl<'a> fmt::Debug for Expr<'a> {
@@ -263,11 +259,7 @@ impl<'a> fmt::Debug for Expr<'a> {
                     write!(f, "{var:?}")
                 }
             }
-            Self::Call {
-                spread,
-                f: f_,
-                args,
-            } => f
+            Self::Call { spread, f: f_, args } => f
                 .debug_struct("Call")
                 .field("spread", spread)
                 // TODO: Include the span here in the alternate format (probably with a newtype for
@@ -285,16 +277,8 @@ impl<'a> PartialEq for Expr<'a> {
             (Self::Val(l), Self::Val(r)) => l == r,
             (Self::Var(l), Self::Var(r)) => l == r,
             (
-                Self::Call {
-                    spread: l_spread,
-                    f: l_f,
-                    args: l_args,
-                },
-                Self::Call {
-                    spread: r_spread,
-                    f: r_f,
-                    args: r_args,
-                },
+                Self::Call { spread: l_spread, f: l_f, args: l_args },
+                Self::Call { spread: r_spread, f: r_f, args: r_args },
             ) => l_spread == r_spread && l_f.inner == r_f.inner && l_args == r_args,
             _ => false,
         }
@@ -307,11 +291,7 @@ impl Expr<'_> {
             Expr::Val(val) => val.0.span,
             Expr::Var(var) => var.0.span,
             // TODO: Include the spread and args spans
-            Expr::Call {
-                spread: _,
-                f,
-                args: _,
-            } => f.span,
+            Expr::Call { spread: _, f, args: _ } => f.span,
         }
     }
 
@@ -329,11 +309,7 @@ impl<'a> fmt::Display for Expr<'a> {
         match self {
             Expr::Val(val) => f.write_fmt(format_args!("0x{val:x}")),
             Expr::Var(var) => f.write_fmt(format_args!("{var}")),
-            Expr::Call {
-                spread,
-                f: call,
-                args,
-            } => {
+            Expr::Call { spread, f: call, args } => {
                 if *spread {
                     f.write_str("...")?;
                 }
