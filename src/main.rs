@@ -1097,8 +1097,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let [top, middle, bottom] = frame.area().layout(
         &Layout::vertical([
             Constraint::Percentage(50),
-            Constraint::Percentage(40),
-            Constraint::Percentage(10),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
         ])
         .spacing(0),
     );
@@ -1116,7 +1116,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     ListItem::new(Span::from(format!("{op}")).style(op.style().not_underlined()))
                 }),
         )
-        .block(Block::bordered().title("ops")),
+        .block(Block::bordered().title("ops"))
+        .style(BASE_STYLE),
         left,
     );
 
@@ -1207,7 +1208,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Span::from((&app.vm.memory.get(range.end..).unwrap_or_default()).encode_hex()),
         ]))
         .wrap(Wrap { trim: false })
-        .block(Block::bordered().title("memory")),
+        .block(Block::bordered().title("memory"))
+        .style(BASE_STYLE),
         middle,
     );
 
@@ -1221,8 +1223,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         // | op
         let pushn = |n| {
             vec![
-                ((app.vm.pc - (n + 1))..(app.vm.pc - n), PUSH_STYLE.bold()),
-                ((app.vm.pc - n)..(app.vm.pc), PUSH_STYLE.dim()),
+                ((app.vm.pc - (n + 1))..(app.vm.pc - n), PUSH_STYLE),
+                ((app.vm.pc - n)..(app.vm.pc), PUSH_STYLE_BZ),
             ]
         };
 
@@ -1292,6 +1294,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ))
         .wrap(Wrap { trim: false })
         .block(Block::bordered().title(format!("code (pc: {}) ", app.vm.pc)))
+        .style(BASE_STYLE)
         .scroll((app.code_scroll as u16, 0)),
         bottom,
     );
@@ -1331,7 +1334,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     ]))
                 }),
         )
-        .block(Block::bordered().title("stack")),
+        .block(Block::bordered().title("stack"))
+        .style(BASE_STYLE),
         right,
     );
 }
@@ -1474,25 +1478,25 @@ impl FullOp {
     }
 }
 
-const PUSH_STYLE: Style = Style::new().fg(Color::Cyan).underlined();
-const STACK_STYLE: Style = Style::new().fg(Color::Green).underlined();
-const ARITH_STYLE: Style = Style::new().fg(Color::Yellow).underlined();
-const MEM_STYLE: Style = Style::new().fg(Color::Magenta).underlined();
-const EXIT_STYLE: Style = Style::new().fg(Color::Red).underlined();
+const FOREGROUND: Color = Color::from_u32(0xF6F4F4);
+const BACKGROUND: Color = Color::from_u32(0x181210);
 
-const JUMP_STYLE: Style = Style::new().fg(Color::Blue).underlined();
-const DST_OK_STYLE: Style = Style::new().fg(Color::Green).underlined();
-const DST_NOK_STYLE: Style = Style::new().fg(Color::Red).underlined();
+const BASE_STYLE: Style = Style::new().fg(FOREGROUND).bg(BACKGROUND);
+
+// blue
+const PUSH_STYLE: Style = Style::new().fg(Color::from_u32(0x0FBBFF));
+const PUSH_STYLE_BZ: Style = Style::new().fg(Color::from_u32(0x009DDB));
+// green
+const STACK_STYLE: Style = Style::new().fg(Color::from_u32(0x5AC700));
+const ARITH_STYLE: Style = Style::new().fg(Color::from_u32(0xFFD70F));
+const MEM_STYLE: Style = Style::new().fg(Color::from_u32(0xFF9100));
+const EXIT_STYLE: Style = Style::new().fg(Color::from_u32(0xF53D3D));
+const JUMP_STYLE: Style = Style::new().fg(Color::from_u32(0xF514EE));
+const DST_OK_STYLE: Style = Style::new().underlined();
+const DST_NOK_STYLE: Style = Style::new().crossed_out();
 
 impl fmt::Display for FullOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        #[inline(always)]
-        fn u64_from_bytes(arr: &[u8]) -> u64 {
-            let mut v = [0; 8];
-            v[8 - arr.len()..].copy_from_slice(arr);
-            u64::from_be_bytes(v)
-        }
-
         match self {
             Self::PUSH0 => f.write_str("PUSH0"),
             Self::PUSH1(n) => f.write_fmt(format_args!("PUSH1 0x{n:x}")),
