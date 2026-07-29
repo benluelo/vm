@@ -1492,8 +1492,8 @@ const ARITH_STYLE: Style = Style::new().fg(Color::from_u32(0xFFD70F));
 const MEM_STYLE: Style = Style::new().fg(Color::from_u32(0xFF9100));
 const EXIT_STYLE: Style = Style::new().fg(Color::from_u32(0xF53D3D));
 const JUMP_STYLE: Style = Style::new().fg(Color::from_u32(0xF514EE));
-const DST_OK_STYLE: Style = Style::new().underlined();
-const DST_NOK_STYLE: Style = Style::new().crossed_out();
+const DST_OK_STYLE: Style = Style::new().underlined().not_dim();
+const DST_NOK_STYLE: Style = Style::new().crossed_out().not_dim();
 
 impl fmt::Display for FullOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
