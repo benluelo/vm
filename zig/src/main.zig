@@ -90,9 +90,18 @@ pub const Vm = struct {
         }
     }
 
+    inline fn pop(self: *Vm) !u64 {
+        if (self.stack.items.len == 0) {
+            return error.StackEmpty;
+        } else {
+            self.stack.items.len -= 1;
+            return self.stack.items[self.stack.items.len];
+        }
+    }
+
     inline fn write_n(self: *Vm, comptime n: u4) !void {
-        const value = self.stack.pop() orelse return error.StackEmpty;
-        const ptr = try asPtr(self.stack.pop() orelse return error.StackEmpty);
+        const value = try self.pop();
+        const ptr = try asPtr(try self.pop());
         var bytes: [8]u8 = undefined;
         std.mem.writeInt(u64, &bytes, value, .big);
         try checkBounds(u8, self.memory.items, ptr + n);
@@ -115,16 +124,18 @@ pub const Vm = struct {
         top.* = u64_from_bytes(res);
     }
 
-    inline fn binop(self: *Vm, f: fn (u64, u64) callconv(.@"inline") u64) !void {
+    inline fn binop(self: *Vm, comptime op: fn (u64, u64) callconv(.@"inline") u64) !void {
         const len = self.stack.items.len;
 
         if (len < 2) {
             return error.StackEmpty;
         }
 
-        const a = self.stack.pop().?;
+        const lhs = self.stack.items[len - 2];
+        const rhs = self.stack.items[len - 1];
 
-        self.stack.items[len - 2] = f(self.stack.items[len - 2], a);
+        self.stack.items.len = len - 1;
+        self.stack.items[len - 2] = op(lhs, rhs);
     }
 
     pub fn step(self: *Vm) !StepResult {
@@ -208,7 +219,7 @@ pub const Vm = struct {
             },
             Op.SWAP => {
                 //             std.log.info("SWAP", .{});
-                const idx = try tryAdd(try asPtr(self.stack.pop() orelse return error.EmptyStack), 1);
+                const idx = try tryAdd(try asPtr(try self.pop()), 1);
                 const len = self.stack.items.len;
                 if (len < idx) {
                     return error.InvalidStackIdx;
@@ -225,11 +236,11 @@ pub const Vm = struct {
             },
             Op.POP => {
                 //             std.log.info("POP", .{});
-                _ = self.stack.pop() orelse return error.EmptyStack;
+                _ = try self.pop();
             },
             Op.ALLOC => {
                 //             std.log.info("ALLOC", .{});
-                const size = self.stack.pop() orelse return error.EmptyStack;
+                const size = try self.pop();
                 try self.memory.appendNTimes(self.gpa, 0, size);
             },
 
@@ -388,7 +399,7 @@ pub const Vm = struct {
             },
             Op.MOD => {
                 //             std.log.info("MOD", .{});
-                const a = self.stack.pop() orelse return error.StackEmpty;
+                const a = try self.pop();
                 const b = self.getMut(0) orelse return error.StackEmpty;
                 b.* = try Op.mod(b.*, a);
                 //             std.log.info("mod", .{});
@@ -443,14 +454,14 @@ pub const Vm = struct {
 
             Op.JUMP => {
                 //             std.log.info("JUMP", .{});
-                const dst = self.stack.pop() orelse return error.StackEmpty;
+                const dst = try self.pop();
                 //             // std.log.info("dst: {}", .{dst});
                 self.pc = try asPtr(dst);
             },
             Op.JNZ => {
                 //             std.log.info("JNZ", .{});
-                const dst = self.stack.pop() orelse return error.StackEmpty;
-                const value = self.stack.pop() orelse return error.StackEmpty;
+                const dst = try self.pop();
+                const value = try self.pop();
                 if (value != 0) {
                     self.pc = try asPtr(dst);
                 }
@@ -464,8 +475,8 @@ pub const Vm = struct {
             },
             Op.EXIT => {
                 //             std.log.info("EXIT", .{});
-                const len = self.stack.pop() orelse return error.StackEmpty;
-                const ptr = self.stack.pop() orelse return error.StackEmpty;
+                const len = try self.pop();
+                const ptr = try self.pop();
 
                 try checkBounds(u8, self.memory.items, ptr + len);
 
@@ -473,7 +484,7 @@ pub const Vm = struct {
             },
             Op.TRAP => {
                 //             std.log.info("TRAP", .{});
-                const value = self.stack.pop() orelse return error.StackEmpty;
+                const value = try self.pop();
                 return StepResult{ .trap = value };
             },
             else => return error.UnknownOp,

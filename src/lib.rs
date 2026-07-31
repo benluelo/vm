@@ -152,12 +152,21 @@ impl<H: Hook> Vm<H> {
             ($op:ident, $n:literal) => {{
                 trace!("write{}", $n);
                 hook!($op);
-                let value = pop!();
-                let ptr = as_ptr!(pop!());
-                trace!("{value:x} @ {ptr:x}");
-                let bytes = value.to_be_bytes();
-                ok_or!(self.memory.get_mut(ptr..ptr + $n), Error::<H>::Segfault)
-                    .copy_from_slice(&bytes[8 - $n..]);
+                let len = self.stack.len();
+                if len < 2 {
+                    return Err(Error::<H>::StackEmpty);
+                };
+                unsafe {
+                    let value_idx = len.unchecked_sub(1);
+                    let ptr_idx = len.unchecked_sub(2);
+                    let value = *self.stack.get_unchecked(value_idx);
+                    let ptr = as_ptr!((*self.stack.get_unchecked(ptr_idx)));
+                    self.stack.set_len(ptr_idx);
+                    trace!("{value:x} @ {ptr:x}");
+                    let bytes = value.to_be_bytes();
+                    ok_or!(self.memory.get_mut(ptr..ptr + $n), Error::<H>::Segfault)
+                        .copy_from_slice(&bytes[8 - $n..]);
+                }
             }};
         }
 
