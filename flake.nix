@@ -85,6 +85,8 @@
                 cargo-pgo
                 cargo-criterion
                 hexyl
+                zig
+                zls
               ]);
             };
           };
