@@ -82,9 +82,9 @@ pub const Vm = struct {
         };
     }
 
-    inline fn getMut(self: Vm, n: usize) ?*u64 {
+    inline fn getMut(self: Vm, n: usize) !*u64 {
         if (self.stack.items.len < n) {
-            return null;
+            return error.EmptyStack;
         } else {
             return &self.stack.items[(self.stack.items.len - 1) - n];
         }
@@ -99,6 +99,13 @@ pub const Vm = struct {
         }
     }
 
+    inline fn push(self: *Vm, value: u64) !void {
+        if (self.stack.items.len == self.stack.capacity) {
+            try self.stack.ensureUnusedCapacity(self.gpa, 1);
+        }
+        self.stack.appendAssumeCapacity(value);
+    }
+
     inline fn write_n(self: *Vm, comptime n: u4) !void {
         const value = try self.pop();
         const ptr = try asPtr(try self.pop());
@@ -109,7 +116,7 @@ pub const Vm = struct {
     }
 
     inline fn read_n(self: *Vm, comptime n: u4) !void {
-        const top: *u64 = self.getMut(0) orelse return error.StackEmpty;
+        const top: *u64 = try self.getMut(0);
         const ptr = try asPtr(top.*);
         try checkBounds(u8, self.memory.items, ptr + n);
         const res = self.memory.items[ptr..(ptr + n)];
@@ -117,7 +124,7 @@ pub const Vm = struct {
     }
 
     inline fn dread_n(self: *Vm, comptime n: u4) !void {
-        const top = self.getMut(0) orelse return error.StackEmpty;
+        const top = try self.getMut(0);
         const ptr = try asPtr(top.*);
         try checkBounds(u8, self.data, ptr + n);
         const res = self.data[ptr..(ptr + n)];
@@ -140,7 +147,7 @@ pub const Vm = struct {
 
     pub fn step(self: *Vm) !StepResult {
         if (self.pc >= self.code.len) {
-            return error.Eof;
+            return .eof;
         }
 
         //     // std.log.info("pc: {}", .{self.pc});
@@ -155,67 +162,67 @@ pub const Vm = struct {
         switch (op) {
             Op.PUSH0 => {
                 //             std.log.info("PUSH0", .{});
-                try self.stack.append(self.gpa, 0);
+                try self.push(0);
             },
             Op.PUSH1 => {
                 //             std.log.info("PUSH1", .{});
                 if (self.pc + 1 > self.code.len) return error.Eof;
-                try self.stack.append(self.gpa, u64_from_bytes(self.code[self.pc..][0..1]));
+                try self.push(u64_from_bytes(self.code[self.pc..][0..1]));
                 self.pc += 1;
             },
             Op.PUSH2 => {
                 //             std.log.info("PUSH2", .{});
                 if (self.pc + 2 > self.code.len) return error.Eof;
-                try self.stack.append(self.gpa, u64_from_bytes(self.code[self.pc..][0..2]));
+                try self.push(u64_from_bytes(self.code[self.pc..][0..2]));
                 self.pc += 2;
             },
             Op.PUSH3 => {
                 //             std.log.info("PUSH3", .{});
                 if (self.pc + 3 > self.code.len) return error.Eof;
-                try self.stack.append(self.gpa, u64_from_bytes(self.code[self.pc..][0..3]));
+                try self.push(u64_from_bytes(self.code[self.pc..][0..3]));
                 self.pc += 3;
             },
             Op.PUSH4 => {
                 //             std.log.info("PUSH4", .{});
                 if (self.pc + 4 > self.code.len) return error.Eof;
-                try self.stack.append(self.gpa, u64_from_bytes(self.code[self.pc..][0..4]));
+                try self.push(u64_from_bytes(self.code[self.pc..][0..4]));
                 self.pc += 4;
             },
             Op.PUSH5 => {
                 //             std.log.info("PUSH5", .{});
                 if (self.pc + 5 > self.code.len) return error.Eof;
-                try self.stack.append(self.gpa, u64_from_bytes(self.code[self.pc..][0..5]));
+                try self.push(u64_from_bytes(self.code[self.pc..][0..5]));
                 self.pc += 5;
             },
             Op.PUSH6 => {
                 //             std.log.info("PUSH6", .{});
                 if (self.pc + 6 > self.code.len) return error.Eof;
-                try self.stack.append(self.gpa, u64_from_bytes(self.code[self.pc..][0..6]));
+                try self.push(u64_from_bytes(self.code[self.pc..][0..6]));
                 self.pc += 6;
             },
             Op.PUSH7 => {
                 //             std.log.info("PUSH7", .{});
                 if (self.pc + 7 > self.code.len) return error.Eof;
-                try self.stack.append(self.gpa, u64_from_bytes(self.code[self.pc..][0..7]));
+                try self.push(u64_from_bytes(self.code[self.pc..][0..7]));
                 self.pc += 7;
             },
             Op.PUSH8 => {
                 //             std.log.info("PUSH8", .{});
                 if (self.pc + 8 > self.code.len) return error.Eof;
-                try self.stack.append(self.gpa, u64_from_bytes(self.code[self.pc..][0..8]));
+                try self.push(u64_from_bytes(self.code[self.pc..][0..8]));
                 self.pc += 8;
             },
             Op.DUP => {
                 //             std.log.info("DUP", .{});
-                const idx = self.getMut(0) orelse return error.EmptyStack;
+                const idx = try self.getMut(0);
                 const stack_idx = try tryAdd(try asPtr(idx.*), 1);
 
-                idx.* = (self.getMut(stack_idx) orelse return error.EmptyStack).*;
+                idx.* = (try self.getMut(stack_idx)).*;
             },
             Op.DUP0 => {
                 //             std.log.info("DUP0", .{});
 
-                try self.stack.append(self.gpa, (self.getMut(0) orelse return error.EmptyStack).*);
+                try self.push((try self.getMut(0)).*);
             },
             Op.SWAP => {
                 //             std.log.info("SWAP", .{});
@@ -365,7 +372,7 @@ pub const Vm = struct {
 
             Op.DLEN => {
                 //             std.log.info("DLEN", .{});
-                try self.stack.append(self.gpa, @intCast(self.data.len));
+                try self.push(@intCast(self.data.len));
             },
 
             Op.ADD => {
@@ -400,7 +407,7 @@ pub const Vm = struct {
             Op.MOD => {
                 //             std.log.info("MOD", .{});
                 const a = try self.pop();
-                const b = self.getMut(0) orelse return error.StackEmpty;
+                const b = try self.getMut(0);
                 b.* = try Op.mod(b.*, a);
                 //             std.log.info("mod", .{});
             },
@@ -422,7 +429,7 @@ pub const Vm = struct {
             },
             Op.NOT => {
                 //             std.log.info("NOT", .{});
-                const a = self.getMut(0) orelse return error.StackEmpty;
+                const a = try self.getMut(0);
                 a.* = Op.not(a.*);
                 //             std.log.info("not", .{});
             },
@@ -436,7 +443,7 @@ pub const Vm = struct {
             },
             Op.NEG => {
                 //             std.log.info("NEG", .{});
-                const a = self.getMut(0) orelse return error.StackEmpty;
+                const a = try self.getMut(0);
                 a.* = Op.neg(a.*);
             },
             Op.OR => {
@@ -468,7 +475,7 @@ pub const Vm = struct {
             },
             Op.CALL => {
                 //             std.log.info("CALL", .{});
-                const top = self.getMut(0) orelse return error.StackEmpty;
+                const top = try self.getMut(0);
                 const address = try asPtr(top.*);
                 top.* = @intCast(self.pc);
                 self.pc = address;
