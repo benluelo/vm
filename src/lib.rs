@@ -507,6 +507,7 @@ impl Hook for CycleCountHook {
         Ok(())
     }
 
+    #[inline(always)]
     fn cycle(&mut self, _: usize, _: Op, _: &[u64], _: &[u8]) -> Result<(), Self::Error> {
         self.cycles += 1;
         Ok(())

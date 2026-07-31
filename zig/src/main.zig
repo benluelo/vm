@@ -82,7 +82,7 @@ pub const Vm = struct {
         };
     }
 
-    fn getMut(self: Vm, n: usize) ?*u64 {
+    inline fn getMut(self: Vm, n: usize) ?*u64 {
         if (self.stack.items.len < n) {
             return null;
         } else {
@@ -90,7 +90,7 @@ pub const Vm = struct {
         }
     }
 
-    fn write_n(self: *Vm, comptime n: u4) !void {
+    inline fn write_n(self: *Vm, comptime n: u4) !void {
         const value = self.stack.pop() orelse return error.StackEmpty;
         const ptr = try asPtr(self.stack.pop() orelse return error.StackEmpty);
         var bytes: [8]u8 = undefined;
@@ -99,7 +99,7 @@ pub const Vm = struct {
         @memcpy(self.memory.items[ptr..(ptr + n)], bytes[8 - n ..]);
     }
 
-    fn read_n(self: *Vm, comptime n: u4) !void {
+    inline fn read_n(self: *Vm, comptime n: u4) !void {
         const top: *u64 = self.getMut(0) orelse return error.StackEmpty;
         const ptr = try asPtr(top.*);
         try checkBounds(u8, self.memory.items, ptr + n);
@@ -107,7 +107,7 @@ pub const Vm = struct {
         top.* = u64_from_bytes(res);
     }
 
-    fn dread_n(self: *Vm, comptime n: u4) !void {
+    inline fn dread_n(self: *Vm, comptime n: u4) !void {
         const top = self.getMut(0) orelse return error.StackEmpty;
         const ptr = try asPtr(top.*);
         try checkBounds(u8, self.data, ptr + n);
@@ -115,7 +115,7 @@ pub const Vm = struct {
         top.* = u64_from_bytes(res);
     }
 
-    fn binop(self: *Vm, f: fn (u64, u64) u64) !void {
+    inline fn binop(self: *Vm, f: fn (u64, u64) callconv(.@"inline") u64) !void {
         const len = self.stack.items.len;
 
         if (len < 2) {
@@ -727,19 +727,19 @@ pub const Op = struct {
     /// | `[..., code]` | `<program terminates>` |
     pub const TRAP: u8 = 0xa5;
 
-    pub fn add(a: u64, b: u64) u64 {
+    pub inline fn add(a: u64, b: u64) u64 {
         return a +% b;
     }
 
-    pub fn sub(a: u64, b: u64) u64 {
+    pub inline fn sub(a: u64, b: u64) u64 {
         return a -% b;
     }
 
-    pub fn mul(a: u64, b: u64) u64 {
+    pub inline fn mul(a: u64, b: u64) u64 {
         return a *% b;
     }
 
-    pub fn div(a: u64, b: u64) !u64 {
+    pub inline fn div(a: u64, b: u64) !u64 {
         if (b == 0) {
             return error.DivideByZero;
         } else {
@@ -747,27 +747,27 @@ pub const Op = struct {
         }
     }
 
-    pub fn not(a: u64) u64 {
+    pub inline fn not(a: u64) u64 {
         return @intFromBool(a == 0);
     }
 
-    pub fn gt(a: u64, b: u64) u64 {
+    pub inline fn gt(a: u64, b: u64) u64 {
         return @intFromBool(a > b);
     }
 
-    pub fn lt(a: u64, b: u64) u64 {
+    pub inline fn lt(a: u64, b: u64) u64 {
         return @intFromBool(a < b);
     }
 
-    pub fn neq(a: u64, b: u64) u64 {
+    pub inline fn neq(a: u64, b: u64) u64 {
         return @intFromBool(a != b);
     }
 
-    pub fn eq(a: u64, b: u64) u64 {
+    pub inline fn eq(a: u64, b: u64) u64 {
         return @intFromBool(a == b);
     }
 
-    pub fn mod(a: u64, b: u64) !u64 {
+    pub inline fn mod(a: u64, b: u64) !u64 {
         if (b == 0) {
             return error.DivideByZero;
         } else {
@@ -775,23 +775,23 @@ pub const Op = struct {
         }
     }
 
-    pub fn and_(a: u64, b: u64) u64 {
+    pub inline fn and_(a: u64, b: u64) u64 {
         return a & b;
     }
 
-    pub fn xor(a: u64, b: u64) u64 {
+    pub inline fn xor(a: u64, b: u64) u64 {
         return a ^ b;
     }
 
-    pub fn or_(a: u64, b: u64) u64 {
+    pub inline fn or_(a: u64, b: u64) u64 {
         return a | b;
     }
 
-    pub fn neg(a: u64) u64 {
+    pub inline fn neg(a: u64) u64 {
         return ~a;
     }
 
-    pub fn expmod(a: u64, b: u64) u64 {
+    pub inline fn expmod(a: u64, b: u64) u64 {
         if (b == 0) {
             return 1;
         }
@@ -813,16 +813,16 @@ pub const Op = struct {
         }
     }
 
-    pub fn shr(a: u64, shift: u64) u64 {
+    pub inline fn shr(a: u64, shift: u64) u64 {
         return std.math.shr(u64, a, shift);
     }
 
-    pub fn shl(a: u64, shift: u64) u64 {
+    pub inline fn shl(a: u64, shift: u64) u64 {
         return std.math.shl(u64, a, shift);
     }
 };
 
-fn u64_from_bytes(arr: []const u8) u64 {
+inline fn u64_from_bytes(arr: []const u8) u64 {
     // // std.log.info("arr: {any}", .{arr});
     var v: [8]u8 = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 };
     // // std.log.info("arr.len: {}", .{arr.len});
@@ -839,7 +839,7 @@ const StepResultTag = enum {
 };
 const StepResult = union(StepResultTag) { stepped: void, eof: void, trap: u64, exit: []const u8 };
 
-fn asPtr(val: u64) !usize {
+inline fn asPtr(val: u64) !usize {
     if (val > std.math.maxInt(usize)) {
         return error.InvalidStackValue;
     } else {
@@ -847,7 +847,7 @@ fn asPtr(val: u64) !usize {
     }
 }
 
-fn tryAdd(val: usize, n: usize) !usize {
+inline fn tryAdd(val: usize, n: usize) !usize {
     const res, const overflow = @addWithOverflow(val, n);
 
     if (overflow != 0) {
@@ -857,7 +857,7 @@ fn tryAdd(val: usize, n: usize) !usize {
     return res;
 }
 
-fn trySub(val: usize, n: usize) ?usize {
+inline fn trySub(val: usize, n: usize) ?usize {
     const res, const overflow = @subWithOverflow(val, n);
 
     if (overflow != 0) {
@@ -867,7 +867,7 @@ fn trySub(val: usize, n: usize) ?usize {
     return res;
 }
 
-fn checkBounds(comptime T: type, list: []const T, idx: usize) !void {
+inline fn checkBounds(comptime T: type, list: []const T, idx: usize) !void {
     if (list.len < idx) {
         return error.Segfault;
     }
