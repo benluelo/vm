@@ -30,11 +30,10 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
 
-    var res: StepResult = undefined;
     var cycles: u64 = 0;
 
     while (true) {
-        res = try vm.step();
+        const res = try vm.step();
 
         cycles += 1;
 
@@ -42,6 +41,7 @@ pub fn main(init: std.process.Init) !void {
             .stepped => {
                 // try stdout_writer.print("stepped\n", .{});
                 // try stdout_writer.flush();
+                // continue;
             },
             .eof => {
                 try stdout_writer.print("eof\n", .{});
@@ -92,7 +92,7 @@ pub const Vm = struct {
 
     inline fn pop(self: *Vm) !u64 {
         if (self.stack.items.len == 0) {
-            return error.StackEmpty;
+            return Error.StackEmpty;
         } else {
             self.stack.items.len -= 1;
             return self.stack.items[self.stack.items.len];
@@ -135,7 +135,7 @@ pub const Vm = struct {
         const len = self.stack.items.len;
 
         if (len < 2) {
-            return error.StackEmpty;
+            return Error.StackEmpty;
         }
 
         const lhs = self.stack.items[len - 2];
@@ -166,49 +166,49 @@ pub const Vm = struct {
             },
             Op.PUSH1 => {
                 //             std.log.info("PUSH1", .{});
-                if (self.pc + 1 > self.code.len) return error.Eof;
+                if (self.pc + 1 > self.code.len) return Error.Eof;
                 try self.push(u64_from_bytes(self.code[self.pc..][0..1]));
                 self.pc += 1;
             },
             Op.PUSH2 => {
                 //             std.log.info("PUSH2", .{});
-                if (self.pc + 2 > self.code.len) return error.Eof;
+                if (self.pc + 2 > self.code.len) return Error.Eof;
                 try self.push(u64_from_bytes(self.code[self.pc..][0..2]));
                 self.pc += 2;
             },
             Op.PUSH3 => {
                 //             std.log.info("PUSH3", .{});
-                if (self.pc + 3 > self.code.len) return error.Eof;
+                if (self.pc + 3 > self.code.len) return Error.Eof;
                 try self.push(u64_from_bytes(self.code[self.pc..][0..3]));
                 self.pc += 3;
             },
             Op.PUSH4 => {
                 //             std.log.info("PUSH4", .{});
-                if (self.pc + 4 > self.code.len) return error.Eof;
+                if (self.pc + 4 > self.code.len) return Error.Eof;
                 try self.push(u64_from_bytes(self.code[self.pc..][0..4]));
                 self.pc += 4;
             },
             Op.PUSH5 => {
                 //             std.log.info("PUSH5", .{});
-                if (self.pc + 5 > self.code.len) return error.Eof;
+                if (self.pc + 5 > self.code.len) return Error.Eof;
                 try self.push(u64_from_bytes(self.code[self.pc..][0..5]));
                 self.pc += 5;
             },
             Op.PUSH6 => {
                 //             std.log.info("PUSH6", .{});
-                if (self.pc + 6 > self.code.len) return error.Eof;
+                if (self.pc + 6 > self.code.len) return Error.Eof;
                 try self.push(u64_from_bytes(self.code[self.pc..][0..6]));
                 self.pc += 6;
             },
             Op.PUSH7 => {
                 //             std.log.info("PUSH7", .{});
-                if (self.pc + 7 > self.code.len) return error.Eof;
+                if (self.pc + 7 > self.code.len) return Error.Eof;
                 try self.push(u64_from_bytes(self.code[self.pc..][0..7]));
                 self.pc += 7;
             },
             Op.PUSH8 => {
                 //             std.log.info("PUSH8", .{});
-                if (self.pc + 8 > self.code.len) return error.Eof;
+                if (self.pc + 8 > self.code.len) return Error.Eof;
                 try self.push(u64_from_bytes(self.code[self.pc..][0..8]));
                 self.pc += 8;
             },
@@ -229,7 +229,7 @@ pub const Vm = struct {
                 const idx = try tryAdd(try asPtr(try self.pop()), 1);
                 const len = self.stack.items.len;
                 if (len < idx) {
-                    return error.InvalidStackIdx;
+                    return Error.InvalidStackIdx;
                 }
                 const a_idx = len - 1;
                 const b_idx = a_idx - idx;
@@ -237,7 +237,7 @@ pub const Vm = struct {
             },
             Op.SWAP0 => {
                 //             std.log.info("SWAP0", .{});
-                const b_idx = trySub(self.stack.items.len, 2) orelse return error.InvalidStackIdx;
+                const b_idx = trySub(self.stack.items.len, 2) orelse return Error.InvalidStackIdx;
                 const a_idx = self.stack.items.len - 1;
                 std.mem.swap(u64, &self.stack.items[a_idx], &self.stack.items[b_idx]);
             },
@@ -353,7 +353,7 @@ pub const Vm = struct {
             Op.DCOPY => {
                 //             std.log.info("DCOPY", .{});
                 if (self.stack.items.len < 3) {
-                    return error.StackEmpty;
+                    return Error.StackEmpty;
                 }
 
                 // const srcPtr, const dstPtr, const lenPtr = self.stack.items[(self.stack.items.len - 3)..];
@@ -392,7 +392,7 @@ pub const Vm = struct {
                 const len = self.stack.items.len;
 
                 if (len < 2) {
-                    return error.StackEmpty;
+                    return Error.StackEmpty;
                 }
 
                 const a = self.stack.pop().?;
@@ -494,7 +494,7 @@ pub const Vm = struct {
                 const value = try self.pop();
                 return StepResult{ .trap = value };
             },
-            else => return error.UnknownOp,
+            else => return Error.UnknownOp,
         }
 
         return .stepped;
@@ -759,7 +759,7 @@ pub const Op = struct {
 
     pub inline fn div(a: u64, b: u64) !u64 {
         if (b == 0) {
-            return error.DivideByZero;
+            return Error.DivideByZero;
         } else {
             return a / b;
         }
@@ -787,7 +787,7 @@ pub const Op = struct {
 
     pub inline fn mod(a: u64, b: u64) !u64 {
         if (b == 0) {
-            return error.DivideByZero;
+            return Error.DivideByZero;
         } else {
             return a % b;
         }
@@ -855,11 +855,16 @@ const StepResultTag = enum {
     trap,
     exit,
 };
-const StepResult = union(StepResultTag) { stepped: void, eof: void, trap: u64, exit: []const u8 };
+const StepResult = union(StepResultTag) {
+    stepped: void,
+    eof: void,
+    trap: u64,
+    exit: []const u8,
+};
 
 inline fn asPtr(val: u64) !usize {
     if (val > std.math.maxInt(usize)) {
-        return error.InvalidStackValue;
+        return Error.InvalidStackValue;
     } else {
         return @intCast(val);
     }
@@ -869,7 +874,7 @@ inline fn tryAdd(val: usize, n: usize) !usize {
     const res, const overflow = @addWithOverflow(val, n);
 
     if (overflow != 0) {
-        return error.InvalidStackValue;
+        return Error.InvalidStackValue;
     }
 
     return res;
@@ -887,6 +892,17 @@ inline fn trySub(val: usize, n: usize) ?usize {
 
 inline fn checkBounds(comptime T: type, list: []const T, idx: usize) !void {
     if (list.len < idx) {
-        return error.Segfault;
+        return Error.Segfault;
     }
 }
+
+const Error = error{
+    StackEmpty,
+    InvalidStackIdx,
+    Segfault,
+    Eof,
+    DivideByZero,
+    InvalidStackValue,
+    UnknownOp,
+    PointerTooBig,
+};
