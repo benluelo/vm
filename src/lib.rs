@@ -93,6 +93,7 @@ impl<H: Hook> Vm<H> {
     }
 
     #[warn(clippy::question_mark_used)]
+    // #[inline(always)]
     pub fn step(&mut self) -> Result<StepResult, Error<H>> {
         if let Err(err) = self.hook.pre_cycle() {
             return Err(Error::Hook(err));

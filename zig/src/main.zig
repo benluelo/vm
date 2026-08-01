@@ -5,7 +5,7 @@ const zig = @import("zig");
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
-    const arena: std.mem.Allocator = init.arena.allocator();
+    const arena: std.mem.Allocator = std.heap.brk_allocator;
 
     // In order to do I/O operations need an `Io` instance.
     const io = init.io;
@@ -30,6 +30,8 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
 
+    const start = Io.Clock.real.now(init.io);
+
     var cycles: u64 = 0;
 
     while (true) {
@@ -39,25 +41,33 @@ pub fn main(init: std.process.Init) !void {
 
         switch (res) {
             .stepped => {
+                @branchHint(.likely);
                 // try stdout_writer.print("stepped\n", .{});
                 // try stdout_writer.flush();
                 // continue;
             },
             .eof => {
+                @branchHint(.cold);
                 try stdout_writer.print("eof\n", .{});
                 break;
             },
             .trap => |code| {
+                @branchHint(.cold);
                 try stdout_writer.print("trap: {}\n", .{code});
                 break;
             },
             .exit => |bz| {
+                @branchHint(.cold);
                 try stdout_writer.print("{x}\n", .{bz});
                 break;
             },
         }
     }
 
+    const end = Io.Clock.real.now(init.io);
+    const duration = std.Io.Timestamp.durationTo(start, end);
+
+    try stdout_writer.print("time: {}ms\n", .{duration.toMilliseconds()});
     try stdout_writer.print("total cycles: {}", .{cycles});
 
     try stdout_writer.flush(); // Don't forget to flush!
@@ -82,77 +92,86 @@ pub const Vm = struct {
         };
     }
 
-    inline fn getMut(self: Vm, n: usize) !*u64 {
+    inline fn getMut(self: Vm, n: usize) Error!*u64 {
         if (self.stack.items.len < n) {
-            return error.EmptyStack;
+            @branchHint(.cold);
+            return Error.StackEmpty;
         } else {
-            return &self.stack.items[(self.stack.items.len - 1) - n];
+            return &self.stack.items.ptr[(self.stack.items.len - 1) - n];
         }
     }
 
-    inline fn pop(self: *Vm) !u64 {
+    inline fn pop(self: *Vm) Error!u64 {
         if (self.stack.items.len == 0) {
+            @branchHint(.cold);
             return Error.StackEmpty;
         } else {
             self.stack.items.len -= 1;
-            return self.stack.items[self.stack.items.len];
+            return self.stack.items.ptr[self.stack.items.len];
         }
     }
 
     inline fn push(self: *Vm, value: u64) !void {
         if (self.stack.items.len == self.stack.capacity) {
+            // @branchHint(.unlikely);
             try self.stack.ensureUnusedCapacity(self.gpa, 1);
         }
-        self.stack.appendAssumeCapacity(value);
+        self.stack.items.len += 1;
+        self.stack.items.ptr[self.stack.items.len - 1] = value;
+
+        // self.stack.appendAssumeCapacity(value);
+        // try self.stack.append(self.gpa, value);
     }
 
-    inline fn write_n(self: *Vm, comptime n: u4) !void {
+    inline fn write_n(self: *Vm, comptime n: u4) Error!void {
         const value = try self.pop();
         const ptr = try asPtr(try self.pop());
         var bytes: [8]u8 = undefined;
         std.mem.writeInt(u64, &bytes, value, .big);
         try checkBounds(u8, self.memory.items, ptr + n);
-        @memcpy(self.memory.items[ptr..(ptr + n)], bytes[8 - n ..]);
+        @memcpy(self.memory.items.ptr[ptr..][0..n], bytes[(8 - n)..]);
     }
 
-    inline fn read_n(self: *Vm, comptime n: u4) !void {
+    inline fn read_n(self: *Vm, comptime n: u4) Error!void {
         const top: *u64 = try self.getMut(0);
         const ptr = try asPtr(top.*);
         try checkBounds(u8, self.memory.items, ptr + n);
-        const res = self.memory.items[ptr..(ptr + n)];
+        const res = self.memory.items.ptr[ptr..][0..n];
         top.* = u64_from_bytes(res);
     }
 
-    inline fn dread_n(self: *Vm, comptime n: u4) !void {
+    inline fn dread_n(self: *Vm, comptime n: u4) Error!void {
         const top = try self.getMut(0);
         const ptr = try asPtr(top.*);
         try checkBounds(u8, self.data, ptr + n);
-        const res = self.data[ptr..(ptr + n)];
+        const res = self.data.ptr[ptr..][0..n];
         top.* = u64_from_bytes(res);
     }
 
-    inline fn binop(self: *Vm, comptime op: fn (u64, u64) callconv(.@"inline") u64) !void {
+    inline fn binop(self: *Vm, comptime op: fn (u64, u64) callconv(.@"inline") u64) Error!void {
         const len = self.stack.items.len;
 
         if (len < 2) {
+            @branchHint(.cold);
             return Error.StackEmpty;
         }
 
-        const lhs = self.stack.items[len - 2];
-        const rhs = self.stack.items[len - 1];
+        const lhs = self.stack.items.ptr[len - 2];
+        const rhs = self.stack.items.ptr[len - 1];
 
         self.stack.items.len = len - 1;
-        self.stack.items[len - 2] = op(lhs, rhs);
+        self.stack.items.ptr[len - 2] = op(lhs, rhs);
     }
 
-    pub fn step(self: *Vm) !StepResult {
+    pub fn step(self: *Vm) Error!StepResult {
         if (self.pc >= self.code.len) {
+            @branchHint(.cold);
             return .eof;
         }
 
         //     // std.log.info("pc: {}", .{self.pc});
 
-        const op = self.code[self.pc];
+        const op = self.code.ptr[self.pc];
 
         self.pc += 1;
 
@@ -166,50 +185,53 @@ pub const Vm = struct {
             },
             Op.PUSH1 => {
                 //             std.log.info("PUSH1", .{});
-                if (self.pc + 1 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code[self.pc..][0..1]));
+                if (self.pc + 1 > self.code.len) {
+                    @branchHint(.cold);
+                    return Error.Eof;
+                }
+                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..1]));
                 self.pc += 1;
             },
             Op.PUSH2 => {
                 //             std.log.info("PUSH2", .{});
                 if (self.pc + 2 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code[self.pc..][0..2]));
+                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..2]));
                 self.pc += 2;
             },
             Op.PUSH3 => {
                 //             std.log.info("PUSH3", .{});
                 if (self.pc + 3 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code[self.pc..][0..3]));
+                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..3]));
                 self.pc += 3;
             },
             Op.PUSH4 => {
                 //             std.log.info("PUSH4", .{});
                 if (self.pc + 4 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code[self.pc..][0..4]));
+                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..4]));
                 self.pc += 4;
             },
             Op.PUSH5 => {
                 //             std.log.info("PUSH5", .{});
                 if (self.pc + 5 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code[self.pc..][0..5]));
+                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..5]));
                 self.pc += 5;
             },
             Op.PUSH6 => {
                 //             std.log.info("PUSH6", .{});
                 if (self.pc + 6 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code[self.pc..][0..6]));
+                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..6]));
                 self.pc += 6;
             },
             Op.PUSH7 => {
                 //             std.log.info("PUSH7", .{});
                 if (self.pc + 7 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code[self.pc..][0..7]));
+                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..7]));
                 self.pc += 7;
             },
             Op.PUSH8 => {
                 //             std.log.info("PUSH8", .{});
                 if (self.pc + 8 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code[self.pc..][0..8]));
+                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..8]));
                 self.pc += 8;
             },
             Op.DUP => {
@@ -229,17 +251,18 @@ pub const Vm = struct {
                 const idx = try tryAdd(try asPtr(try self.pop()), 1);
                 const len = self.stack.items.len;
                 if (len < idx) {
+                    @branchHint(.cold);
                     return Error.InvalidStackIdx;
                 }
                 const a_idx = len - 1;
                 const b_idx = a_idx - idx;
-                std.mem.swap(u64, &self.stack.items[a_idx], &self.stack.items[b_idx]);
+                std.mem.swap(u64, &self.stack.items.ptr[a_idx], &self.stack.items.ptr[b_idx]);
             },
             Op.SWAP0 => {
                 //             std.log.info("SWAP0", .{});
                 const b_idx = trySub(self.stack.items.len, 2) orelse return Error.InvalidStackIdx;
                 const a_idx = self.stack.items.len - 1;
-                std.mem.swap(u64, &self.stack.items[a_idx], &self.stack.items[b_idx]);
+                std.mem.swap(u64, &self.stack.items.ptr[a_idx], &self.stack.items.ptr[b_idx]);
             },
             Op.POP => {
                 //             std.log.info("POP", .{});
@@ -358,16 +381,16 @@ pub const Vm = struct {
 
                 // const srcPtr, const dstPtr, const lenPtr = self.stack.items[(self.stack.items.len - 3)..];
 
-                const len = try asPtr(self.stack.items[self.stack.items.len - 1]);
-                const dst = try asPtr(self.stack.items[self.stack.items.len - 2]);
-                const src = try asPtr(self.stack.items[self.stack.items.len - 3]);
+                const len = try asPtr(self.stack.items.ptr[self.stack.items.len - 1]);
+                const dst = try asPtr(self.stack.items.ptr[self.stack.items.len - 2]);
+                const src = try asPtr(self.stack.items.ptr[self.stack.items.len - 3]);
 
                 try checkBounds(u8, self.data, src + len);
                 try checkBounds(u8, self.memory.items, dst + len);
 
                 self.stack.items.len = self.stack.items.len - 3;
 
-                @memcpy(self.memory.items[dst .. dst + len], self.data[src .. src + len]);
+                @memcpy(self.memory.items.ptr[dst..(dst + len)], self.data.ptr[src..(src + len)]);
             },
 
             Op.DLEN => {
@@ -395,9 +418,11 @@ pub const Vm = struct {
                     return Error.StackEmpty;
                 }
 
-                const a = self.stack.pop().?;
+                const a = self.pop() catch {
+                    unreachable;
+                };
 
-                self.stack.items[len - 2] = try Op.div(self.stack.items[len - 2], a);
+                self.stack.items.ptr[len - 2] = try Op.div(self.stack.items.ptr[len - 2], a);
                 //             std.log.info("div", .{});
             },
             Op.EXP => {
@@ -487,14 +512,17 @@ pub const Vm = struct {
 
                 try checkBounds(u8, self.memory.items, ptr + len);
 
-                return StepResult{ .exit = self.memory.items[ptr..(ptr + len)] };
+                return StepResult{ .exit = self.memory.items.ptr[ptr..][0..len] };
             },
             Op.TRAP => {
                 //             std.log.info("TRAP", .{});
                 const value = try self.pop();
                 return StepResult{ .trap = value };
             },
-            else => return Error.UnknownOp,
+            else => {
+                @branchHint(.cold);
+                return Error.UnknownOp;
+            },
         }
 
         return .stepped;
@@ -759,6 +787,7 @@ pub const Op = struct {
 
     pub inline fn div(a: u64, b: u64) !u64 {
         if (b == 0) {
+            @branchHint(.cold);
             return Error.DivideByZero;
         } else {
             return a / b;
@@ -787,6 +816,7 @@ pub const Op = struct {
 
     pub inline fn mod(a: u64, b: u64) !u64 {
         if (b == 0) {
+            @branchHint(.cold);
             return Error.DivideByZero;
         } else {
             return a % b;
@@ -864,6 +894,7 @@ const StepResult = union(StepResultTag) {
 
 inline fn asPtr(val: u64) !usize {
     if (val > std.math.maxInt(usize)) {
+        @branchHint(.cold);
         return Error.InvalidStackValue;
     } else {
         return @intCast(val);
@@ -874,6 +905,7 @@ inline fn tryAdd(val: usize, n: usize) !usize {
     const res, const overflow = @addWithOverflow(val, n);
 
     if (overflow != 0) {
+        @branchHint(.cold);
         return Error.InvalidStackValue;
     }
 
@@ -884,6 +916,7 @@ inline fn trySub(val: usize, n: usize) ?usize {
     const res, const overflow = @subWithOverflow(val, n);
 
     if (overflow != 0) {
+        @branchHint(.cold);
         return null;
     }
 
@@ -892,11 +925,14 @@ inline fn trySub(val: usize, n: usize) ?usize {
 
 inline fn checkBounds(comptime T: type, list: []const T, idx: usize) !void {
     if (list.len < idx) {
+        @branchHint(.cold);
         return Error.Segfault;
     }
 }
 
 const Error = error{
+    OutOfMemory,
+
     StackEmpty,
     InvalidStackIdx,
     Segfault,
