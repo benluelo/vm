@@ -3,6 +3,12 @@ const Io = std.Io;
 
 const zig = @import("zig");
 
+// pub const panic = std.debug.no_panic;
+
+// pub fn panic(_: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+//     @trap();
+// }
+
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
     const arena: std.mem.Allocator = std.heap.brk_allocator;
@@ -35,6 +41,8 @@ pub fn main(init: std.process.Init) !void {
     var cycles: u64 = 0;
 
     while (true) {
+        @branchHint(.likely);
+
         const res = try vm.step();
 
         cycles += 1;
@@ -92,12 +100,21 @@ pub const Vm = struct {
         };
     }
 
-    inline fn getMut(self: Vm, n: usize) Error!*u64 {
+    inline fn getMut(self: *Vm, n: usize) Error!*u64 {
         if (self.stack.items.len < n) {
             @branchHint(.cold);
             return Error.StackEmpty;
         } else {
             return &self.stack.items.ptr[(self.stack.items.len - 1) - n];
+        }
+    }
+
+    inline fn get(self: *Vm, n: usize) Error!u64 {
+        if (self.stack.items.len < n) {
+            @branchHint(.cold);
+            return Error.StackEmpty;
+        } else {
+            return self.stack.items.ptr[(self.stack.items.len - 1) - n];
         }
     }
 
@@ -113,7 +130,7 @@ pub const Vm = struct {
 
     inline fn push(self: *Vm, value: u64) !void {
         if (self.stack.items.len == self.stack.capacity) {
-            // @branchHint(.unlikely);
+            @branchHint(.unlikely);
             try self.stack.ensureUnusedCapacity(self.gpa, 1);
         }
         self.stack.items.len += 1;
@@ -123,29 +140,38 @@ pub const Vm = struct {
         // try self.stack.append(self.gpa, value);
     }
 
-    inline fn write_n(self: *Vm, comptime n: u4) Error!void {
+    inline fn write_n(self: *Vm, comptime n: usize) Error!void {
         const value = try self.pop();
         const ptr = try asPtr(try self.pop());
-        var bytes: [8]u8 = undefined;
-        std.mem.writeInt(u64, &bytes, value, .big);
         try checkBounds(u8, self.memory.items, ptr + n);
-        @memcpy(self.memory.items.ptr[ptr..][0..n], bytes[(8 - n)..]);
+        var bytes: [n]u8 = undefined;
+        std.mem.writeInt(@Int(.unsigned, n * 8), &bytes, @truncate(value), .big);
+        @memcpy(self.memory.items.ptr[ptr..][0..n], &bytes);
     }
 
-    inline fn read_n(self: *Vm, comptime n: u4) Error!void {
+    inline fn read_n(self: *Vm, comptime n: usize) Error!void {
         const top: *u64 = try self.getMut(0);
         const ptr = try asPtr(top.*);
         try checkBounds(u8, self.memory.items, ptr + n);
         const res = self.memory.items.ptr[ptr..][0..n];
-        top.* = u64_from_bytes(res);
+        top.* = u64_from_bytes(n, res.*);
     }
 
-    inline fn dread_n(self: *Vm, comptime n: u4) Error!void {
+    inline fn dread_n(self: *Vm, comptime n: usize) Error!void {
         const top = try self.getMut(0);
         const ptr = try asPtr(top.*);
         try checkBounds(u8, self.data, ptr + n);
         const res = self.data.ptr[ptr..][0..n];
-        top.* = u64_from_bytes(res);
+        top.* = u64_from_bytes(n, res.*);
+    }
+
+    inline fn push_n(self: *Vm, comptime n: usize) Error!void {
+        if (self.pc + n > self.code.len) {
+            @branchHint(.cold);
+            return Error.Eof;
+        }
+        try self.push(u64_from_bytes(n, self.code.ptr[self.pc..][0..n].*));
+        self.pc += n;
     }
 
     inline fn binop(self: *Vm, comptime op: fn (u64, u64) callconv(.@"inline") u64) Error!void {
@@ -159,95 +185,42 @@ pub const Vm = struct {
         const lhs = self.stack.items.ptr[len - 2];
         const rhs = self.stack.items.ptr[len - 1];
 
-        self.stack.items.len = len - 1;
+        self.stack.items.len -= 1;
         self.stack.items.ptr[len - 2] = op(lhs, rhs);
     }
 
     pub fn step(self: *Vm) Error!StepResult {
+        @setRuntimeSafety(false);
+
         if (self.pc >= self.code.len) {
             @branchHint(.cold);
             return .eof;
         }
 
-        //     // std.log.info("pc: {}", .{self.pc});
-
         const op = self.code.ptr[self.pc];
 
         self.pc += 1;
 
-        //     // std.log.info("op: {x}", .{op});
-        //     std.log.info("stack: {any}", .{self.stack.items});
-
         switch (op) {
-            Op.PUSH0 => {
-                //             std.log.info("PUSH0", .{});
-                try self.push(0);
-            },
-            Op.PUSH1 => {
-                //             std.log.info("PUSH1", .{});
-                if (self.pc + 1 > self.code.len) {
-                    @branchHint(.cold);
-                    return Error.Eof;
-                }
-                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..1]));
-                self.pc += 1;
-            },
-            Op.PUSH2 => {
-                //             std.log.info("PUSH2", .{});
-                if (self.pc + 2 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..2]));
-                self.pc += 2;
-            },
-            Op.PUSH3 => {
-                //             std.log.info("PUSH3", .{});
-                if (self.pc + 3 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..3]));
-                self.pc += 3;
-            },
-            Op.PUSH4 => {
-                //             std.log.info("PUSH4", .{});
-                if (self.pc + 4 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..4]));
-                self.pc += 4;
-            },
-            Op.PUSH5 => {
-                //             std.log.info("PUSH5", .{});
-                if (self.pc + 5 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..5]));
-                self.pc += 5;
-            },
-            Op.PUSH6 => {
-                //             std.log.info("PUSH6", .{});
-                if (self.pc + 6 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..6]));
-                self.pc += 6;
-            },
-            Op.PUSH7 => {
-                //             std.log.info("PUSH7", .{});
-                if (self.pc + 7 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..7]));
-                self.pc += 7;
-            },
-            Op.PUSH8 => {
-                //             std.log.info("PUSH8", .{});
-                if (self.pc + 8 > self.code.len) return Error.Eof;
-                try self.push(u64_from_bytes(self.code.ptr[self.pc..][0..8]));
-                self.pc += 8;
-            },
+            Op.PUSH0 => try self.push(0),
+            Op.PUSH1 => try self.push_n(1),
+            Op.PUSH2 => try self.push_n(2),
+            Op.PUSH3 => try self.push_n(3),
+            Op.PUSH4 => try self.push_n(4),
+            Op.PUSH5 => try self.push_n(5),
+            Op.PUSH6 => try self.push_n(6),
+            Op.PUSH7 => try self.push_n(7),
+            Op.PUSH8 => try self.push_n(8),
             Op.DUP => {
-                //             std.log.info("DUP", .{});
                 const idx = try self.getMut(0);
                 const stack_idx = try tryAdd(try asPtr(idx.*), 1);
 
                 idx.* = (try self.getMut(stack_idx)).*;
             },
             Op.DUP0 => {
-                //             std.log.info("DUP0", .{});
-
-                try self.push((try self.getMut(0)).*);
+                try self.push(try self.get(0));
             },
             Op.SWAP => {
-                //             std.log.info("SWAP", .{});
                 const idx = try tryAdd(try asPtr(try self.pop()), 1);
                 const len = self.stack.items.len;
                 if (len < idx) {
@@ -259,127 +232,57 @@ pub const Vm = struct {
                 std.mem.swap(u64, &self.stack.items.ptr[a_idx], &self.stack.items.ptr[b_idx]);
             },
             Op.SWAP0 => {
-                //             std.log.info("SWAP0", .{});
-                const b_idx = trySub(self.stack.items.len, 2) orelse return Error.InvalidStackIdx;
-                const a_idx = self.stack.items.len - 1;
-                std.mem.swap(u64, &self.stack.items.ptr[a_idx], &self.stack.items.ptr[b_idx]);
+                if (self.stack.items.len < 2) {
+                    @branchHint(.cold);
+                    return Error.InvalidStackIdx;
+                }
+                std.mem.swap(u64, &self.stack.items.ptr[self.stack.items.len - 2], &self.stack.items.ptr[self.stack.items.len - 1]);
             },
             Op.POP => {
-                //             std.log.info("POP", .{});
-                _ = try self.pop();
+                if (self.stack.items.len == 0) {
+                    @branchHint(.cold);
+                    return Error.StackEmpty;
+                } else {
+                    self.stack.items.len -= 1;
+                }
             },
             Op.ALLOC => {
-                //             std.log.info("ALLOC", .{});
                 const size = try self.pop();
                 try self.memory.appendNTimes(self.gpa, 0, size);
             },
 
-            Op.WRITE1 => {
-                //             std.log.info("WRITE1", .{});
-                try self.write_n(1);
-            },
-            Op.WRITE2 => {
-                //             std.log.info("WRITE2", .{});
-                try self.write_n(2);
-            },
-            Op.WRITE3 => {
-                //             std.log.info("WRITE3", .{});
-                try self.write_n(3);
-            },
-            Op.WRITE4 => {
-                //             std.log.info("WRITE4", .{});
-                try self.write_n(4);
-            },
-            Op.WRITE5 => {
-                //             std.log.info("WRITE5", .{});
-                try self.write_n(5);
-            },
-            Op.WRITE6 => {
-                //             std.log.info("WRITE6", .{});
-                try self.write_n(6);
-            },
-            Op.WRITE7 => {
-                //             std.log.info("WRITE7", .{});
-                try self.write_n(7);
-            },
-            Op.WRITE8 => {
-                //             std.log.info("WRITE8", .{});
-                try self.write_n(8);
-            },
+            Op.WRITE1 => try self.write_n(1),
+            Op.WRITE2 => try self.write_n(2),
+            Op.WRITE3 => try self.write_n(3),
+            Op.WRITE4 => try self.write_n(4),
+            Op.WRITE5 => try self.write_n(5),
+            Op.WRITE6 => try self.write_n(6),
+            Op.WRITE7 => try self.write_n(7),
+            Op.WRITE8 => try self.write_n(8),
 
-            Op.READ1 => {
-                //             std.log.info("READ1", .{});
-                try self.read_n(1);
-            },
-            Op.READ2 => {
-                //             std.log.info("READ2", .{});
-                try self.read_n(2);
-            },
-            Op.READ3 => {
-                //             std.log.info("READ3", .{});
-                try self.read_n(3);
-            },
-            Op.READ4 => {
-                //             std.log.info("READ4", .{});
-                try self.read_n(4);
-            },
-            Op.READ5 => {
-                //             std.log.info("READ5", .{});
-                try self.read_n(5);
-            },
-            Op.READ6 => {
-                //             std.log.info("READ6", .{});
-                try self.read_n(6);
-            },
-            Op.READ7 => {
-                //             std.log.info("READ7", .{});
-                try self.read_n(7);
-            },
-            Op.READ8 => {
-                //             std.log.info("READ8", .{});
-                try self.read_n(8);
-            },
+            Op.READ1 => try self.read_n(1),
+            Op.READ2 => try self.read_n(2),
+            Op.READ3 => try self.read_n(3),
+            Op.READ4 => try self.read_n(4),
+            Op.READ5 => try self.read_n(5),
+            Op.READ6 => try self.read_n(6),
+            Op.READ7 => try self.read_n(7),
+            Op.READ8 => try self.read_n(8),
 
-            Op.DREAD1 => {
-                //             std.log.info("DREAD1", .{});
-                try self.dread_n(1);
-            },
-            Op.DREAD2 => {
-                //             std.log.info("DREAD2", .{});
-                try self.dread_n(2);
-            },
-            Op.DREAD3 => {
-                //             std.log.info("DREAD3", .{});
-                try self.dread_n(3);
-            },
-            Op.DREAD4 => {
-                //             std.log.info("DREAD4", .{});
-                try self.dread_n(4);
-            },
-            Op.DREAD5 => {
-                //             std.log.info("DREAD5", .{});
-                try self.dread_n(5);
-            },
-            Op.DREAD6 => {
-                //             std.log.info("DREAD6", .{});
-                try self.dread_n(6);
-            },
-            Op.DREAD7 => {
-                //             std.log.info("DREAD7", .{});
-                try self.dread_n(7);
-            },
-            Op.DREAD8 => {
-                //             std.log.info("DREAD8", .{});
-                try self.dread_n(8);
-            },
+            Op.DREAD1 => try self.dread_n(1),
+            Op.DREAD2 => try self.dread_n(2),
+            Op.DREAD3 => try self.dread_n(3),
+            Op.DREAD4 => try self.dread_n(4),
+            Op.DREAD5 => try self.dread_n(5),
+            Op.DREAD6 => try self.dread_n(6),
+            Op.DREAD7 => try self.dread_n(7),
+            Op.DREAD8 => try self.dread_n(8),
 
             Op.DCOPY => {
-                //             std.log.info("DCOPY", .{});
                 if (self.stack.items.len < 3) {
+                    @branchHint(.cold);
                     return Error.StackEmpty;
                 }
-
-                // const srcPtr, const dstPtr, const lenPtr = self.stack.items[(self.stack.items.len - 3)..];
 
                 const len = try asPtr(self.stack.items.ptr[self.stack.items.len - 1]);
                 const dst = try asPtr(self.stack.items.ptr[self.stack.items.len - 2]);
@@ -388,33 +291,21 @@ pub const Vm = struct {
                 try checkBounds(u8, self.data, src + len);
                 try checkBounds(u8, self.memory.items, dst + len);
 
-                self.stack.items.len = self.stack.items.len - 3;
+                self.stack.items.len -= 3;
 
                 @memcpy(self.memory.items.ptr[dst..(dst + len)], self.data.ptr[src..(src + len)]);
             },
 
-            Op.DLEN => {
-                //             std.log.info("DLEN", .{});
-                try self.push(@intCast(self.data.len));
-            },
+            Op.DLEN => try self.push(@intCast(self.data.len)),
 
-            Op.ADD => {
-                //             std.log.info("ADD", .{});
-                try self.binop(Op.add);
-            },
-            Op.SUB => {
-                //             std.log.info("SUB", .{});
-                try self.binop(Op.sub);
-            },
-            Op.MUL => {
-                //             std.log.info("MUL", .{});
-                try self.binop(Op.mul);
-            },
+            Op.ADD => try self.binop(Op.add),
+            Op.SUB => try self.binop(Op.sub),
+            Op.MUL => try self.binop(Op.mul),
             Op.DIV => {
-                //             std.log.info("DIV", .{});
                 const len = self.stack.items.len;
 
                 if (len < 2) {
+                    @branchHint(.cold);
                     return Error.StackEmpty;
                 }
 
@@ -423,90 +314,60 @@ pub const Vm = struct {
                 };
 
                 self.stack.items.ptr[len - 2] = try Op.div(self.stack.items.ptr[len - 2], a);
-                //             std.log.info("div", .{});
             },
-            Op.EXP => {
-                //             std.log.info("EXP", .{});
-                try self.binop(Op.expmod);
-            },
+            Op.EXP => try self.binop(Op.expmod),
             Op.MOD => {
-                //             std.log.info("MOD", .{});
-                const a = try self.pop();
-                const b = try self.getMut(0);
-                b.* = try Op.mod(b.*, a);
-                //             std.log.info("mod", .{});
+                const len = self.stack.items.len;
+
+                if (len < 2) {
+                    @branchHint(.cold);
+                    return Error.StackEmpty;
+                }
+
+                const a = self.pop() catch {
+                    unreachable;
+                };
+
+                self.stack.items.ptr[len - 2] = try Op.mod(self.stack.items.ptr[len - 2], a);
             },
-            Op.EQ => {
-                //             std.log.info("EQ", .{});
-                try self.binop(Op.eq);
-            },
-            Op.NEQ => {
-                //             std.log.info("NEQ", .{});
-                try self.binop(Op.neq);
-            },
-            Op.LT => {
-                //             std.log.info("LT", .{});
-                try self.binop(Op.lt);
-            },
-            Op.GT => {
-                //             std.log.info("GT", .{});
-                try self.binop(Op.gt);
-            },
+            Op.EQ => try self.binop(Op.eq),
+            Op.NEQ => try self.binop(Op.neq),
+            Op.LT => try self.binop(Op.lt),
+            Op.GT => try self.binop(Op.gt),
             Op.NOT => {
-                //             std.log.info("NOT", .{});
                 const a = try self.getMut(0);
                 a.* = Op.not(a.*);
-                //             std.log.info("not", .{});
             },
-            Op.SHR => {
-                //             std.log.info("SHR", .{});
-                try self.binop(Op.shr);
-            },
-            Op.SHL => {
-                //             std.log.info("SHL", .{});
-                try self.binop(Op.shl);
-            },
+            Op.SHR => try self.binop(Op.shr),
+            Op.SHL => try self.binop(Op.shl),
             Op.NEG => {
-                //             std.log.info("NEG", .{});
                 const a = try self.getMut(0);
                 a.* = Op.neg(a.*);
             },
-            Op.OR => {
-                //             std.log.info("OR", .{});
-                try self.binop(Op.or_);
-            },
-            Op.XOR => {
-                //             std.log.info("XOR", .{});
-                try self.binop(Op.xor);
-            },
-            Op.AND => {
-                //             std.log.info("AND", .{});
-                try self.binop(Op.and_);
-            },
+            Op.OR => try self.binop(Op.or_),
+            Op.XOR => try self.binop(Op.xor),
+            Op.AND => try self.binop(Op.and_),
 
             Op.JUMP => {
-                //             std.log.info("JUMP", .{});
                 const dst = try self.pop();
-                //             // std.log.info("dst: {}", .{dst});
                 self.pc = try asPtr(dst);
             },
             Op.JNZ => {
-                //             std.log.info("JNZ", .{});
                 const dst = try self.pop();
                 const value = try self.pop();
                 if (value != 0) {
+                    @branchHint(.unpredictable);
                     self.pc = try asPtr(dst);
                 }
             },
             Op.CALL => {
-                //             std.log.info("CALL", .{});
                 const top = try self.getMut(0);
                 const address = try asPtr(top.*);
                 top.* = @intCast(self.pc);
                 self.pc = address;
             },
             Op.EXIT => {
-                //             std.log.info("EXIT", .{});
+                @branchHint(.unlikely);
                 const len = try self.pop();
                 const ptr = try self.pop();
 
@@ -515,7 +376,7 @@ pub const Vm = struct {
                 return StepResult{ .exit = self.memory.items.ptr[ptr..][0..len] };
             },
             Op.TRAP => {
-                //             std.log.info("TRAP", .{});
+                @branchHint(.unlikely);
                 const value = try self.pop();
                 return StepResult{ .trap = value };
             },
@@ -853,7 +714,7 @@ pub const Op = struct {
                 acc = (acc * base) % std.math.maxInt(u64);
                 // since exp!=0, finally the exp must be 1.
                 if (exp == 1) {
-                    return @intCast(acc);
+                    return @truncate(acc);
                 }
             }
             exp >>= 1;
@@ -870,13 +731,8 @@ pub const Op = struct {
     }
 };
 
-inline fn u64_from_bytes(arr: []const u8) u64 {
-    // // std.log.info("arr: {any}", .{arr});
-    var v: [8]u8 = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 };
-    // // std.log.info("arr.len: {}", .{arr.len});
-    @memcpy(v[(8 - arr.len)..], arr);
-    // // std.log.info("v: {any}", .{v});
-    return std.mem.readInt(u64, &v, .big);
+inline fn u64_from_bytes(comptime n: usize, arr: [n]u8) u64 {
+    return @intCast(std.mem.readInt(@Int(.unsigned, n * 8), &arr, .big));
 }
 
 const StepResultTag = enum {

@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "zig",
         .root_module = b.createModule(.{
+            // .unwind_tables = .none,
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
@@ -23,6 +24,9 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.lto = .full;
+    // exe.use_llvm = false;
+    exe.linkage = .static;
+    exe.root_module.error_tracing = false;
 
     const exe_check = b.addExecutable(.{
         .name = "foo",
@@ -41,8 +45,11 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
-    const installAssembly = b.addInstallBinFile(exe.getEmittedAsm(), "assembly.s");
-    b.getInstallStep().dependOn(&installAssembly.step);
+    // const installAssembly = b.addInstallBinFile(exe.getEmittedAsm(), "assembly.s");
+    // b.getInstallStep().dependOn(&installAssembly.step);
+
+    // const installLlvmIr = b.addInstallBinFile(exe.getEmittedLlvmIr(), "llvm.ir");
+    // b.getInstallStep().dependOn(&installLlvmIr.step);
 
     const run_step = b.step("run", "Run the app");
 
