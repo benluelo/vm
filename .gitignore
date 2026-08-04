@@ -4,6 +4,8 @@
 
 out-*.mir
 
+profile.json.gz
+
 *.o
 
 .nist-vectors/

@@ -1,1 +1,5 @@
 samply record -r 100000 ./target/profiling/vm run tests/sha3-256.o --obj --input-file <(head -c 10M </dev/urandom)
+
+cargo build --profile profiling -Ftracing-off 2>/dev/null 1>/dev/null && time ../target/release/vm run --obj ../tests/sha3-256.o --input-file ../../random.bin
+
+zig build --release=fast && time ./zig-out/bin/vm ../tests/sha3-256.o ../../random.bin

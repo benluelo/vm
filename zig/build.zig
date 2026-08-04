@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const exe = b.addExecutable(.{
-        .name = "zig",
+        .name = "vm",
         .root_module = b.createModule(.{
             // .unwind_tables = .none,
             .root_source_file = b.path("src/main.zig"),
@@ -58,9 +58,7 @@ pub fn build(b: *std.Build) void {
 
     run_cmd.step.dependOn(b.getInstallStep());
 
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
 
     const mod_tests = b.addTest(.{
         .root_module = mod,

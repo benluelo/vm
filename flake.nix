@@ -8,11 +8,15 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    zig-overlay = {
+      url = "github:mitchellh/zig-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     crane = {
       url = "github:ipetkov/crane";
     };
   };
-  outputs = inputs@{ nixpkgs, rust-overlay, flake-parts, ... }:
+  outputs = inputs@{ nixpkgs, rust-overlay, zig-overlay, flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems =
         [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin" ];
@@ -43,6 +47,7 @@
             inherit system;
             overlays = [
               rust-overlay.overlays.default
+              zig-overlay.overlays.default
             ];
           };
 
@@ -73,6 +78,7 @@
           devShells = {
             default = pkgs.mkShell {
               buildInputs = [ self'.packages.rust-nightly ]
+                ++ [ pkgs.zigpkgs.master ]
                 ++ (with pkgs; [
                 jq
                 moreutils
