@@ -93,6 +93,11 @@
                 hexyl
                 zig
                 zls
+                # libclang
+                clang-tools
+                # llvmPackages_latest.libllvm
+                # llvmPackages_latest.libcxx
+                # llvmPackages_latest.clang
               ]);
             };
           };

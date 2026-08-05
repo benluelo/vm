@@ -64,3 +64,5 @@ tree-sitter-mir/*.o
 tree-sitter-mir/*.tar.gz
 tree-sitter-mir/*.tgz
 tree-sitter-mir/*.zip
+vm.llbc
+a.out
