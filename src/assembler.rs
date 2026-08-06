@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::{self, Display},
 };
 
@@ -124,39 +124,17 @@ impl<'a> Object<'a> {
                     AsmOp::PUSH6(v) => Op::PUSH6(*v),
                     AsmOp::PUSH7(v) => Op::PUSH7(*v),
                     AsmOp::PUSH8(v) => Op::PUSH8(*v),
-                    AsmOp::PUSHL(label) => {
-                        // dbg!(&label, label_ptrs[&**label]);
-                        let op = match max_ptr_size {
-                            1 => {
-                                Op::PUSH1(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
-                            }
-                            2 => {
-                                Op::PUSH2(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
-                            }
-                            3 => {
-                                Op::PUSH3(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
-                            }
-                            4 => {
-                                Op::PUSH4(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
-                            }
-                            5 => {
-                                Op::PUSH5(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
-                            }
-                            6 => {
-                                Op::PUSH6(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
-                            }
-                            7 => {
-                                Op::PUSH7(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
-                            }
-                            8 => {
-                                Op::PUSH8(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1)
-                            }
-                            _ => unreachable!(),
-                        };
-
-                        // dbg!(op)
-                        op
-                    }
+                    AsmOp::PUSHL(label) => match max_ptr_size {
+                        1 => Op::PUSH1(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1),
+                        2 => Op::PUSH2(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1),
+                        3 => Op::PUSH3(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1),
+                        4 => Op::PUSH4(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1),
+                        5 => Op::PUSH5(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1),
+                        6 => Op::PUSH6(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1),
+                        7 => Op::PUSH7(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1),
+                        8 => Op::PUSH8(*label_ptrs[&**label].to_be_bytes().rsplit_array_ref().1),
+                        _ => unreachable!(),
+                    },
                     AsmOp::DUP => Op::DUP,
                     AsmOp::DUP0 => Op::DUP0,
                     AsmOp::SWAP => Op::SWAP,
