@@ -93,6 +93,7 @@ impl<H: Hook> Vm<H> {
     }
 
     #[warn(clippy::question_mark_used)]
+    // #[inline(always)]
     pub fn step(&mut self) -> Result<StepResult, Error<H>> {
         if let Err(err) = self.hook.pre_cycle() {
             return Err(Error::Hook(err));
@@ -152,12 +153,21 @@ impl<H: Hook> Vm<H> {
             ($op:ident, $n:literal) => {{
                 trace!("write{}", $n);
                 hook!($op);
-                let value = pop!();
-                let ptr = as_ptr!(pop!());
-                trace!("{value:x} @ {ptr:x}");
-                let bytes = value.to_be_bytes();
-                ok_or!(self.memory.get_mut(ptr..ptr + $n), Error::<H>::Segfault)
-                    .copy_from_slice(&bytes[8 - $n..]);
+                let len = self.stack.len();
+                if len < 2 {
+                    return Err(Error::<H>::StackEmpty);
+                };
+                unsafe {
+                    let value_idx = len.unchecked_sub(1);
+                    let ptr_idx = len.unchecked_sub(2);
+                    let value = *self.stack.get_unchecked(value_idx);
+                    let ptr = as_ptr!((*self.stack.get_unchecked(ptr_idx)));
+                    self.stack.set_len(ptr_idx);
+                    trace!("{value:x} @ {ptr:x}");
+                    let bytes = value.to_be_bytes();
+                    ok_or!(self.memory.get_mut(ptr..ptr + $n), Error::<H>::Segfault)
+                        .copy_from_slice(&bytes[8 - $n..]);
+                }
             }};
         }
 
@@ -507,6 +517,7 @@ impl Hook for CycleCountHook {
         Ok(())
     }
 
+    #[inline(always)]
     fn cycle(&mut self, _: usize, _: Op, _: &[u64], _: &[u8]) -> Result<(), Self::Error> {
         self.cycles += 1;
         Ok(())
