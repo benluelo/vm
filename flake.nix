@@ -41,6 +41,11 @@
             stripRoot = false;
             hash = "sha256-nWNYO4H2piqf6CW7NJfqc4+DHzByYoNbbjGE3QeO4uc=";
           };
+          build-rust = crane.lib.buildPackage {
+              src = ./.;
+              doCheck = false;
+              cargoBuildCommand = "cargo build --release";
+            };
         in
         {
           _module.args.pkgs = import nixpkgs {
@@ -53,17 +58,8 @@
 
           packages = {
             rust-nightly = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-            default = crane.lib.buildPackage {
-              src = ./.;
-              doCheck = false;
-              cargoBuildCommand = "cargo build --release";
-            };
-            fetch-nist-vectors = pkgs.writeShellApplication {
-              name = "fetch-nist-vectors";
-              text = ''
-                cp -r ${nist-vectors} .nist-vectors
-              '';
-            };
+            default = build-rust;
+            inherit build-rust;
             build-zig = pkgs.stdenv.mkDerivation {
               pname = "vm-zig";
               version = "0.0.0";
@@ -91,6 +87,25 @@
                 mkdir "$out"
                 mkdir "$out/bin"
                 mv ./a.out "$out/bin/vm"
+              '';
+            };
+          };
+          apps = builtins.mapAttrs (name: value: {type = "app"; program = value;}) {
+            run-c = pkgs.writeShellApplication {name = "run-c"; text = ''
+              ${pkgs.getExe self'.packages.build-c} ${./tests/sha3-256.o} ${./random.bin}
+            '';};
+            run-zig = pkgs.writeShellApplication {name = "run-zig"; text = ''
+              ${pkgs.getExe self'.packages.build-zig} ${./tests/sha3-256.o} ${./random.bin}
+            '';};
+            run-rust = pkgs.writeShellApplication {name = "run-rust"; text = ''
+              ${pkgs.getExe self'.packages.build-rust} ${./tests/sha3-256.o} ${./random.bin}
+            '';};
+            fetch-nist-vectors = pkgs.writeShellApplication {
+              name = "fetch-nist-vectors";
+              text = ''
+                rm -r .nist-vectors/ || echo ""
+                mkdir -p .nist-vectors
+                cp -r --no-preserve=mode ${nist-vectors}/* .nist-vectors
               '';
             };
           };
