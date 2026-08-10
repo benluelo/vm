@@ -79,18 +79,10 @@ pub fn grammar<'a>() -> Grammar<
 
     fn val<'a>() -> Parser!['a, Val] {
         choice((
-            just("0x").ignore_then(
-                digits(16)
-                    .to_slice()
-                    .map(|s| u64::from_str_radix(s, 16))
-                    .unwrapped(),
-            ),
-            just("0b").ignore_then(
-                digits(2)
-                    .to_slice()
-                    .map(|s| u64::from_str_radix(s, 2))
-                    .unwrapped(),
-            ),
+            just("0x")
+                .ignore_then(digits(16).to_slice().map(|s| u64::from_str_radix(s, 16)).unwrapped()),
+            just("0b")
+                .ignore_then(digits(2).to_slice().map(|s| u64::from_str_radix(s, 2)).unwrapped()),
             digits(10).to_slice().from_str().unwrapped(),
         ))
         .spanned()
@@ -113,11 +105,7 @@ pub fn grammar<'a>() -> Grammar<
                                 .delimited_by(just('('), just(')')),
                         ),
                     )
-                    .map(|(spread, (f, args))| Expr::Call {
-                        spread: spread.is_some(),
-                        f,
-                        args,
-                    }),
+                    .map(|(spread, (f, args))| Expr::Call { spread: spread.is_some(), f, args }),
                 ident().map(Expr::Var),
                 val().map(Expr::Val),
             ))
@@ -140,20 +128,11 @@ pub fn grammar<'a>() -> Grammar<
     }
 
     fn ident_list<'a>() -> Parser!['a, Vec<Ident<'a>>] {
-        ident()
-            .padded()
-            .separated_by(just(','))
-            .allow_trailing()
-            .collect()
+        ident().padded().separated_by(just(',')).allow_trailing().collect()
     }
 
     fn non_empty_ident_list<'a>() -> Parser!['a, Vec<Ident<'a>>] {
-        ident()
-            .padded()
-            .separated_by(just(','))
-            .at_least(1)
-            .allow_trailing()
-            .collect()
+        ident().padded().separated_by(just(',')).at_least(1).allow_trailing().collect()
     }
 
     let mut statement = Recursive::declare();
@@ -166,11 +145,7 @@ pub fn grammar<'a>() -> Grammar<
         keyword("loop")
             .padded()
             .ignore_then(label())
-            .then(
-                block
-                    .clone()
-                    .delimited_by(just('{').padded(), just('}').padded()),
-            )
+            .then(block.clone().delimited_by(just('{').padded(), just('}').padded()))
             .map(|(label, block)| Loop { label, block })
             .labelled("loop"),
     );
@@ -179,11 +154,7 @@ pub fn grammar<'a>() -> Grammar<
         keyword("if")
             .padded()
             .ignore_then(expr().padded())
-            .then(
-                block
-                    .clone()
-                    .delimited_by(just('{').padded(), just('}').padded()),
-            )
+            .then(block.clone().delimited_by(just('{').padded(), just('}').padded()))
             .then(
                 keyword("else")
                     .ignore_then(choice((
@@ -191,9 +162,7 @@ pub fn grammar<'a>() -> Grammar<
                             .clone()
                             .delimited_by(just('{').padded(), just('}').padded())
                             .map(|block| Else::Tail { block }),
-                        if_.clone()
-                            .spanned()
-                            .map(|if_| Else::ElseIf { if_: Box::new(if_) }),
+                        if_.clone().spanned().map(|if_| Else::ElseIf { if_: Box::new(if_) }),
                     )))
                     .or_not(),
             )
@@ -232,22 +201,9 @@ pub fn grammar<'a>() -> Grammar<
         keyword("def")
             .padded()
             .ignore_then(ident().padded())
-            .then(
-                ident_list()
-                    .delimited_by(just('(').padded(), just(')').padded())
-                    .padded(),
-            )
-            .then(
-                just("->")
-                    .padded()
-                    .ignore_then(non_empty_ident_list().padded())
-                    .or_not(),
-            )
-            .then(
-                block
-                    .clone()
-                    .delimited_by(just('{').padded(), just('}').padded()),
-            )
+            .then(ident_list().delimited_by(just('(').padded(), just(')').padded()).padded())
+            .then(just("->").padded().ignore_then(non_empty_ident_list().padded()).or_not())
+            .then(block.clone().delimited_by(just('{').padded(), just('}').padded()))
             .map(|(((ident, args), ret), body)| Def {
                 ident,
                 args,
@@ -267,19 +223,11 @@ pub fn grammar<'a>() -> Grammar<
     }
 
     fn break_<'a>() -> Parser!['a, Break<'a>] {
-        keyword("break")
-            .padded()
-            .ignore_then(label())
-            .map(Break)
-            .labelled("break")
+        keyword("break").padded().ignore_then(label()).map(Break).labelled("break")
     }
 
     fn continue_<'a>() -> Parser!['a, Continue<'a>] {
-        keyword("continue")
-            .padded()
-            .ignore_then(label())
-            .map(Continue)
-            .labelled("continue")
+        keyword("continue").padded().ignore_then(label()).map(Continue).labelled("continue")
     }
 
     Grammar {
@@ -363,12 +311,7 @@ pub fn print_ast(ast: &Block<'_>) -> String {
                     out.push_str(" <- ");
                     go_expr(out, expr);
                 }
-                Statement::Def(Def {
-                    ident,
-                    args,
-                    rets,
-                    body,
-                }) => {
+                Statement::Def(Def { ident, args, rets, body }) => {
                     out.push_str(&"  ".repeat(depth));
                     out.push_str("def ");
                     write!(out, "{ident}").unwrap();
@@ -403,11 +346,7 @@ pub fn print_ast(ast: &Block<'_>) -> String {
         match expr {
             Expr::Val(val) => out.write_fmt(format_args!("{val}")).unwrap(),
             Expr::Var(var) => write!(out, "{var}").unwrap(),
-            Expr::Call {
-                spread,
-                f,
-                args: exprs,
-            } => {
+            Expr::Call { spread, f, args: exprs } => {
                 if *spread {
                     write!(out, "...").unwrap();
                 }

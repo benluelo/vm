@@ -45,14 +45,7 @@ impl Normalize {
                             }
                         }
                     }
-                    (
-                        statements,
-                        Expr::Call {
-                            spread,
-                            f,
-                            args: new_args,
-                        },
-                    )
+                    (statements, Expr::Call { spread, f, args: new_args })
                 } else {
                     (vec![], Expr::Call { spread, f, args })
                 }
@@ -76,16 +69,11 @@ impl Normalize {
                 Some(Else::ElseIf { if_ }) => {
                     let (statements, new_if) = self.normalize_if(check_ctx, if_.inner);
                     new_block.extend(statements);
-                    Some(Else::ElseIf {
-                        if_: Box::new(Spanned {
-                            inner: new_if,
-                            span: if_.span,
-                        }),
-                    })
+                    Some(Else::ElseIf { if_: Box::new(Spanned { inner: new_if, span: if_.span }) })
                 }
-                Some(Else::Tail { block }) => Some(Else::Tail {
-                    block: self.run(check_ctx, block),
-                }),
+                Some(Else::Tail { block }) => {
+                    Some(Else::Tail { block: self.run(check_ctx, block) })
+                }
                 None => None,
             },
         };
@@ -106,10 +94,8 @@ impl Pass for Normalize {
                     new_block.extend(statements);
                     new_block.push(Statement::Expr(expr));
                 }
-                Statement::Loop(Loop { label, block }) => new_block.push(Statement::Loop(Loop {
-                    label,
-                    block: self.run(check_ctx, block),
-                })),
+                Statement::Loop(Loop { label, block }) => new_block
+                    .push(Statement::Loop(Loop { label, block: self.run(check_ctx, block) })),
                 Statement::If(if_) => {
                     let (statements, if_) = self.normalize_if(check_ctx, if_);
                     new_block.extend(statements);
@@ -120,17 +106,14 @@ impl Pass for Normalize {
                     new_block.extend(statements);
                     new_block.push(Statement::Assignment(Assignment { vars, expr }));
                 }
-                Statement::Def(Def {
-                    ident,
-                    args,
-                    rets,
-                    body,
-                }) => new_block.push(Statement::Def(Def {
-                    ident,
-                    args,
-                    rets,
-                    body: self.run(check_ctx, body),
-                })),
+                Statement::Def(Def { ident, args, rets, body }) => {
+                    new_block.push(Statement::Def(Def {
+                        ident,
+                        args,
+                        rets,
+                        body: self.run(check_ctx, body),
+                    }))
+                }
                 _ => new_block.push(statement),
             };
         }

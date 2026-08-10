@@ -36,13 +36,7 @@ fn load_vectors(file_name: &str) -> Vec<(usize, Vec<u8>, Vec<u8>)> {
 
 fn load_monte_vectors(file_name: &str) -> (Vec<u8>, Vec<Vec<u8>>) {
     let file = fs::read_to_string(format!(".nist-vectors/{file_name}")).unwrap();
-    let (seed, tail) = file
-        .split_once("[L = 256]")
-        .unwrap()
-        .1
-        .trim()
-        .split_once("\n")
-        .unwrap();
+    let (seed, tail) = file.split_once("[L = 256]").unwrap().1.trim().split_once("\n").unwrap();
 
     let mds = tail
         .trim()
@@ -57,10 +51,7 @@ fn load_monte_vectors(file_name: &str) -> (Vec<u8>, Vec<Vec<u8>>) {
         })
         .collect();
 
-    (
-        const_hex::decode(seed.strip_prefix("Seed = ").unwrap().trim()).unwrap(),
-        mds,
-    )
+    (const_hex::decode(seed.strip_prefix("Seed = ").unwrap().trim()).unwrap(), mds)
 }
 
 #[test]

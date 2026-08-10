@@ -27,9 +27,7 @@ impl DefInline {
                             span: if_.span,
                         }),
                     }),
-                    Else::Tail { block } => Some(Else::Tail {
-                        block: self.run(check_ctx, block),
-                    }),
+                    Else::Tail { block } => Some(Else::Tail { block: self.run(check_ctx, block) }),
                 },
                 None => None,
             },
@@ -45,28 +43,16 @@ impl Pass for DefInline {
         for statement in block {
             let new_statement = match statement {
                 Statement::Expr(expr) => Statement::Expr(def_inline(check_ctx, expr)),
-                Statement::Loop(Loop { label, block }) => Statement::Loop(Loop {
-                    label,
-                    block: self.run(check_ctx, block),
-                }),
+                Statement::Loop(Loop { label, block }) => {
+                    Statement::Loop(Loop { label, block: self.run(check_ctx, block) })
+                }
                 Statement::If(if_) => Statement::If(self.run_on_if_statement(check_ctx, if_)),
                 Statement::Assignment(Assignment { vars, expr }) => {
-                    Statement::Assignment(Assignment {
-                        vars,
-                        expr: def_inline(check_ctx, expr),
-                    })
+                    Statement::Assignment(Assignment { vars, expr: def_inline(check_ctx, expr) })
                 }
-                Statement::Def(Def {
-                    ident,
-                    args,
-                    rets,
-                    body,
-                }) => Statement::Def(Def {
-                    ident,
-                    args,
-                    rets,
-                    body: self.run(check_ctx, body),
-                }),
+                Statement::Def(Def { ident, args, rets, body }) => {
+                    Statement::Def(Def { ident, args, rets, body: self.run(check_ctx, body) })
+                }
                 _ => statement,
             };
 
@@ -85,10 +71,7 @@ fn def_inline<'a>(check_ctx: &CheckCtx<'a>, expr: Expr<'a>) -> Expr<'a> {
             let inline_args = |f, args: Vec<_>| Expr::Call {
                 spread,
                 f,
-                args: args
-                    .into_iter()
-                    .map(|arg| def_inline(check_ctx, arg))
-                    .collect(),
+                args: args.into_iter().map(|arg| def_inline(check_ctx, arg)).collect(),
             };
 
             if let BuiltinOrDef::Def(f_) = &*f {
@@ -138,11 +121,7 @@ fn inline_def_args<'a>(expr: &mut Expr<'a>, params: &[Expr<'a>], args: &[Ident<'
                 *expr = params[idx].clone();
             }
         }
-        Expr::Call {
-            spread: _,
-            f: _,
-            args: call_args,
-        } => {
+        Expr::Call { spread: _, f: _, args: call_args } => {
             for ca in call_args {
                 inline_def_args(ca, params, args)
             }

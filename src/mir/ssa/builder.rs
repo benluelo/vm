@@ -70,11 +70,7 @@ impl fmt::Display for Builder {
 impl Builder {
     #[expect(clippy::new_without_default)]
     pub fn new() -> Self {
-        Self {
-            blocks: IdMap::new(),
-            defs: IdMap::new(),
-            vars: IdMap::new(),
-        }
+        Self { blocks: IdMap::new(), defs: IdMap::new(), vars: IdMap::new() }
     }
 
     // pub fn blocks(&self) -> &BTreeMap<BlockId, Block> {
@@ -100,10 +96,7 @@ impl Builder {
         block_id: BlockId,
         statements: impl IntoIterator<Item = Statement>,
     ) {
-        self.blocks
-            .get_mut(block_id)
-            .instructions
-            .extend(statements);
+        self.blocks.get_mut(block_id).instructions.extend(statements);
     }
 
     pub fn push_block(&mut self) -> BlockId {
@@ -112,9 +105,7 @@ impl Builder {
             args: vec![],
             instructions: vec![],
             terminal: Terminal::None,
-            sealed: Sealed::No {
-                vars: BTreeSet::new(),
-            },
+            sealed: Sealed::No { vars: BTreeSet::new() },
             def_vars: BTreeSet::new(),
         })
     }
@@ -202,16 +193,8 @@ impl fmt::Display for Statement {
                 write!(
                     f,
                     "{rets} <- call {def_id}({args})",
-                    rets = rets
-                        .iter()
-                        .map(|v| v.to_string())
-                        .collect::<Vec<_>>()
-                        .join(","),
-                    args = args
-                        .iter()
-                        .map(|v| v.to_string())
-                        .collect::<Vec<_>>()
-                        .join(","),
+                    rets = rets.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","),
+                    args = args.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","),
                 )
             }
         }

@@ -15,13 +15,35 @@
     crane = {
       url = "github:ipetkov/crane";
     };
-  };
-  outputs = inputs@{ nixpkgs, rust-overlay, zig-overlay, flake-parts, ... }:
-    flake-parts.lib.mkFlake { inherit inputs; } {
-      systems =
-        [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin" ];
+    treefmt-nix.url = "github:numtide/treefmt-nix";
 
-      perSystem = { config, self', inputs', pkgs, system, ... }:
+  };
+  outputs =
+    inputs@{
+      nixpkgs,
+      rust-overlay,
+      zig-overlay,
+      flake-parts,
+      ...
+    }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+
+      imports = [ inputs.treefmt-nix.flakeModule ];
+
+      perSystem =
+        {
+          config,
+          self',
+          inputs',
+          pkgs,
+          system,
+          ...
+        }:
         let
           dbg =
             value:
@@ -42,9 +64,24 @@
             hash = "sha256-nWNYO4H2piqf6CW7NJfqc4+DHzByYoNbbjGE3QeO4uc=";
           };
           build-rust = crane.lib.buildPackage {
-              src = ./.;
-              doCheck = false;
-              cargoBuildCommand = "cargo build --release";
+            src = crane.lib.cleanCargoSource ./.;
+            doCheck = false;
+            cargoBuildCommand = "cargo build --release -Ftracing-off";
+            meta.mainProgram = "vm";
+          };
+          buildObject =
+            mirFile:
+            pkgs.stdenv.mkDerivation {
+              name = "${baseNameOf mirFile}.o";
+              src = mirFile;
+              dontUnpack = true;
+              buildInputs = [ build-rust ];
+              buildPhase = ''
+                vm build ${mirFile} -o a.out
+              '';
+              installPhase = ''
+                mv ./a.out "$out"
+              '';
             };
         in
         {
@@ -70,45 +107,62 @@
                 export HOME=.
                 zig build --release=fast
               '';
-              installPhase =''
+              installPhase = ''
                 mv ./zig-out "$out"
               '';
+              meta.mainProgram = "vm";
             };
             build-c = pkgs.stdenv.mkDerivation {
               pname = "vm-c";
               version = "0.0.0";
               src = ./c;
-              buildInputs = [];
+              buildInputs = [ ];
               buildPhase = ''
                 gcc -flto -Ofast vm.c
                 # clang -flto -O3 vm.c
               '';
-              installPhase =''
+              installPhase = ''
                 mkdir "$out"
                 mkdir "$out/bin"
                 mv ./a.out "$out/bin/vm"
               '';
+              meta.mainProgram = "vm";
             };
           };
-          apps = builtins.mapAttrs (name: value: {type = "app"; program = value;}) {
-            run-c = pkgs.writeShellApplication {name = "run-c"; text = ''
-              ${pkgs.getExe self'.packages.build-c} ${./tests/sha3-256.o} ${./random.bin}
-            '';};
-            run-zig = pkgs.writeShellApplication {name = "run-zig"; text = ''
-              ${pkgs.getExe self'.packages.build-zig} ${./tests/sha3-256.o} ${./random.bin}
-            '';};
-            run-rust = pkgs.writeShellApplication {name = "run-rust"; text = ''
-              ${pkgs.getExe self'.packages.build-rust} ${./tests/sha3-256.o} ${./random.bin}
-            '';};
-            fetch-nist-vectors = pkgs.writeShellApplication {
-              name = "fetch-nist-vectors";
-              text = ''
-                rm -r .nist-vectors/ || echo ""
-                mkdir -p .nist-vectors
-                cp -r --no-preserve=mode ${nist-vectors}/* .nist-vectors
-              '';
-            };
-          };
+          apps =
+            builtins.mapAttrs
+              (name: value: {
+                type = "app";
+                program = value;
+              })
+              {
+                run-c = pkgs.writeShellApplication {
+                  name = "run-c";
+                  text = ''
+                    time ${pkgs.lib.getExe self'.packages.build-c} ${buildObject ./tests/sha3-256.mir} ${./random.bin}
+                  '';
+                };
+                run-zig = pkgs.writeShellApplication {
+                  name = "run-zig";
+                  text = ''
+                    time ${pkgs.lib.getExe self'.packages.build-zig} ${buildObject ./tests/sha3-256.mir} ${./random.bin}
+                  '';
+                };
+                run-rust = pkgs.writeShellApplication {
+                  name = "run-rust";
+                  text = ''
+                    time ${pkgs.lib.getExe self'.packages.build-rust} run --obj ${buildObject ./tests/sha3-256.mir} --input-file ${./random.bin}
+                  '';
+                };
+                fetch-nist-vectors = pkgs.writeShellApplication {
+                  name = "fetch-nist-vectors";
+                  text = ''
+                    rm -r .nist-vectors/ || echo ""
+                    mkdir -p .nist-vectors
+                    cp -r --no-preserve=mode ${nist-vectors}/* .nist-vectors
+                  '';
+                };
+              };
           checks = {
             default = crane.lib.cargoTest {
               strictDeps = true;
@@ -121,12 +175,15 @@
           };
           devShells = {
             default = pkgs.mkShell {
-              buildInputs = [ self'.packages.rust-nightly ]
-                ++ [ pkgs.zigpkgs.master ]
-                ++ (with pkgs; [
+              buildInputs = [
+                self'.packages.rust-nightly
+              ]
+              ++ [ pkgs.zigpkgs.master ]
+              ++ (with pkgs; [
                 jq
                 moreutils
                 nixd
+                nil
                 tree-sitter
                 nodejs
                 typescript-language-server
@@ -143,6 +200,21 @@
                 # llvmPackages_latest.libcxx
                 # llvmPackages_latest.clang
               ]);
+            };
+            nativeBuildInputs = [
+              config.treefmt.build.wrapper
+            ]
+            ++ pkgs.lib.attrsets.attrValues config.treefmt.build.programs;
+          };
+
+          treefmt = {
+            projectRootFile = "flake.nix";
+            programs = {
+              rustfmt.enable = true;
+              nixfmt.enable = true;
+            };
+            settings = {
+              rustfmt = { };
             };
           };
         };

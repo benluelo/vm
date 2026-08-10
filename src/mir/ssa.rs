@@ -124,14 +124,8 @@ impl<'a> Ctx<'a> {
                             self.current_block_id,
                             Terminal::Jump {
                                 cond: expr,
-                                then: Goto {
-                                    label: then_block_id,
-                                    args: vec![],
-                                },
-                                else_: Goto {
-                                    label: else_block_id,
-                                    args: vec![],
-                                },
+                                then: Goto { label: then_block_id, args: vec![] },
+                                else_: Goto { label: else_block_id, args: vec![] },
                             },
                         );
 
@@ -141,10 +135,7 @@ impl<'a> Ctx<'a> {
                         self.compile(if_.block);
                         self.terminate_block(
                             self.current_block_id,
-                            Terminal::Goto(Goto {
-                                label: tail_block_id,
-                                args: vec![],
-                            }),
+                            Terminal::Goto(Goto { label: tail_block_id, args: vec![] }),
                         );
                         self.seal_block(then_block_id);
 
@@ -159,10 +150,7 @@ impl<'a> Ctx<'a> {
                                     self.compile(block);
                                     self.terminate_block(
                                         self.current_block_id,
-                                        Terminal::Goto(Goto {
-                                            label: tail_block_id,
-                                            args: vec![],
-                                        }),
+                                        Terminal::Goto(Goto { label: tail_block_id, args: vec![] }),
                                     );
                                     self.seal_block(self.current_block_id);
                                 }
@@ -170,10 +158,7 @@ impl<'a> Ctx<'a> {
                             None => {
                                 self.terminate_block(
                                     else_block_id,
-                                    Terminal::Goto(Goto {
-                                        label: tail_block_id,
-                                        args: vec![],
-                                    }),
+                                    Terminal::Goto(Goto { label: tail_block_id, args: vec![] }),
                                 );
                                 self.seal_block(else_block_id);
                             }
@@ -200,8 +185,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn push_statements(&mut self, statements: impl IntoIterator<Item = SsaStatement>) {
-        self.builder
-            .push_statements(self.current_block_id, statements)
+        self.builder.push_statements(self.current_block_id, statements)
     }
 
     fn push_block(&mut self) -> BlockId {
@@ -218,11 +202,7 @@ impl<'a> Ctx<'a> {
 
     fn terminate_block(&mut self, block_id: BlockId, terminal: Terminal) {
         match &terminal {
-            Terminal::Jump {
-                cond: _,
-                then,
-                else_,
-            } => {
+            Terminal::Jump { cond: _, then, else_ } => {
                 self.add_predecessor(then.label, block_id);
                 self.add_predecessor(else_.label, block_id);
             }
@@ -250,42 +230,27 @@ impl<'a> Ctx<'a> {
 
             assert!(pre_block.is_sealed());
 
-            self.builder
-                .block_mut(block_id)
-                .args
-                .extend(pre_block.def_vars.intersection(&vars));
+            self.builder.block_mut(block_id).args.extend(pre_block.def_vars.intersection(&vars));
 
             match &mut self.builder.block_mut(pre_block_id).terminal {
                 Terminal::Jump { cond, then, else_ } => {
                     if then.label == block_id {
                         then.args.extend(
-                            pre_block
-                                .def_vars
-                                .intersection(&vars)
-                                .copied()
-                                .map(Operand::Var),
+                            pre_block.def_vars.intersection(&vars).copied().map(Operand::Var),
                         )
                     } else {
                         // ???
                     }
                     if else_.label == block_id {
                         else_.args.extend(
-                            pre_block
-                                .def_vars
-                                .intersection(&vars)
-                                .copied()
-                                .map(Operand::Var),
+                            pre_block.def_vars.intersection(&vars).copied().map(Operand::Var),
                         )
                     }
                 }
                 Terminal::Goto(goto) => {
                     if goto.label == block_id {
                         goto.args.extend(
-                            pre_block
-                                .def_vars
-                                .intersection(&vars)
-                                .copied()
-                                .map(Operand::Var),
+                            pre_block.def_vars.intersection(&vars).copied().map(Operand::Var),
                         )
                     }
                 }
@@ -302,9 +267,7 @@ impl<'a> Ctx<'a> {
         self.scopes
             .iter()
             .find_map(|s| {
-                s.vars
-                    .iter()
-                    .find_map(|(ident, var_id)| ident.eq(var).then_some(*var_id))
+                s.vars.iter().find_map(|(ident, var_id)| ident.eq(var).then_some(*var_id))
             })
             .map(|var_id| {
                 let var_def_block_id = self.builder.get_var_def_block(var_id);
@@ -340,11 +303,7 @@ impl<'a> Ctx<'a> {
             None => {
                 let var_id = self.def_var();
 
-                self.scopes
-                    .last_mut()
-                    .unwrap()
-                    .vars
-                    .insert(var.clone(), var_id);
+                self.scopes.last_mut().unwrap().vars.insert(var.clone(), var_id);
 
                 (var_id, self.current_block_id)
             }
@@ -356,9 +315,7 @@ impl<'a> Ctx<'a> {
     /// return None.
     fn get_def(&self, def: &Ident<'a>) -> Option<&(DefId, Def<'a>)> {
         self.scopes.iter().find_map(|s| {
-            s.defs
-                .iter()
-                .find_map(|(ident, def_and_id)| ident.eq(def).then_some(def_and_id))
+            s.defs.iter().find_map(|(ident, def_and_id)| ident.eq(def).then_some(def_and_id))
         })
     }
 

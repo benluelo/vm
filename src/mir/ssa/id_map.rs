@@ -32,17 +32,11 @@ impl<I: Id, T> Default for IdMap<I, T> {
 
 impl<I: Id, T> IdMap<I, T> {
     pub fn new() -> Self {
-        Self {
-            map: vec![],
-            __: PhantomData,
-        }
+        Self { map: vec![], __: PhantomData }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (I, &T)> {
-        self.map
-            .iter()
-            .enumerate()
-            .filter_map(|(k, v)| v.as_ref().map(|v| (I::from_usize(k), v)))
+        self.map.iter().enumerate().filter_map(|(k, v)| v.as_ref().map(|v| (I::from_usize(k), v)))
     }
 
     pub fn insert(&mut self, t: T) -> I {

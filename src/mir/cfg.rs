@@ -14,10 +14,7 @@ enum Node<'a> {
     CallEntry,
     CallExit,
     Expr(ExprNode<'a>),
-    Assignment {
-        vars: Vec<Ident<'a>>,
-        expr: ExprNode<'a>,
-    },
+    Assignment { vars: Vec<Ident<'a>>, expr: ExprNode<'a> },
 }
 
 impl fmt::Display for Node<'_> {
@@ -35,17 +32,8 @@ impl fmt::Display for Node<'_> {
 pub enum ExprNode<'a> {
     Val(Val),
     Var(Ident<'a>),
-    Builtin {
-        spread: bool,
-        f: Builtin,
-        args: Vec<ExprNode<'a>>,
-    },
-    Call {
-        spread: bool,
-        f: Ident<'a>,
-        id: NodeIndex,
-        args: Vec<ExprNode<'a>>,
-    },
+    Builtin { spread: bool, f: Builtin, args: Vec<ExprNode<'a>> },
+    Call { spread: bool, f: Ident<'a>, id: NodeIndex, args: Vec<ExprNode<'a>> },
 }
 
 #[derive(Debug)]

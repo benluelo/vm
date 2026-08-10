@@ -70,9 +70,8 @@ impl Visitor for DeadCodeRemoval {
                         && is_pure(&assignment.expr)
                         && let Some(next_assignment_idx) =
                             next_assignment_idx(var, &block.statements()[(idx + 1)..])
-                        && let Some(statements) = block
-                            .statements()
-                            .get((idx + 1)..=((idx + 1) + next_assignment_idx))
+                        && let Some(statements) =
+                            block.statements().get((idx + 1)..=((idx + 1) + next_assignment_idx))
                         && !var_is_referenced(var, statements)
                     {
                         removed_dead_code = true;
