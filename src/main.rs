@@ -722,6 +722,8 @@ impl App {
     }
 
     fn undo(&mut self) {
+        self.last_range = None;
+
         if let Some(op) = self.vm.hook.ops.pop() {
             macro_rules! binop {
                 ($a:ident, $b:ident) => {{
@@ -733,6 +735,7 @@ impl App {
             }
 
             self.step_result = None;
+            self.vm.hook.cycles -= 1;
 
             match op {
                 FullOp::PUSH0 => {
@@ -1128,19 +1131,19 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             }
             FullOp::WRITE1 { ptr, val, prev_value } => (Some(*ptr..ptr + 1), vec![], WRITE_STYLE),
             FullOp::WRITE2 { ptr, val, prev_value } => (Some(*ptr..ptr + 2), vec![], WRITE_STYLE),
-            FullOp::WRITE3 { ptr, val, prev_value } => (Some(*ptr..ptr + 4), vec![], WRITE_STYLE),
-            FullOp::WRITE4 { ptr, val, prev_value } => (Some(*ptr..ptr + 6), vec![], WRITE_STYLE),
-            FullOp::WRITE5 { ptr, val, prev_value } => (Some(*ptr..ptr + 8), vec![], WRITE_STYLE),
-            FullOp::WRITE6 { ptr, val, prev_value } => (Some(*ptr..ptr + 8), vec![], WRITE_STYLE),
-            FullOp::WRITE7 { ptr, val, prev_value } => (Some(*ptr..ptr + 8), vec![], WRITE_STYLE),
+            FullOp::WRITE3 { ptr, val, prev_value } => (Some(*ptr..ptr + 3), vec![], WRITE_STYLE),
+            FullOp::WRITE4 { ptr, val, prev_value } => (Some(*ptr..ptr + 4), vec![], WRITE_STYLE),
+            FullOp::WRITE5 { ptr, val, prev_value } => (Some(*ptr..ptr + 5), vec![], WRITE_STYLE),
+            FullOp::WRITE6 { ptr, val, prev_value } => (Some(*ptr..ptr + 6), vec![], WRITE_STYLE),
+            FullOp::WRITE7 { ptr, val, prev_value } => (Some(*ptr..ptr + 7), vec![], WRITE_STYLE),
             FullOp::WRITE8 { ptr, val, prev_value } => (Some(*ptr..ptr + 8), vec![], WRITE_STYLE),
             FullOp::READ1 { ptr, val } => (Some(*ptr..ptr + 1), vec![], READ_STYLE),
             FullOp::READ2 { ptr, val } => (Some(*ptr..ptr + 2), vec![], READ_STYLE),
-            FullOp::READ3 { ptr, val } => (Some(*ptr..ptr + 4), vec![], READ_STYLE),
-            FullOp::READ4 { ptr, val } => (Some(*ptr..ptr + 6), vec![], READ_STYLE),
-            FullOp::READ5 { ptr, val } => (Some(*ptr..ptr + 8), vec![], READ_STYLE),
-            FullOp::READ6 { ptr, val } => (Some(*ptr..ptr + 8), vec![], READ_STYLE),
-            FullOp::READ7 { ptr, val } => (Some(*ptr..ptr + 8), vec![], READ_STYLE),
+            FullOp::READ3 { ptr, val } => (Some(*ptr..ptr + 3), vec![], READ_STYLE),
+            FullOp::READ4 { ptr, val } => (Some(*ptr..ptr + 4), vec![], READ_STYLE),
+            FullOp::READ5 { ptr, val } => (Some(*ptr..ptr + 5), vec![], READ_STYLE),
+            FullOp::READ6 { ptr, val } => (Some(*ptr..ptr + 6), vec![], READ_STYLE),
+            FullOp::READ7 { ptr, val } => (Some(*ptr..ptr + 7), vec![], READ_STYLE),
             FullOp::READ8 { ptr, val } => (Some(*ptr..ptr + 8), vec![], READ_STYLE),
             FullOp::DCOPY { src, dst, len } => (Some(*dst..(dst + len)), vec![], WRITE_STYLE),
             FullOp::PUSH0 => (None, vec![0], app.mem_style),
@@ -1208,7 +1211,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Span::from((&app.vm.memory.get(range.end..).unwrap_or_default()).encode_hex()),
         ]))
         .wrap(Wrap { trim: false })
-        .block(Block::bordered().title("memory"))
+        .block(Block::bordered().title(format!("memory (len: {})", app.vm.memory.len())))
         .style(BASE_STYLE),
         middle,
     );
@@ -1293,7 +1296,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             })),
         ))
         .wrap(Wrap { trim: false })
-        .block(Block::bordered().title(format!("code (pc: {}) ", app.vm.pc)))
+        .block(
+            Block::bordered()
+                .title(format!("code (pc: {}, cycles: {}) ", app.vm.pc, app.vm.hook.cycles)),
+        )
         .style(BASE_STYLE)
         .scroll((app.code_scroll as u16, 0)),
         bottom,

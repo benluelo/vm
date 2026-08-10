@@ -72,14 +72,7 @@ inline uint64_t op_sub(uint64_t a, uint64_t b) { return a - b; }
 
 inline uint64_t op_mul(uint64_t a, uint64_t b) { return a * b; }
 
-inline uint64_t op_div(uint64_t a, uint64_t b) {
-  // if (b == 0) {
-  //     @branchHint(.cold);
-  //     return Error.DivideByZero;
-  // } else {
-  return a / b;
-  // }
-}
+inline uint64_t op_div(uint64_t a, uint64_t b) { return a / b; }
 
 inline uint64_t op_not(uint64_t a) { return a == 0; }
 
@@ -91,14 +84,7 @@ inline uint64_t op_neq(uint64_t a, uint64_t b) { return a != b; }
 
 inline uint64_t op_eq(uint64_t a, uint64_t b) { return a == b; }
 
-inline uint64_t op_mod(uint64_t a, uint64_t b) {
-  // if (b == 0) {
-  //     @branchHint(.cold);
-  //     return Error.DivideByZero;
-  // } else {
-  return a % b;
-  // }
-}
+inline uint64_t op_mod(uint64_t a, uint64_t b) { return a % b; }
 
 inline uint64_t op_and(uint64_t a, uint64_t b) { return a & b; }
 

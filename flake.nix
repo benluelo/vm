@@ -64,6 +64,35 @@
                 cp -r ${nist-vectors} .nist-vectors
               '';
             };
+            build-zig = pkgs.stdenv.mkDerivation {
+              pname = "vm-zig";
+              version = "0.0.0";
+              src = ./zig;
+              buildInputs = [ pkgs.zigpkgs.master ];
+              buildPhase = ''
+                # zig needs a $HOME dir for caching (non-configurable)
+                export HOME=.
+                zig build --release=fast
+              '';
+              installPhase =''
+                mv ./zig-out "$out"
+              '';
+            };
+            build-c = pkgs.stdenv.mkDerivation {
+              pname = "vm-c";
+              version = "0.0.0";
+              src = ./c;
+              buildInputs = [];
+              buildPhase = ''
+                gcc -flto -Ofast vm.c
+                # clang -flto -O3 vm.c
+              '';
+              installPhase =''
+                mkdir "$out"
+                mkdir "$out/bin"
+                mv ./a.out "$out/bin/vm"
+              '';
+            };
           };
           checks = {
             default = crane.lib.cargoTest {

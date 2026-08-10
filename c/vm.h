@@ -33,13 +33,12 @@ typedef enum VM_ERR {
 } VM_ERR;
 
 typedef struct Memory {
-  size_t len;
-  size_t capacity;
+  size_t size;
   uint8_t *data;
 } Memory;
 
 typedef struct Fat {
-  uint8_t const *ptr;
+  const uint8_t *ptr;
   size_t len;
 } Fat;
 
@@ -48,7 +47,7 @@ typedef struct Vm {
   Fat data;
   Stack stack;
   Memory memory;
-  int pc;
+  size_t pc;
 } Vm;
 
 typedef enum StepResultTag {
@@ -88,3 +87,7 @@ typedef struct RunResult {
 StepResult step_vm(Vm *vm);
 
 RunResult run_vm(Vm *vm);
+
+Vm new_vm(Fat code, Fat data);
+
+Fat new_fat(uint8_t const *ptr, size_t len);

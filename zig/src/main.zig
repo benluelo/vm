@@ -160,6 +160,14 @@ pub const Vm = struct {
     inline fn write_n(self: *Vm, comptime n: usize) Error!void {
         @setRuntimeSafety(false);
 
+        // if (self.stack.items.len < 2) {
+        //     @branchHint(.cold);
+        //     return Error.StackEmpty;
+        // }
+        // const value = self.stack.items.ptr[self.stack.items.len - 1];
+        // const ptr = try asPtr(self.stack.items.ptr[self.stack.items.len - 2]);
+        // self.stack.items.len -= 2;
+
         const value = try self.pop();
         const ptr = try asPtr(try self.pop());
         try checkBounds(u8, self.memory.items, ptr + n);
@@ -244,9 +252,7 @@ pub const Vm = struct {
 
                 idx.* = (try self.getMut(stack_idx)).*;
             },
-            Op.DUP0 => {
-                try self.push(try self.get(0));
-            },
+            Op.DUP0 => try self.push(try self.get(0)),
             Op.SWAP => {
                 const idx = try tryAdd(try asPtr(try self.pop()), 1);
                 const len = self.stack.items.len;
