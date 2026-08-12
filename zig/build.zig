@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.lto = .full;
-    // exe.use_llvm = false;
+    exe.use_llvm = false;
     exe.linkage = .static;
     exe.root_module.error_tracing = false;
 
