@@ -85,7 +85,10 @@ fn nist_vectors() {
 
             let mut ctx = CheckCtx::new("root");
             ctx.check(&new_ast).unwrap();
-            let new_ast = ConstEval::new().run(&ctx, new_ast);
+            let new_ast = DefInline::new().run(&ctx, new_ast);
+
+            let mut ctx = CheckCtx::new("root");
+            let new_ast = ctx.check_with(&new_ast, &mut ConstEval::new()).unwrap();
 
             let mut ctx = CheckCtx::new("root");
             let new_ast = ctx.check_with(&new_ast, &mut DeadCodeRemoval).unwrap();

@@ -164,3 +164,23 @@ fn statement_def() {
 
     println!("{pretty}");
 }
+
+#[test]
+fn multiline_params_def() {
+    let raw = "
+    def f(
+      a, # a
+      b, # b
+      c, # c
+    ) {
+    }
+        ";
+
+    let res = grammar().def.parse(raw).unwrap();
+
+    dbg!(&res);
+
+    // let pretty = print_ast(&res);
+
+    // println!("{pretty}");
+}

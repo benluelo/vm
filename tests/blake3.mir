@@ -1,15 +1,16 @@
-OUT_LEN <- 32 # usize
-KEY_LEN <- 32 # usize
-BLOCK_LEN <- 64 # usize
-CHUNK_LEN <- 1024 # usize
+$OUT_LEN <- 32     # usize
+$KEY_LEN <- 32     # usize
+$BLOCK_LEN <- 64   # usize
+$CHUNK_LEN <- 1024 # usize
 
-CHUNK_START <- shl(1, 0) # u32
-CHUNK_END <- shl(1, 1) # u32
-PARENT <- shl(1, 2) # u32
-ROOT <- shl(1, 3) # u32
-KEYED_HASH <- shl(1, 4) # u32
-DERIVE_KEY_CONTEXT <- shl(1, 5) # u32
-DERIVE_KEY_MATERIAL <- shl(1, 6) # u32
+$CHUNK_START <- shl(1, 0)         # u32
+$CHUNK_END <- shl(1, 1)           # u32
+$PARENT <- shl(1, 2)              # u32
+$ROOT <- shl(1, 3)                # u32
+$KEYED_HASH <- shl(1, 4)          # u32
+$DERIVE_KEY_CONTEXT <- shl(1, 5)  # u32
+$DERIVE_KEY_MATERIAL <- shl(1, 6) # u32
+
 
 def readState(at) -> value {
   value <- read4(mul(at, 4))
@@ -82,16 +83,90 @@ def round(state, m) {
   g(state, 3, 4, 9, 14, readWord(m, 14), readWord(m, 15))
 }
 
+def compress(
+    chaining_value, # &[u32; 8]
+    block_words,    # &[u32; 16]
+    counter,        # u64
+    block_len,      # u32
+    flags,          # u32
+    out             # &mut [u32; 16]
+) {
+  IV_0 <- 0x6A09E667
+  IV_1 <- 0xBB67AE85
+  IV_2 <- 0x3C6EF372
+  IV_3 <- 0xA54FF53A
+  IV_4 <- 0x510E527F
+  IV_5 <- 0x9B05688C
+  IV_6 <- 0x1F83D9AB
+  IV_7 <- 0x5BE0CD19
+
+  counter_low <- counter
+  counter_high <- shr(counter, 32)
+  writeWord(out, 0, readWord(chaining_value, 0))
+  writeWord(out, 1, readWord(chaining_value, 1))
+  writeWord(out, 2, readWord(chaining_value, 2))
+  writeWord(out, 3, readWord(chaining_value, 3))
+  writeWord(out, 4, readWord(chaining_value, 4))
+  writeWord(out, 5, readWord(chaining_value, 5))
+  writeWord(out, 6, readWord(chaining_value, 6))
+  writeWord(out, 7, readWord(chaining_value, 7))
+  writeWord(out, 8, IV_0)
+  writeWord(out, 9, IV_1)
+  writeWord(out, 10, IV_2)
+  writeWord(out, 11, IV_3)
+  writeWord(out, 12, counter_low)
+  writeWord(out, 13, counter_high)
+  writeWord(out, 14, block_len)
+  writeWord(out, 15, flags)
+
+  block <- block_words
+
+  round(out, block) # round 1
+  permute(block)
+  round(out, block) # round 2
+  permute(block)
+  round(out, block) # round 3
+  permute(block)
+  round(out, block) # round 4
+  permute(block)
+  round(out, block) # round 5
+  permute(block)
+  round(out, block) # round 6
+  permute(block)
+  round(out, block) # round 7
+
+  i <- 0
+  loop :a {
+    if eq(i, 8) {
+      break :a
+    }
+
+    state_i <- readWord(out, i)
+    state_i_plus_8 <- readWord(out, add(i, 8))
+    # state[i] ^= state[i + 8]
+    writeWord(
+      out, i,
+      xor(state_i, state_i_plus_8)
+    )
+    # state[i + 8] ^= chaining_value[i]
+    writeWord(
+      out, add(i, 8),
+      xor(state_i_plus_8, readWord(chaining_value, add(i, 8)))
+    )
+
+    i <- add(i, 1)
+  }
+}
+
 # state
-alloc(mul(4, 16))
+alloc(mul(4, 16)) # sizeof([u32; 16])
 # m
-alloc(mul(4, 16))
-# scratch
-alloc(mul(4, 16))
+alloc(mul(4, 16)) # sizeof([u32; 16])
+
+# Output
+alloc(70) # sizeof(Output)
 
 MSG_PERMUTATION <- mul(4, 16)
-
-scratch <- mul(2, mul(4, 16))
 
 writeWord(MSG_PERMUTATION, 0, 2)
 writeWord(MSG_PERMUTATION, 1, 6)
@@ -109,3 +184,234 @@ writeWord(MSG_PERMUTATION, 12, 9)
 writeWord(MSG_PERMUTATION, 13, 14)
 writeWord(MSG_PERMUTATION, 14, 15)
 writeWord(MSG_PERMUTATION, 15, 8)
+
+##########
+# Output #
+##########
+
+# Each chunk or parent node can produce either an 8-word chaining value or, by
+# setting the ROOT flag, any number of final output bytes. The Output struct
+# captures the state just prior to choosing between those two possibilities.
+#
+# struct Output {
+#     input_chaining_value: [u32; 8],
+#     block_words: [u32; 16],
+#     counter: u64,
+#     block_len: u32,
+#     flags: u32,
+# }
+
+def copyWords(from, to, len) {
+  i <- 0
+  loop :copy {
+    if eq(i, len) {
+      break :copy
+    }
+
+    write4(add(from, mul(i, 4)), read4(add(from, mul(i, 4))))
+
+    i <- add(i, 1)
+  }
+}
+
+# def Output__init(ptr, input_chaining_value, block_words, counter, block_len, flags) {
+#   copyWords(input_chaining_value, Output__input_chaining_value__ptr(ptr), 8)
+#   copyWords(block_words, Output__block_words__ptr(ptr), 16)
+#   Output__counter__set(ptr, counter)
+#   Output__block_len__set(ptr, block_len)
+#   Output__flags__set(ptr, flags)
+# }
+
+def Output__input_chaining_value__ptr(ptr) -> arr_ptr {
+  arr_ptr <- ptr
+}
+
+def Output__block_words__ptr(ptr) -> arr_ptr {
+  arr_ptr <- add(ptr, mul(4, 8))
+}
+
+def Output__counter__get(ptr) -> counter {
+  counter <- read8(add(ptr, add(mul(4, 8), mul(4, 16))))
+}
+
+def Output__counter__set(ptr, counter) {
+  write8(add(ptr, add(mul(4, 8), mul(4, 16))), counter)
+}
+
+def Output__block_len__get(ptr) -> block_len {
+  block_len <- read4(add(ptr, add(add(mul(4, 8), mul(4, 16)), 8)))
+}
+
+def Output__block_len__set(ptr, block_len) {
+  write4(add(ptr, add(add(mul(4, 8), mul(4, 16)), 8)), block_len)
+}
+
+def Output__flags__get(ptr) -> flags {
+  flags <- read4(add(ptr, add(add(add(mul(4, 8), mul(4, 16)), 8), 4)))
+}
+
+def Output__flags__set(ptr, flags) {
+  write4(add(ptr, add(add(add(mul(4, 8), mul(4, 16)), 8), 4)), flags)
+}
+
+##############
+# ChunkState #
+##############
+
+# struct ChunkState {
+#     chaining_value: [u32; 8],
+#     chunk_counter: u64,
+#     block: [u8; BLOCK_LEN],
+#     block_len: u8,
+#     blocks_compressed: u8,
+#     flags: u32,
+# }
+
+
+hasher__chunk_state__chaining_value <- 0    # [u32; 8]
+hasher__chunk_state__chunk_counter <- 0     # u64
+hasher__chunk_state__block <- 0             # [u8; BLOCK_LEN]
+hasher__chunk_state__block_len <- 0         # u8
+hasher__chunk_state__blocks_compressed <- 0 # u8
+hasher__chunk_state__flags <- 0             # u32
+
+hasher__key_words <- 0    # [u32; 8]
+hasher__cv_stack <- 0     # [[u32; 8]; 54] Space for 54 subtree chaining values
+                          #                2^54 * CHUNK_LEN <- 2^64
+hasher__cv_stack_len <- 0 # u8
+hasher__flags <- 0        # u32
+
+def first_8_words(
+  compression_output, # [u32; 16]
+) -> ptr {
+    # effectively a noop since this is just a sizing conversion from 16 wrods to 8
+    # compression_output[0..8].try_into().unwrap()
+    ptr <- compression_output
+}
+
+
+def parent_output(
+  left_child_cv,  # [u32; 8]
+  right_child_cv, # [u32; 8]
+  key_words,      # [u32; 8]
+  flags,          # u32
+  out,            # Output
+) {
+  copyWords(input_chaining_value, Output__input_chaining_value__ptr(ptr), 8)
+  # block_words[..8].copy_from_slice(&left_child_cv)
+  copyWords(left_child_cv, Output__block_words__ptr(ptr), 8)
+  # block_words[8..].copy_from_slice(&right_child_cv)
+  copyWords(right_child_cv, add(Output__block_words__ptr(ptr), mul(4, 8)), 8)
+  Output__counter__set(ptr, 0) # Always 0 for parent nodes.
+  Output__block_len__set(ptr, BLOCK_LEN) # Always BLOCK_LEN (64) for parent nodes.
+  Output__flags__set(ptr, or(PARENT, flags))
+}
+
+def parent_cv(
+  left_child_cv,  # [u32; 8]
+  right_child_cv, # [u32; 8]
+  key_words,      # [u32; 8]
+  flags,          # u32
+  out,            # [u32; 8] 
+) {
+  parent_output(left_child_cv, right_child_cv, key_words, flags, out)
+
+  Output__chaining_value(out)
+}
+
+def Output__chaining_value(
+  self, # Output
+  out, # [u32; 8]
+) {
+  first_8_words(compress(
+    &self.input_chaining_value,
+    &self.block_words,
+    self.counter,
+    self.block_len,
+    self.flags,
+  ))
+}
+
+def Output__root_output_bytes(self, out_len, out_slice) {
+  OUT_LEN <- 32 # usize
+
+  output_block_counter <- 0
+
+  out_block <- 0
+  loop :a out_block in out_slice {
+    if gt(out_block, mul(2, OUT_LEN)) {
+      break :a
+    }
+
+    compress(
+      Output__input_chaining_value__ptr(self),
+      Output__block_words__get(self),
+      output_block_counter,
+      Output__block_len__get(self),
+      or(Output__flags__get(self), ROOT),
+      words,
+    )
+    # The output length might not be a multiple of 4.
+    # TODO: Handle this correctly
+    i <- 0
+    loop :copy {
+      writeWord(out_block, i, readWord(words, i))
+      # for (word, out_word) in words.iter().zip(out_block.chunks_mut(4)) {
+      #   out_word.copy_from_slice(word.to_le_bytes()[..out_word.len()])
+      # }
+      # FIXME: This is broken I'm pretty sure
+      if gt(i, div(out_block, 4)) {
+        break :copy
+      }
+    }
+    output_block_counter <- add(output_block_counter, 1)
+    out_block <- add(out_block, mul(2, OUT_LEN))
+  }
+}
+
+
+
+def add_chunk_chaining_value(mut new_cv: [u32; 8], mut total_chunks: u64) {
+  # This chunk might complete some subtrees. For each completed subtree,
+  # its left child will be the current top entry in the CV stack, and
+  # its right child will be the current value of `new_cv`. Pop each left
+  # child off the stack, merge it with `new_cv`, and overwrite `new_cv`
+  # with the result. After all these merges, push the final value of
+  # `new_cv` onto the stack. The number of completed subtrees is given
+  # by the number of trailing 0-bits in the new total number of chunks.
+  loop :a {
+    if eq(and(total_chunks, 1), 0) {
+      new_cv <- parent_cv(self.pop_stack(), new_cv, self.key_words, self.flags)
+      total_chunks <- shr(total_chunks, 1)
+    } else {
+      break :a
+    }
+  }
+  self.push_stack(new_cv)
+}
+
+
+
+len <- 0
+loop :input {
+  if eq(len, dlen()) {
+    break :input
+  }
+
+
+  # If the current chunk is complete, finalize it and reset the
+  # chunk state. More input is coming, so this chunk is not ROOT.
+  if eq(chunk_state.len() <- CHUNK_LEN {
+    println!("full chunk")
+    chunk_cv <- self.chunk_state.output().chaining_value()
+    total_chunks <- self.chunk_state.chunk_counter + 1
+    self.add_chunk_chaining_value(chunk_cv, total_chunks)
+    self.chunk_state <- ChunkState::new(self.key_words, total_chunks, self.flags)
+  }
+
+  # Compress input bytes into the current chunk state.
+  want <- CHUNK_LEN - self.chunk_state.len()
+  take <- min(want, input.len())
+  self.chunk_state.update(&input[..take])
+  input <- &input[take..]
+}

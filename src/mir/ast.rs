@@ -31,6 +31,14 @@ impl<'a> Ident<'a> {
     pub fn new(ident: impl Into<Cow<'a, str>>) -> Self {
         Self::new_spanned(Spanned { inner: ident.into(), span: (0..0).into() })
     }
+
+    pub fn as_static(&self) -> Ident<'static> {
+        Ident(Spanned { inner: self.0.inner.clone().into_owned().into(), span: self.0.span })
+    }
+
+    pub fn span(&self) -> SimpleSpan {
+        self.0.span
+    }
 }
 
 impl<'a> fmt::Debug for Ident<'a> {

@@ -4,7 +4,7 @@ use core::fmt;
 use std::{
     cmp, fs, io,
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -35,7 +35,7 @@ use vm::{
     CycleCountHook, Error, Hook, Op, StepResult, Vm,
     assembler::parse_asm,
     mir::{
-        self, CheckCtx, Ctx,
+        self, CheckCtx, CompileResult, Ctx,
         parse::print_ast,
         pass::{ConstEval, ConstProp, DeadCodeRemoval, DefInline, LoopUnroll, Pass},
     },
@@ -179,8 +179,7 @@ fn main() -> anyhow::Result<()> {
                     ctx.check(&obj)?;
                 }
                 Err(errs) => {
-                    report_errors(&source, errs);
-                    return Ok(());
+                    report_errors(&file, &source, errs);
                 }
             }
         }
@@ -191,14 +190,18 @@ fn main() -> anyhow::Result<()> {
                 match parse_asm().parse(&source).into_result() {
                     Ok(obj) => obj.assemble(),
                     Err(errs) => {
-                        report_errors(&source, errs);
-                        return Ok(());
+                        report_errors(&file, &source, errs);
                     }
                 }
             } else {
                 match mir::parse::grammar().block.parse(&source).into_result() {
                     Ok(ast) => {
-                        let ast = optimize(ast)?;
+                        let ast = match optimize(ast) {
+                            Ok(ast) => ast,
+                            Err(err) => {
+                                report_errors(&file, &source, vec![err.into_rich()]);
+                            }
+                        };
 
                         // println!("{}", print_ast(&ast));
 
@@ -217,8 +220,7 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                     Err(errs) => {
-                        report_errors(&source, errs);
-                        return Ok(());
+                        report_errors(&file, &source, errs);
                     }
                 }
             };
@@ -234,17 +236,16 @@ fn main() -> anyhow::Result<()> {
             let obj = if obj {
                 fs::read(&file)?
             } else if asm {
-                let file = fs::read_to_string(&file)?;
-                match parse_asm().parse(&file).into_result() {
+                let source = fs::read_to_string(&file)?;
+                match parse_asm().parse(&source).into_result() {
                     Ok(obj) => obj.assemble(),
                     Err(errs) => {
-                        report_errors(&file, errs);
-                        return Ok(());
+                        report_errors(&file, &source, errs);
                     }
                 }
             } else {
-                let file = fs::read_to_string(&file)?;
-                match mir::parse::grammar().block.parse(&file).into_result() {
+                let source = fs::read_to_string(&file)?;
+                match mir::parse::grammar().block.parse(&source).into_result() {
                     Ok(ast) => {
                         let ast = optimize(ast)?;
 
@@ -254,8 +255,7 @@ fn main() -> anyhow::Result<()> {
                         ctx.into_object().assemble()
                     }
                     Err(errs) => {
-                        report_errors(&file, errs);
-                        return Ok(());
+                        report_errors(&file, &source, errs);
                     }
                 }
             };
@@ -349,7 +349,7 @@ fn read_input(
     Ok(data)
 }
 
-fn optimize(ast: mir::ast::Block<'_>) -> Result<mir::ast::Block<'_>, anyhow::Error> {
+fn optimize(ast: mir::ast::Block<'_>) -> CompileResult<mir::ast::Block<'_>> {
     let mut ctx = CheckCtx::new("root");
     ctx.check(&ast)?;
     let ast = DefInline::new().run(&ctx, ast);
@@ -390,25 +390,29 @@ fn optimize(ast: mir::ast::Block<'_>) -> Result<mir::ast::Block<'_>, anyhow::Err
     )]
     let now =
         SystemTime::now().duration_since(UNIX_EPOCH).expect("???").as_nanos() - 1784300000000000000;
-    fs::write(format!("out-{now}.mir"), print_ast(&ast))?;
+    fs::write(format!("out-{now}.mir"), print_ast(&ast)).unwrap();
 
     Ok(ast)
 }
 
-fn report_errors(file: &str, errs: Vec<Rich<'_, char>>) {
+fn report_errors(file_name: &Path, file: &str, errs: Vec<Rich<'_, char>>) -> ! {
+    let file_name = file_name.display().to_string();
+
     for e in errs {
-        Report::build(ReportKind::Error, ((), e.span().into_range()))
+        Report::build(ReportKind::Error, (&file_name, e.span().into_range()))
             .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
             .with_message(e.to_string())
             .with_label(
-                Label::new(((), e.span().into_range()))
+                Label::new((&file_name, e.span().into_range()))
                     .with_message(e.reason().to_string())
                     .with_color(ariadne::Color::Red),
             )
             .finish()
-            .print(Source::from(&file))
+            .print((&file_name, Source::from(&file)))
             .unwrap()
     }
+
+    std::process::exit(-1);
 }
 
 pub struct DebugHook {
@@ -648,13 +652,13 @@ impl App {
         }
     }
 
-    fn on_left(&mut self) {}
+    // fn on_left(&mut self) {}
 
-    fn on_up(&mut self) {}
+    // fn on_up(&mut self) {}
 
-    fn on_right(&mut self) {}
+    // fn on_right(&mut self) {}
 
-    fn on_down(&mut self) {}
+    // fn on_down(&mut self) {}
 
     fn on_key(&mut self, c: char) {
         match c {
@@ -1062,9 +1066,9 @@ pub fn run(mut app: App) -> anyhow::Result<()> {
                     _ => {}
                 },
                 event::Event::Mouse(mouse_event) => match mouse_event.kind {
-                    event::MouseEventKind::Down(mouse_button) => {}
-                    event::MouseEventKind::Up(mouse_button) => {}
-                    event::MouseEventKind::Drag(mouse_button) => {}
+                    event::MouseEventKind::Down(_mouse_button) => {}
+                    event::MouseEventKind::Up(_mouse_button) => {}
+                    event::MouseEventKind::Drag(_mouse_button) => {}
                     event::MouseEventKind::Moved => {}
                     event::MouseEventKind::ScrollDown => app.scroll_down(),
                     event::MouseEventKind::ScrollUp => app.scroll_up(),
@@ -1123,6 +1127,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         left,
     );
 
+    #[expect(unused_variables)]
     let (new_range, highlight_idxs, mem_color) = match app.vm.hook.ops.last() {
         Some(op) => match op {
             FullOp::ALLOC { amount } => {
@@ -1346,7 +1351,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 }
 
 #[derive(Debug)]
-#[allow(clippy::upper_case_acronyms)]
+#[allow(clippy::upper_case_acronyms, dead_code)]
 enum FullOp {
     PUSH0,
     PUSH1(u64),
@@ -1500,6 +1505,7 @@ const JUMP_STYLE: Style = Style::new().fg(Color::from_u32(0xF514EE));
 const DST_OK_STYLE: Style = Style::new().underlined().not_dim();
 const DST_NOK_STYLE: Style = Style::new().crossed_out().not_dim();
 
+#[allow(unused_variables)]
 impl fmt::Display for FullOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

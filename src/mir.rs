@@ -4,7 +4,7 @@ use std::{
     fmt, iter,
 };
 
-use chumsky::span::Spanned;
+use chumsky::{error::Rich, span::Spanned};
 use indexmap::IndexMap;
 use tracing::{info_span, instrument, trace};
 
@@ -70,9 +70,9 @@ impl<'a> Scope<'a> {
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum CompileError {
     #[error("var '{var}' not found")]
-    VarNotFound { var: String },
+    VarNotFound { var: Ident<'static> },
     #[error("def '{def}' not found")]
-    DefNotFound { def: String },
+    DefNotFound { def: Ident<'static> },
     #[error(
         "builtin '{builtin}' can not be used as an expression as it does not return any values"
     )]
@@ -91,6 +91,27 @@ pub enum CompileError {
     SpreadTopLevel {},
     #[error("label '{label}' not found")]
     LabelNotFound { label: String },
+}
+
+impl CompileError {
+    pub fn into_rich(self) -> Rich<'static, char> {
+        let msg = self.to_string();
+
+        let span = match self {
+            CompileError::VarNotFound { var } => var.span(),
+            CompileError::DefNotFound { def } => def.span(),
+            CompileError::StatementBuiltin { .. } => (0..0).into(),
+            CompileError::StatementDef { .. } => (0..0).into(),
+            CompileError::InvalidArgCountBuiltin { .. } => (0..0).into(),
+            CompileError::InvalidArgCountDef { .. } => (0..0).into(),
+            CompileError::SpreadRequired { .. } => (0..0).into(),
+            CompileError::InvalidSpread { .. } => (0..0).into(),
+            CompileError::SpreadTopLevel {} => (0..0).into(),
+            CompileError::LabelNotFound { .. } => (0..0).into(),
+        };
+
+        Rich::custom(span, msg)
+    }
 }
 
 pub type CompileResult<T = ()> = Result<T, CompileError>;
@@ -709,7 +730,7 @@ impl<'a> Ctx<'a> {
 
                 let arity = self
                     .get_def(def)
-                    .ok_or_else(|| CompileError::DefNotFound { def: def.to_string() })?
+                    .ok_or_else(|| CompileError::DefNotFound { def: def.as_static() })?
                     .0
                     .rets
                     .len();
@@ -748,7 +769,7 @@ impl<'a> Ctx<'a> {
                 }
                 Expr::Var(var) => {
                     let Some(idx) = ctx.get_var(var) else {
-                        return Err(CompileError::VarNotFound { var: var.to_string() });
+                        return Err(CompileError::VarNotFound { var: var.as_static() });
                     };
                     // dbg!(&ctx.scopes);
                     trace!("var '{var}' (idx: {idx}, depth: {})", ctx.stack_depth);
@@ -1201,7 +1222,7 @@ impl<'a> CheckCtx<'a> {
 
                 let arity = self
                     .get_def(def)
-                    .ok_or_else(|| CompileError::DefNotFound { def: def.to_string() })?
+                    .ok_or_else(|| CompileError::DefNotFound { def: def.as_static() })?
                     .rets
                     .len();
 
@@ -1554,7 +1575,7 @@ impl<'a> CheckCtx<'a> {
                 }
                 Expr::Var(var) => {
                     if !ctx.has_var(var) {
-                        return Err(CompileError::VarNotFound { var: var.to_string() });
+                        return Err(CompileError::VarNotFound { var: var.as_static() });
                     };
                 }
                 Expr::Call { spread, f, args: exprs } => {
@@ -1767,8 +1788,7 @@ impl<'a> CheckCtx<'a> {
 
                             // all args are dropped from the stack
                             ctx.pop_scope(ScopeLabel::None)?;
-                        }
-                        _ => todo!("{f:?}"),
+                        } // _ => todo!("{f:?}"),
                     }
                 }
             }

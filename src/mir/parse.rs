@@ -128,7 +128,12 @@ pub fn grammar<'a>() -> Grammar<
     }
 
     fn ident_list<'a>() -> Parser!['a, Vec<Ident<'a>>] {
-        ident().padded().separated_by(just(',')).allow_trailing().collect()
+        ident()
+            .padded()
+            .padded_by(comment().repeated())
+            .separated_by(just(','))
+            .allow_trailing()
+            .collect()
     }
 
     fn non_empty_ident_list<'a>() -> Parser!['a, Vec<Ident<'a>>] {
@@ -201,7 +206,14 @@ pub fn grammar<'a>() -> Grammar<
         keyword("def")
             .padded()
             .ignore_then(ident().padded())
-            .then(ident_list().delimited_by(just('(').padded(), just(')').padded()).padded())
+            .then(
+                ident_list()
+                    .delimited_by(
+                        just('(').padded().padded_by(comment().repeated()),
+                        just(')').padded().padded_by(comment().repeated()),
+                    )
+                    .padded(),
+            )
             .then(just("->").padded().ignore_then(non_empty_ident_list().padded()).or_not())
             .then(block.clone().delimited_by(just('{').padded(), just('}').padded()))
             .map(|(((ident, args), ret), body)| Def {
