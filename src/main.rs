@@ -248,16 +248,6 @@ fn main() -> anyhow::Result<()> {
                     Ok(ast) => {
                         let ast = optimize(ast)?;
 
-                        #[expect(
-                            clippy::unwrap_in_result,
-                            reason = "if this errors we probably have bigger issues to deal with"
-                        )]
-                        let now =
-                            SystemTime::now().duration_since(UNIX_EPOCH).expect("???").as_nanos()
-                                - 1784300000000000000;
-                        fs::write(format!("out-{now}.mir"), print_ast(&ast))?;
-                        // fs::write("after.mir", print_ast(&ast2))?;
-
                         // println!("{}", print_ast(&ast));
                         let mut ctx = Ctx::new_root();
                         ctx.compile(&ast)?;
@@ -393,6 +383,15 @@ fn optimize(ast: mir::ast::Block<'_>) -> Result<mir::ast::Block<'_>, anyhow::Err
             }
         }
     }
+
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "if this errors we probably have bigger issues to deal with"
+    )]
+    let now =
+        SystemTime::now().duration_since(UNIX_EPOCH).expect("???").as_nanos() - 1784300000000000000;
+    fs::write(format!("out-{now}.mir"), print_ast(&ast))?;
+
     Ok(ast)
 }
 

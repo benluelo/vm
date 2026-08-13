@@ -5,3 +5,6 @@ cargo build --profile profiling -Ftracing-off 2>/dev/null 1>/dev/null && time ..
 zig build --release=fast && time ./zig-out/bin/vm ../tests/sha3-256.o ../../random.bin
 
 gcc -flto -Ofast c/vm.c && time ./a.out ./tests/sha3-256.o ../random.bin
+
+
+hx $(ls out-*.mir -t | head -1)

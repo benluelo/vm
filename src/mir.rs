@@ -899,6 +899,12 @@ impl<'a> Ctx<'a> {
                             ctx.dec_stack();
                             ctx.dec_stack();
                         }
+                        BuiltinOrDef::Builtin(Builtin::Write4) => {
+                            ensure_arity_and_eval_args(ctx, depth, "write4", 2, exprs)?;
+                            ctx.current_section().push(AsmOp::WRITE4);
+                            ctx.dec_stack();
+                            ctx.dec_stack();
+                        }
                         BuiltinOrDef::Builtin(Builtin::Write8) => {
                             ensure_arity_and_eval_args(ctx, depth, "write8", 2, exprs)?;
                             ctx.current_section().push(AsmOp::WRITE8);
@@ -908,6 +914,10 @@ impl<'a> Ctx<'a> {
                         BuiltinOrDef::Builtin(Builtin::Read1) => {
                             ensure_arity_and_eval_args(ctx, depth, "read1", 1, exprs)?;
                             ctx.current_section().push(AsmOp::READ1);
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Read4) => {
+                            ensure_arity_and_eval_args(ctx, depth, "read4", 1, exprs)?;
+                            ctx.current_section().push(AsmOp::READ4);
                         }
                         BuiltinOrDef::Builtin(Builtin::Read8) => {
                             ensure_arity_and_eval_args(ctx, depth, "read8", 1, exprs)?;
@@ -1012,7 +1022,7 @@ impl<'a> Ctx<'a> {
                                 ctx.inc_stack();
                             }
                         }
-                        _ => todo!(),
+                        _ => todo!("{f:?}"),
                     }
                 }
             }
@@ -1633,17 +1643,68 @@ impl<'a> CheckCtx<'a> {
                         BuiltinOrDef::Builtin(Builtin::Write2) => {
                             ensure_arity_and_eval_args(ctx, depth, "write2", 2, exprs)?;
                         }
+                        BuiltinOrDef::Builtin(Builtin::Write3) => {
+                            ensure_arity_and_eval_args(ctx, depth, "write3", 2, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Write4) => {
+                            ensure_arity_and_eval_args(ctx, depth, "write4", 2, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Write5) => {
+                            ensure_arity_and_eval_args(ctx, depth, "write5", 2, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Write6) => {
+                            ensure_arity_and_eval_args(ctx, depth, "write6", 2, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Write7) => {
+                            ensure_arity_and_eval_args(ctx, depth, "write7", 2, exprs)?;
+                        }
                         BuiltinOrDef::Builtin(Builtin::Write8) => {
                             ensure_arity_and_eval_args(ctx, depth, "write8", 2, exprs)?;
                         }
                         BuiltinOrDef::Builtin(Builtin::Read1) => {
                             ensure_arity_and_eval_args(ctx, depth, "read1", 1, exprs)?;
                         }
+                        BuiltinOrDef::Builtin(Builtin::Read2) => {
+                            ensure_arity_and_eval_args(ctx, depth, "read2", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Read3) => {
+                            ensure_arity_and_eval_args(ctx, depth, "read3", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Read4) => {
+                            ensure_arity_and_eval_args(ctx, depth, "read4", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Read5) => {
+                            ensure_arity_and_eval_args(ctx, depth, "read5", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Read6) => {
+                            ensure_arity_and_eval_args(ctx, depth, "read6", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Read7) => {
+                            ensure_arity_and_eval_args(ctx, depth, "read7", 1, exprs)?;
+                        }
                         BuiltinOrDef::Builtin(Builtin::Read8) => {
                             ensure_arity_and_eval_args(ctx, depth, "read8", 1, exprs)?;
                         }
                         BuiltinOrDef::Builtin(Builtin::Dread1) => {
                             ensure_arity_and_eval_args(ctx, depth, "dread1", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Dread2) => {
+                            ensure_arity_and_eval_args(ctx, depth, "dread2", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Dread3) => {
+                            ensure_arity_and_eval_args(ctx, depth, "dread3", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Dread4) => {
+                            ensure_arity_and_eval_args(ctx, depth, "dread4", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Dread5) => {
+                            ensure_arity_and_eval_args(ctx, depth, "dread5", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Dread6) => {
+                            ensure_arity_and_eval_args(ctx, depth, "dread6", 1, exprs)?;
+                        }
+                        BuiltinOrDef::Builtin(Builtin::Dread7) => {
+                            ensure_arity_and_eval_args(ctx, depth, "dread7", 1, exprs)?;
                         }
                         BuiltinOrDef::Builtin(Builtin::Dread8) => {
                             ensure_arity_and_eval_args(ctx, depth, "dread8", 1, exprs)?;
@@ -1707,7 +1768,7 @@ impl<'a> CheckCtx<'a> {
                             // all args are dropped from the stack
                             ctx.pop_scope(ScopeLabel::None)?;
                         }
-                        _ => todo!(),
+                        _ => todo!("{f:?}"),
                     }
                 }
             }
