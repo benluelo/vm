@@ -199,7 +199,7 @@ fn main() -> anyhow::Result<()> {
                         let ast = match optimize(ast) {
                             Ok(ast) => ast,
                             Err(err) => {
-                                report_errors(&file, &source, vec![err.into_rich()]);
+                                report_errors(&file, &source, err.into_rich());
                             }
                         };
 

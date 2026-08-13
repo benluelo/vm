@@ -1,15 +1,57 @@
-$OUT_LEN <- 32     # usize
-$KEY_LEN <- 32     # usize
-$BLOCK_LEN <- 64   # usize
-$CHUNK_LEN <- 1024 # usize
+##########
+# CONSTS #
+##########
 
-$CHUNK_START <- shl(1, 0)         # u32
-$CHUNK_END <- shl(1, 1)           # u32
-$PARENT <- shl(1, 2)              # u32
-$ROOT <- shl(1, 3)                # u32
-$KEYED_HASH <- shl(1, 4)          # u32
-$DERIVE_KEY_CONTEXT <- shl(1, 5)  # u32
-$DERIVE_KEY_MATERIAL <- shl(1, 6) # u32
+def OUT_LEN() -> x { x <- 32 }     # usize
+def KEY_LEN() -> x { x <- 32 }     # usize
+def BLOCK_LEN() -> x { x <- 64 }   # usize
+def CHUNK_LEN() -> x { x <- 1024 } # usize
+
+def CHUNK_START() -> x { x <- shl(1, 0) }         # u32
+def CHUNK_END() -> x { x <- shl(1, 1) }           # u32
+def PARENT() -> x { x <- shl(1, 2) }              # u32
+def ROOT() -> x { x <- shl(1, 3) }                # u32
+def KEYED_HASH() -> x { x <- shl(1, 4) }          # u32
+def DERIVE_KEY_CONTEXT() -> x { x <- shl(1, 5) }  # u32
+def DERIVE_KEY_MATERIAL() -> x { x <- shl(1, 6) } # u32
+
+#########
+# UTILS #
+#########
+
+def min(a, b) -> c {
+  if lt(a, b) {
+    c <- a
+  } else {
+    c <- b
+  }
+}
+
+def copyWords(from, to, len) {
+  i <- 0
+  loop :copy {
+    if eq(i, len) {
+      break :copy
+    }
+
+    write4(add(to, mul(i, 4)), read4(add(from, mul(i, 4))))
+
+    i <- add(i, 1)
+  }
+}
+
+def zeroWords(words, len) {
+  i <- 0
+  loop :copy {
+    if eq(i, len) {
+      break :copy
+    }
+
+    write4(add(words, mul(i, 4)), 0)
+
+    i <- add(i, 1)
+  }
+}
 
 
 def readState(at) -> value {
@@ -158,33 +200,6 @@ def compress(
   }
 }
 
-# state
-alloc(mul(4, 16)) # sizeof([u32; 16])
-# m
-alloc(mul(4, 16)) # sizeof([u32; 16])
-
-# Output
-alloc(70) # sizeof(Output)
-
-MSG_PERMUTATION <- mul(4, 16)
-
-writeWord(MSG_PERMUTATION, 0, 2)
-writeWord(MSG_PERMUTATION, 1, 6)
-writeWord(MSG_PERMUTATION, 2, 3)
-writeWord(MSG_PERMUTATION, 3, 10)
-writeWord(MSG_PERMUTATION, 4, 7)
-writeWord(MSG_PERMUTATION, 5, 0)
-writeWord(MSG_PERMUTATION, 6, 4)
-writeWord(MSG_PERMUTATION, 7, 13)
-writeWord(MSG_PERMUTATION, 8, 1)
-writeWord(MSG_PERMUTATION, 9, 11)
-writeWord(MSG_PERMUTATION, 10, 12)
-writeWord(MSG_PERMUTATION, 11, 5)
-writeWord(MSG_PERMUTATION, 12, 9)
-writeWord(MSG_PERMUTATION, 13, 14)
-writeWord(MSG_PERMUTATION, 14, 15)
-writeWord(MSG_PERMUTATION, 15, 8)
-
 ##########
 # Output #
 ##########
@@ -201,155 +216,61 @@ writeWord(MSG_PERMUTATION, 15, 8)
 #     flags: u32,
 # }
 
-def copyWords(from, to, len) {
-  i <- 0
-  loop :copy {
-    if eq(i, len) {
-      break :copy
-    }
+def OUTPUT__BLOCK_WORDS__OFFSET() -> x { x <- mul(4, 8)                                     }
+def OUTPUT__COUNTER__OFFSET()     -> x { x <- add(mul(4, 8), OUTPUT__BLOCK_WORDS__OFFSET()) }
+def OUTPUT__BLOCK_LEN__OFFSET()   -> x { x <- add(8,         OUTPUT__COUNTER__OFFSET())     }
+def OUTPUT__FLAGS__OFFSET()       -> x { x <- add(4,         OUTPUT__BLOCK_LEN__OFFSET())   }
 
-    write4(add(from, mul(i, 4)), read4(add(from, mul(i, 4))))
+def OUTPUT__SIZE() -> x { x <- add(OUTPUT__FLAGS__OFFSET(), 4) }
 
-    i <- add(i, 1)
-  }
-}
+# accessors
 
-# def Output__init(ptr, input_chaining_value, block_words, counter, block_len, flags) {
-#   copyWords(input_chaining_value, Output__input_chaining_value__ptr(ptr), 8)
-#   copyWords(block_words, Output__block_words__ptr(ptr), 16)
-#   Output__counter__set(ptr, counter)
-#   Output__block_len__set(ptr, block_len)
-#   Output__flags__set(ptr, flags)
-# }
+def Output__input_chaining_value__ptr(self) -> arr_ptr { arr_ptr <- self }
+def Output__block_words__ptr(self)          -> arr_ptr { arr_ptr <- add(self, OUTPUT__BLOCK_WORDS__OFFSET()) }
 
-def Output__input_chaining_value__ptr(ptr) -> arr_ptr {
-  arr_ptr <- ptr
-}
+def Output__counter__get(self) -> counter     { counter   <- read8(add(self, OUTPUT__COUNTER__OFFSET()))   }
+def Output__block_len__get(self) -> block_len { block_len <- read4(add(self, OUTPUT__BLOCK_LEN__OFFSET())) }
+def Output__flags__get(self) -> flags         { flags     <- read4(add(self, OUTPUT__FLAGS__OFFSET()))     }
 
-def Output__block_words__ptr(ptr) -> arr_ptr {
-  arr_ptr <- add(ptr, mul(4, 8))
-}
+def Output__counter__set(self, counter)     { write8(add(self, OUTPUT__COUNTER__OFFSET()),   counter)   }
+def Output__block_len__set(self, block_len) { write4(add(self, OUTPUT__BLOCK_LEN__OFFSET()), block_len) }
+def Output__flags__set(self, flags)         { write4(add(self, OUTPUT__FLAGS__OFFSET()),     flags)     }
 
-def Output__counter__get(ptr) -> counter {
-  counter <- read8(add(ptr, add(mul(4, 8), mul(4, 16))))
-}
-
-def Output__counter__set(ptr, counter) {
-  write8(add(ptr, add(mul(4, 8), mul(4, 16))), counter)
-}
-
-def Output__block_len__get(ptr) -> block_len {
-  block_len <- read4(add(ptr, add(add(mul(4, 8), mul(4, 16)), 8)))
-}
-
-def Output__block_len__set(ptr, block_len) {
-  write4(add(ptr, add(add(mul(4, 8), mul(4, 16)), 8)), block_len)
-}
-
-def Output__flags__get(ptr) -> flags {
-  flags <- read4(add(ptr, add(add(add(mul(4, 8), mul(4, 16)), 8), 4)))
-}
-
-def Output__flags__set(ptr, flags) {
-  write4(add(ptr, add(add(add(mul(4, 8), mul(4, 16)), 8), 4)), flags)
-}
-
-##############
-# ChunkState #
-##############
-
-# struct ChunkState {
-#     chaining_value: [u32; 8],
-#     chunk_counter: u64,
-#     block: [u8; BLOCK_LEN],
-#     block_len: u8,
-#     blocks_compressed: u8,
-#     flags: u32,
-# }
-
-
-hasher__chunk_state__chaining_value <- 0    # [u32; 8]
-hasher__chunk_state__chunk_counter <- 0     # u64
-hasher__chunk_state__block <- 0             # [u8; BLOCK_LEN]
-hasher__chunk_state__block_len <- 0         # u8
-hasher__chunk_state__blocks_compressed <- 0 # u8
-hasher__chunk_state__flags <- 0             # u32
-
-hasher__key_words <- 0    # [u32; 8]
-hasher__cv_stack <- 0     # [[u32; 8]; 54] Space for 54 subtree chaining values
-                          #                2^54 * CHUNK_LEN <- 2^64
-hasher__cv_stack_len <- 0 # u8
-hasher__flags <- 0        # u32
-
-def first_8_words(
-  compression_output, # [u32; 16]
-) -> ptr {
-    # effectively a noop since this is just a sizing conversion from 16 wrods to 8
-    # compression_output[0..8].try_into().unwrap()
-    ptr <- compression_output
-}
-
-
-def parent_output(
-  left_child_cv,  # [u32; 8]
-  right_child_cv, # [u32; 8]
-  key_words,      # [u32; 8]
-  flags,          # u32
-  out,            # Output
-) {
-  copyWords(input_chaining_value, Output__input_chaining_value__ptr(ptr), 8)
-  # block_words[..8].copy_from_slice(&left_child_cv)
-  copyWords(left_child_cv, Output__block_words__ptr(ptr), 8)
-  # block_words[8..].copy_from_slice(&right_child_cv)
-  copyWords(right_child_cv, add(Output__block_words__ptr(ptr), mul(4, 8)), 8)
-  Output__counter__set(ptr, 0) # Always 0 for parent nodes.
-  Output__block_len__set(ptr, BLOCK_LEN) # Always BLOCK_LEN (64) for parent nodes.
-  Output__flags__set(ptr, or(PARENT, flags))
-}
-
-def parent_cv(
-  left_child_cv,  # [u32; 8]
-  right_child_cv, # [u32; 8]
-  key_words,      # [u32; 8]
-  flags,          # u32
-  out,            # [u32; 8] 
-) {
-  parent_output(left_child_cv, right_child_cv, key_words, flags, out)
-
-  Output__chaining_value(out)
-}
+# methods
 
 def Output__chaining_value(
   self, # Output
-  out, # [u32; 8]
+  out,  # [u32; 8]
 ) {
-  first_8_words(compress(
-    &self.input_chaining_value,
-    &self.block_words,
-    self.counter,
-    self.block_len,
-    self.flags,
-  ))
+  # first_8_words(compress(
+  #   &self.input_chaining_value,
+  #   &self.block_words,
+  #   self.counter,
+  #   self.block_len,
+  #   self.flags,
+  # ))
+  1
 }
 
 def Output__root_output_bytes(self, out_len, out_slice) {
-  OUT_LEN <- 32 # usize
-
   output_block_counter <- 0
 
   out_block <- 0
-  loop :a out_block in out_slice {
-    if gt(out_block, mul(2, OUT_LEN)) {
+  loop :a {
+    if gt(out_block, mul(2, OUT_LEN())) {
       break :a
     }
 
+    # TODO: Make this actually point to useable memory
+    words <- 0
+
     compress(
       Output__input_chaining_value__ptr(self),
-      Output__block_words__get(self),
+      Output__block_words__ptr(self),
       output_block_counter,
       Output__block_len__get(self),
-      or(Output__flags__get(self), ROOT),
-      words,
+      or(Output__flags__get(self), ROOT()),
+      words
     )
     # The output length might not be a multiple of 4.
     # TODO: Handle this correctly
@@ -365,13 +286,198 @@ def Output__root_output_bytes(self, out_len, out_slice) {
       }
     }
     output_block_counter <- add(output_block_counter, 1)
-    out_block <- add(out_block, mul(2, OUT_LEN))
+    out_block <- add(out_block, mul(2, OUT_LEN()))
   }
+}
+
+##############
+# ChunkState #
+##############
+
+# struct ChunkState {
+#     chaining_value: [u32; 8],
+#     chunk_counter: u64,
+#     block: [u8; BLOCK_LEN],
+#     block_len: u8,
+#     blocks_compressed: u8,
+#     flags: u32,
+# }
+
+def CHUNK_STATE__CHUNK_COUNTER__OFFSET()     -> x { x <- mul(4, 8)                                                          }
+def CHUNK_STATE__BLOCK__OFFSET()             -> x { x <- add(8,                   CHUNK_STATE__CHUNK_COUNTER__OFFSET())     }
+def CHUNK_STATE__BLOCK_LEN__OFFSET()         -> x { x <- add(mul(1, BLOCK_LEN()), CHUNK_STATE__BLOCK__OFFSET())             }
+def CHUNK_STATE__BLOCKS_COMPRESSED__OFFSET() -> x { x <- add(1,                   CHUNK_STATE__BLOCK_LEN__OFFSET())         }
+def CHUNK_STATE__FLAGS__OFFSET()             -> x { x <- add(1,                   CHUNK_STATE__BLOCKS_COMPRESSED__OFFSET()) }
+
+def CHUNK_STATE__SIZE() -> x { x <- add(4, CHUNK_STATE__FLAGS__OFFSET()) }
+
+# accessors
+
+def ChunkState__chaining_value__ptr(self) -> arr_ptr { arr_ptr <- self }
+def ChunkState__block__ptr(self) -> arr_ptr { arr_ptr <- add(self, CHUNK_STATE__BLOCK__OFFSET()) }
+
+def ChunkState__chunk_counter__get(self) -> chunk_counter         { chunk_counter     <- read8(add(self, CHUNK_STATE__CHUNK_COUNTER__OFFSET()))     }
+def ChunkState__block_len__get(self) -> block_len                 { block_len         <- read4(add(self, CHUNK_STATE__BLOCK_LEN__OFFSET()))         }
+def ChunkState__blocks_compressed__get(self) -> blocks_compressed { blocks_compressed <- read4(add(self, CHUNK_STATE__BLOCKS_COMPRESSED__OFFSET())) }
+def ChunkState__flags__get(self) -> flags                         { flags             <- read4(add(self, CHUNK_STATE__FLAGS__OFFSET()))             }
+
+def ChunkState__chunk_counter__set(self, chunk_counter)          { write8(add(self, CHUNK_STATE__CHUNK_COUNTER__OFFSET()),     chunk_counter)     }
+def ChunkState__block_len__set(self, block_len)                  { write4(add(self, CHUNK_STATE__BLOCK_LEN__OFFSET()),         block_len)         }
+def ChunkState__blocks_compressed__set(self, blocks_compressed)  { write4(add(self, CHUNK_STATE__BLOCKS_COMPRESSED__OFFSET()), blocks_compressed) }
+def ChunkState__flags__set(self, flags)                          { write4(add(self, CHUNK_STATE__FLAGS__OFFSET()),             flags)             }
+
+# methods
+
+def ChunkState__len(self) -> len {
+  len <- add(mul(BLOCK_LEN(), ChunkState__blocks_compressed__get(self)), ChunkState__block_len__get(self))
+}
+
+def ChunkState__update(self, from, len) {
+  # len <- 0
+  # loop :input {
+  #   if eq(len, dlen()) {
+  #     break :input
+  #   }
+  #     # If the block buffer is full, compress it and clear it. More
+  #     # input is coming, so this compression is not CHUNK_END.
+  #     if eq(ChunkState__block_len__get(self), BLOCK_LEN()) {
+  #         let mut block_words = [0; 16];
+  #         words_from_little_endian_bytes(&self.block, &mut block_words);
+  #         self.chaining_value = first_8_words(compress(
+  #             &self.chaining_value,
+  #             &block_words,
+  #             self.chunk_counter,
+  #             BLOCK_LEN as u32,
+  #             self.flags | self.start_flag(),
+  #         ));
+  #         ChunkState__blocks_compressed__set(self, add(ChunkState__blocks_compressed__get(self), 1));
+  #         zeroWords(ChunkState__block__set(BLOCK_LEN()))
+  #         ChunkState__block_len__set(self, 0);
+  #     }
+
+  #     // Copy input bytes into the block buffer.
+  #     let want = BLOCK_LEN - self.block_len as usize;
+  #     let take = min(want, input.len());
+  #     self.block[self.block_len as usize..][..take].copy_from_slice(&input[..take]);
+  #     self.block_len += take as u8;
+  #     input = &input[take..];
+  # }
+}
+
+
+def ChunkState__output(self) -> Output {
+  # let mut block_words = [0; 16];
+  # words_from_little_endian_bytes(&self.block, &mut block_words);
+  # Output {
+  #   input_chaining_value: self.chaining_value,
+  #   block_words,
+  #   counter: self.chunk_counter,
+  #   block_len: self.block_len as u32,
+  #   flags: self.flags | self.start_flag() | CHUNK_END,
+  # }
+  1
+}
+
+
+##########
+# Hasher #
+##########
+
+# An incremental hasher that can accept any number of writes.
+#
+# pub struct Hasher {
+#     chunk_state: ChunkState,
+#     key_words: [u32; 8],
+#     cv_stack: [[u32; 8]; 54], // Space for 54 subtree chaining values:
+#     cv_stack_len: u8,         // 2^54 * CHUNK_LEN = 2^64
+#     flags: u32,
+# }
+
+def HASHER__KEY_WORDS__OFFSET()    -> x { x <- CHUNK_STATE__SIZE()                                     }
+def HASHER__CV_STACK__OFFSET()     -> x { x <- add(mul(4, 8),          HASHER__KEY_WORDS__OFFSET())    }
+def HASHER__CV_STACK_LEN__OFFSET() -> x { x <- add(mul(mul(4, 8), 54), HASHER__CV_STACK__OFFSET())     }
+def HASHER__FLAGS__OFFSET()        -> x { x <- add(1,                  HASHER__CV_STACK_LEN__OFFSET()) }
+
+def HASHER__SIZE() -> x { x <- add(HASHER__FLAGS__OFFSET(), 4) }
+
+def Hasher__chunk_state__ptr(self) -> ptr { ptr <- self }
+def Hasher__key_words__ptr(self) -> ptr { ptr <- add(self, HASHER__KEY_WORDS__OFFSET()) }
+def Hasher__cv_stack__ptr(self) -> ptr { ptr <- add(self, HASHER__CV_STACK__OFFSET()) }
+
+def Hasher__cv_stack_len__get(self) -> cv_stack_len { cv_stack_len <- read1(add(self, HASHER__CV_STACK_LEN__OFFSET())) }
+def Hasher__flags__get(self) -> flags { flags <- read4(add(self, HASHER__FLAGS__OFFSET())) }
+
+def Hasher__cv_stack_len__set(self, cv_stack_len) { write1(add(self, HASHER__CV_STACK_LEN__OFFSET()), cv_stack_len) }
+def Output__flags__set(self, flags)               { write4(add(self, OUTPUT__FLAGS__OFFSET()),        flags)        }
+
+
+def first_8_words(
+  compression_output, # [u32; 16]
+) -> ptr {
+    # effectively a noop since this is just a sizing conversion from 16 words to 8
+    # compression_output[0..8].try_into().unwrap()
+    ptr <- compression_output
+}
+
+
+def parent_output(
+  left_child_cv,  # [u32; 8]
+  right_child_cv, # [u32; 8]
+  key_words,      # [u32; 8]
+  flags,          # u32
+  out,            # Output
+) {
+  copyWords(key_words, Output__input_chaining_value__ptr(out), 8)
+  # block_words[..8].copy_from_slice(&left_child_cv)
+  copyWords(left_child_cv, Output__block_words__ptr(out), 8)
+  # block_words[8..].copy_from_slice(&right_child_cv)
+  copyWords(right_child_cv, add(Output__block_words__ptr(out), mul(4, 8)), 8)
+  Output__counter__set(out, 0) # Always 0 for parent nodes.
+  Output__block_len__set(out, BLOCK_LEN()) # Always BLOCK_LEN (64) for parent nodes.
+  Output__flags__set(out, or(PARENT(), flags))
+}
+
+def parent_cv(
+  left_child_cv,  # [u32; 8]
+  right_child_cv, # [u32; 8]
+  key_words,      # [u32; 8]
+  flags,          # u32
+  out,            # [u32; 8] 
+) {
+  parent_output(left_child_cv, right_child_cv, key_words, flags, out)
+
+  Output__chaining_value(out, 0) # TODO: Figure out what this should point to
 }
 
 
 
-def add_chunk_chaining_value(mut new_cv: [u32; 8], mut total_chunks: u64) {
+def Hasher__push_stack(
+  self,
+  cv, # [u32; 8]
+) {
+
+  # self.cv_stack[self.cv_stack_len as usize] = cv;
+  copyWords(cv, add(Hasher__cv_stack__ptr(self), mul(Hasher__cv_stack_len__get(self), mul(4, 8))), 8)
+  # self.cv_stack_len += 1;
+  Hasher__cv_stack_len__set(self, add(Hasher__cv_stack_len__get(self), 1))
+}
+
+def Hasher__pop_stack(self) -> ptr # [u32; 8]
+{
+  # self.cv_stack_len -= 1;
+  Hasher__cv_stack_len__set(self, sub(Hasher__cv_stack_len__get(self), 1))
+  # self.cv_stack[self.cv_stack_len as usize]
+  ptr <- Hasher__cv_stack_len__get(self)
+}
+
+
+
+
+def Hasher__add_chunk_chaining_value(
+  self,
+  new_cv,       # [u32; 8]
+  total_chunks, # u64
+) {
   # This chunk might complete some subtrees. For each completed subtree,
   # its left child will be the current top entry in the CV stack, and
   # its right child will be the current value of `new_cv`. Pop each left
@@ -381,37 +487,101 @@ def add_chunk_chaining_value(mut new_cv: [u32; 8], mut total_chunks: u64) {
   # by the number of trailing 0-bits in the new total number of chunks.
   loop :a {
     if eq(and(total_chunks, 1), 0) {
-      new_cv <- parent_cv(self.pop_stack(), new_cv, self.key_words, self.flags)
+      new_cv <- 0
+      parent_cv(Hasher__pop_stack(self), new_cv, Hasher__key_words__ptr(self), Hasher__flags__get(self), new_cv)
       total_chunks <- shr(total_chunks, 1)
     } else {
       break :a
     }
   }
-  self.push_stack(new_cv)
+
+  Hasher__push_stack(self, new_cv)
 }
 
 
 
-len <- 0
-loop :input {
-  if eq(len, dlen()) {
-    break :input
+def Hasher__update(self) {
+  len <- 0
+  loop :input {
+    if eq(len, dlen()) {
+      break :input
+    }
+
+    chunk_state_ptr <- Hasher__chunk_state__ptr(self)
+
+    # If the current chunk is complete, finalize it and reset the
+    # chunk state. More input is coming, so this chunk is not ROOT.
+    if eq(ChunkState__len(chunk_state_ptr), CHUNK_LEN()) {
+      chunk_cv <- 0 # TODO: Make this a pointer to something
+      Output__chaining_value(ChunkState__output(Hasher__chunk_state__ptr(self)), chunk_cv)
+      total_chunks <- add(ChunkState__chunk_counter__get(chunk_state_ptr), 1)
+      Hasher__add_chunk_chaining_value(self, chunk_cv, total_chunks)
+
+      copyWords(ChunkState__chaining_value__ptr(chunk_state_ptr), Hasher__key_words__ptr(self), 8)
+      zeroWords(ChunkState__block__ptr(chunk_state_ptr), BLOCK_LEN())
+
+      ChunkState__chunk_counter__set(chunk_state_ptr, total_chunks)
+      ChunkState__block_len__set(chunk_state_ptr, 0)
+      ChunkState__blocks_compressed__set(chunk_state_ptr, 0)
+      ChunkState__flags__set(chunk_state_ptr, Hasher__flags__get(self))
+    }
+
+    # Compress input bytes into the current chunk state.
+    want <- sub(CHUNK_LEN(), ChunkState__len(chunk_state_ptr))
+    take <- min(want, dlen())
+    ChunkState__update(chunk_state_ptr, len, take) # &input[..take]
+    # input <- &input[take..]
+    len <- add(len, take)
   }
-
-
-  # If the current chunk is complete, finalize it and reset the
-  # chunk state. More input is coming, so this chunk is not ROOT.
-  if eq(chunk_state.len() <- CHUNK_LEN {
-    println!("full chunk")
-    chunk_cv <- self.chunk_state.output().chaining_value()
-    total_chunks <- self.chunk_state.chunk_counter + 1
-    self.add_chunk_chaining_value(chunk_cv, total_chunks)
-    self.chunk_state <- ChunkState::new(self.key_words, total_chunks, self.flags)
-  }
-
-  # Compress input bytes into the current chunk state.
-  want <- CHUNK_LEN - self.chunk_state.len()
-  take <- min(want, input.len())
-  self.chunk_state.update(&input[..take])
-  input <- &input[take..]
 }
+
+# init hasher
+
+alloc(HASHER__SIZE())
+
+hasher_ptr <- 0
+
+IV <- HASHER__SIZE()
+
+alloc(mul(4, 8))
+writeWord(IV, 0, 0x6A09E667)
+writeWord(IV, 1, 0xBB67AE85)
+writeWord(IV, 2, 0x3C6EF372)
+writeWord(IV, 3, 0xA54FF53A)
+writeWord(IV, 4, 0x510E527F)
+writeWord(IV, 5, 0x9B05688C)
+writeWord(IV, 6, 0x1F83D9AB)
+writeWord(IV, 7, 0x5BE0CD19)
+
+# Hasher::new
+copyWords(IV, Hasher__key_words__ptr(hasher_ptr), 8)
+copyWords(IV, ChunkState__chaining_value__ptr(Hasher__chunk_state__ptr(hasher_ptr)), 8)
+
+Hasher__update(hasher_ptr)
+
+# # state
+# alloc(mul(4, 16)) # sizeof([u32; 16])
+# # m
+# alloc(mul(4, 16)) # sizeof([u32; 16])
+
+# # Output
+# alloc(70) # sizeof(Output)
+
+# MSG_PERMUTATION <- mul(4, 16)
+
+# writeWord(MSG_PERMUTATION, 0, 2)
+# writeWord(MSG_PERMUTATION, 1, 6)
+# writeWord(MSG_PERMUTATION, 2, 3)
+# writeWord(MSG_PERMUTATION, 3, 10)
+# writeWord(MSG_PERMUTATION, 4, 7)
+# writeWord(MSG_PERMUTATION, 5, 0)
+# writeWord(MSG_PERMUTATION, 6, 4)
+# writeWord(MSG_PERMUTATION, 7, 13)
+# writeWord(MSG_PERMUTATION, 8, 1)
+# writeWord(MSG_PERMUTATION, 9, 11)
+# writeWord(MSG_PERMUTATION, 10, 12)
+# writeWord(MSG_PERMUTATION, 11, 5)
+# writeWord(MSG_PERMUTATION, 12, 9)
+# writeWord(MSG_PERMUTATION, 13, 14)
+# writeWord(MSG_PERMUTATION, 14, 15)
+# writeWord(MSG_PERMUTATION, 15, 8)

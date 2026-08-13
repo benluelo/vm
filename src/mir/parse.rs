@@ -116,13 +116,18 @@ pub fn grammar<'a>() -> Grammar<
     }
 
     fn assignment<'a>() -> Parser!['a, Assignment<'a>] {
-        ident()
+        just("const")
             .padded()
-            .separated_by(just(','))
-            .collect::<Vec<_>>()
-            .then_ignore(just("<-").padded())
-            .then(expr())
-            .map(|(vars, expr)| Assignment { vars, expr })
+            .or_not()
+            .then(
+                ident()
+                    .padded()
+                    .separated_by(just(','))
+                    .collect::<Vec<_>>()
+                    .then_ignore(just("<-").padded())
+                    .then(expr()),
+            )
+            .map(|(const_, (vars, expr))| Assignment { const_: const_.is_some(), vars, expr })
             .padded_by(comment().repeated())
             .labelled("assignment")
     }
@@ -194,12 +199,12 @@ pub fn grammar<'a>() -> Grammar<
         statement
             .clone()
             // .then_ignore(newline())
-            .padded()
+            .padded_by(comment().repeated())
             .repeated()
             .collect()
             .spanned()
             .map(Block::new_spanned)
-            .padded(),
+            .padded_by(comment().repeated()),
     );
 
     def.define(
@@ -214,7 +219,12 @@ pub fn grammar<'a>() -> Grammar<
                     )
                     .padded(),
             )
-            .then(just("->").padded().ignore_then(non_empty_ident_list().padded()).or_not())
+            .then(
+                just("->")
+                    .padded()
+                    .ignore_then(non_empty_ident_list().padded().padded_by(comment().repeated()))
+                    .or_not(),
+            )
             .then(block.clone().delimited_by(just('{').padded(), just('}').padded()))
             .map(|(((ident, args), ret), body)| Def {
                 ident,
@@ -312,8 +322,11 @@ pub fn print_ast(ast: &Block<'_>) -> String {
 
                     go_if(depth, out, if_);
                 }
-                Statement::Assignment(Assignment { vars, expr }) => {
+                Statement::Assignment(Assignment { const_, vars, expr }) => {
                     out.push_str(&"  ".repeat(depth));
+                    if *const_ {
+                        write!(out, "global ").unwrap();
+                    }
                     for (i, var) in vars.iter().enumerate() {
                         write!(out, "{var}").unwrap();
                         if i == vars.len() {

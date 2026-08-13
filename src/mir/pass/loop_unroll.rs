@@ -216,6 +216,7 @@ impl Visitor for LoopUnroll {
                 .collect::<Vec<_>>()
                 .into_iter()
                 .chain([Statement::Assignment(Assignment {
+                    const_: false,
                     vars: vec![cond_var.clone()],
                     expr: Expr::Val(Val::new(val)),
                 })])

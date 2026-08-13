@@ -47,8 +47,12 @@ impl Pass for DefInline {
                     Statement::Loop(Loop { label, block: self.run(check_ctx, block) })
                 }
                 Statement::If(if_) => Statement::If(self.run_on_if_statement(check_ctx, if_)),
-                Statement::Assignment(Assignment { vars, expr }) => {
-                    Statement::Assignment(Assignment { vars, expr: def_inline(check_ctx, expr) })
+                Statement::Assignment(Assignment { const_, vars, expr }) => {
+                    Statement::Assignment(Assignment {
+                        const_,
+                        vars,
+                        expr: def_inline(check_ctx, expr),
+                    })
                 }
                 Statement::Def(Def { ident, args, rets, body }) => {
                     Statement::Def(Def { ident, args, rets, body: self.run(check_ctx, body) })

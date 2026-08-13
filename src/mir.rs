@@ -45,17 +45,28 @@ pub struct Scope<'a> {
     tag: String,
     label: ScopeLabel<'a>,
     /// var name -> stack index
-    vars: BTreeMap<Ident<'a>, usize>,
+    vars: BTreeMap<Ident<'a>, VarInfo>,
     /// fn name -> label
     defs: BTreeMap<Ident<'a>, (Def<'a>, String)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct VarInfo {
+    const_: bool,
+    stack_idx: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CheckVarInfo {
+    const_: bool,
 }
 
 impl<'a> Scope<'a> {
     fn drop_asm(&self) -> Vec<AsmOp<'a>> {
         let mut out = vec![];
         trace!("dropping vars in scope {}", self.label);
-        for (var, idx) in &self.vars {
-            trace!("dropping var '{var}' @ idx {idx}");
+        for (var, info) in &self.vars {
+            trace!("dropping var '{var}' @ idx {}", info.stack_idx);
             out.push(AsmOp::POP);
         }
         out
@@ -91,26 +102,30 @@ pub enum CompileError {
     SpreadTopLevel {},
     #[error("label '{label}' not found")]
     LabelNotFound { label: String },
+    #[error("cannot reassign to const var '{var}'")]
+    ConstReassign { var: Ident<'static>, var_def: Ident<'static> },
 }
 
 impl CompileError {
-    pub fn into_rich(self) -> Rich<'static, char> {
+    pub fn into_rich(self) -> Vec<Rich<'static, char>> {
         let msg = self.to_string();
 
-        let span = match self {
-            CompileError::VarNotFound { var } => var.span(),
-            CompileError::DefNotFound { def } => def.span(),
-            CompileError::StatementBuiltin { .. } => (0..0).into(),
-            CompileError::StatementDef { .. } => (0..0).into(),
-            CompileError::InvalidArgCountBuiltin { .. } => (0..0).into(),
-            CompileError::InvalidArgCountDef { .. } => (0..0).into(),
-            CompileError::SpreadRequired { .. } => (0..0).into(),
-            CompileError::InvalidSpread { .. } => (0..0).into(),
-            CompileError::SpreadTopLevel {} => (0..0).into(),
-            CompileError::LabelNotFound { .. } => (0..0).into(),
-        };
-
-        Rich::custom(span, msg)
+        match self {
+            CompileError::VarNotFound { var } => vec![Rich::custom(var.span(), msg)],
+            CompileError::DefNotFound { def } => vec![Rich::custom(def.span(), msg)],
+            CompileError::StatementBuiltin { .. } => vec![Rich::custom((0..0).into(), msg)],
+            CompileError::StatementDef { .. } => vec![Rich::custom((0..0).into(), msg)],
+            CompileError::InvalidArgCountBuiltin { .. } => vec![Rich::custom((0..0).into(), msg)],
+            CompileError::InvalidArgCountDef { .. } => vec![Rich::custom((0..0).into(), msg)],
+            CompileError::SpreadRequired { .. } => vec![Rich::custom((0..0).into(), msg)],
+            CompileError::InvalidSpread { .. } => vec![Rich::custom((0..0).into(), msg)],
+            CompileError::SpreadTopLevel {} => vec![Rich::custom((0..0).into(), msg)],
+            CompileError::LabelNotFound { .. } => vec![Rich::custom((0..0).into(), msg)],
+            CompileError::ConstReassign { var, var_def } => vec![
+                Rich::custom(var.span(), msg),
+                Rich::custom(var_def.span(), "variable declared here"),
+            ],
+        }
     }
 }
 
@@ -240,19 +255,31 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn get_var(&self, var: &Ident<'a>) -> Option<usize> {
-        self.scopes.iter().find_map(|s| s.vars.iter().find_map(|(v, i)| v.eq(var).then_some(*i)))
+    fn get_var(&self, var: &Ident<'a>) -> Option<VarInfo> {
+        self.get_var_full(var).map(|x| x.0)
     }
 
-    fn init_var<'b>(&'b mut self, var: &Ident<'a>) -> usize {
-        self.init_var_with_depth_offset(var, 0)
+    fn get_var_full(&self, var: &Ident<'a>) -> Option<(VarInfo, &Ident<'a>)> {
+        self.scopes
+            .iter()
+            .find_map(|s| s.vars.iter().find_map(|(v, i)| v.eq(var).then_some((*i, v))))
     }
 
-    fn init_var_with_depth_offset(&mut self, var: &Ident<'a>, depth: isize) -> usize {
+    fn init_var<'b>(&'b mut self, var: &Ident<'a>, const_: bool) -> VarInfo {
+        self.init_var_with_depth_offset(var, const_, 0)
+    }
+
+    fn init_var_with_depth_offset(
+        &mut self,
+        var: &Ident<'a>,
+        const_: bool,
+        depth: isize,
+    ) -> VarInfo {
         trace!("PUSHING VAR {var} @ {depth}");
         let var_idx = self.stack_depth.strict_add_signed(depth);
-        self.scopes.last_mut().expect("no scopes?").vars.insert(var.clone(), var_idx);
-        var_idx
+        let info = VarInfo { const_, stack_idx: var_idx };
+        self.scopes.last_mut().expect("no scopes?").vars.insert(var.clone(), info);
+        info
     }
 
     fn get_def(&self, def: &Ident<'a>) -> Option<&(Def<'a>, String)> {
@@ -463,7 +490,7 @@ impl<'a> Ctx<'a> {
 
                         ctx.push_section(&tail_block_id);
                     }
-                    Statement::Assignment(Assignment { vars, expr }) => {
+                    Statement::Assignment(Assignment { const_, vars, expr }) => {
                         let arity = ctx.expr_arity(0, expr, true)?;
                         assert_eq!(vars.len(), arity);
 
@@ -476,13 +503,23 @@ impl<'a> Ctx<'a> {
                         // first before evaluating the rhs
                         if vars.iter().any(|v| ctx.get_var(v).is_some()) {
                             for (i, var) in vars.iter().rev().enumerate() {
-                                if ctx.get_var(var).is_none() {
-                                    trace!("var decl '{var}' (i: {i}) [pre-init]");
-                                    let idx = ctx.init_var(var);
-                                    ctx.inc_stack();
-                                    // init the value to 0
-                                    ctx.current_section().push(AsmOp::push(0));
-                                    trace!("idx = {idx}");
+                                match ctx.get_var_full(var) {
+                                    None => {
+                                        trace!("var decl '{var}' (i: {i}) [pre-init]");
+                                        let info = ctx.init_var(var, *const_);
+                                        ctx.inc_stack();
+                                        // init the value to 0
+                                        ctx.current_section().push(AsmOp::push(0));
+                                        trace!("idx = {}", info.stack_idx);
+                                    }
+                                    Some((info, var_def)) => {
+                                        if info.const_ {
+                                            return Err(CompileError::ConstReassign {
+                                                var: var.as_static(),
+                                                var_def: var_def.as_static(),
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -498,22 +535,26 @@ impl<'a> Ctx<'a> {
                                 // stack position
                                 None => {
                                     trace!("var decl '{var}' (i: {i})");
-                                    let idx =
-                                        ctx.init_var_with_depth_offset(var, -((i + 1) as isize));
-                                    trace!("idx = {idx}");
+                                    let info = ctx.init_var_with_depth_offset(
+                                        var,
+                                        *const_,
+                                        -((i + 1) as isize),
+                                    );
+                                    trace!("idx = {}", info.stack_idx);
                                 }
                                 // var already declared, update it's value by evaluating the
                                 // expression and swapping the old
                                 // value with the new one, and then
                                 // popping the old value
-                                Some(var_stack_idx) => {
+                                Some(var_info) => {
                                     trace!(
                                         "var update '{var}' (i: {i}, var_stack_idx: {var_stack_idx}, stack_depth: {})",
-                                        ctx.stack_depth
+                                        ctx.stack_depth,
+                                        var_stack_idx = var_info.stack_idx
                                     );
                                     // TODO: Figure why this is -2 lol
                                     let stack_location_from_top =
-                                        (ctx.stack_depth - var_stack_idx) - 2;
+                                        (ctx.stack_depth - var_info.stack_idx) - 2;
                                     trace!("stack_location_from_top: {stack_location_from_top}");
                                     if stack_location_from_top == 0 {
                                         ctx.current_section()
@@ -553,7 +594,7 @@ impl<'a> Ctx<'a> {
                             // args are provided by the caller, init them in the new ctx
                             for arg in &def.args {
                                 trace!("arg '{arg}'");
-                                def_ctx.init_var(arg);
+                                def_ctx.init_var(arg, false);
                                 def_ctx.inc_stack();
                             }
 
@@ -569,7 +610,7 @@ impl<'a> Ctx<'a> {
                             // init return values
                             for ret in def.rets.iter().rev() {
                                 trace!("ret '{ret}'");
-                                def_ctx.init_var(ret);
+                                def_ctx.init_var(ret, false);
                                 def_ctx.inc_stack();
                                 def_ctx.current_section().push(AsmOp::push(0));
                             }
@@ -768,11 +809,11 @@ impl<'a> Ctx<'a> {
                     ctx.inc_stack();
                 }
                 Expr::Var(var) => {
-                    let Some(idx) = ctx.get_var(var) else {
+                    let Some(info) = ctx.get_var(var) else {
                         return Err(CompileError::VarNotFound { var: var.as_static() });
                     };
                     // dbg!(&ctx.scopes);
-                    trace!("var '{var}' (idx: {idx}, depth: {})", ctx.stack_depth);
+                    trace!("var '{var}' (idx: {}, depth: {})", info.stack_idx, ctx.stack_depth);
                     // EXAMPLE:
                     //
                     // if the stack depth is 8, and the variable is at stack index 2, then the index
@@ -786,7 +827,7 @@ impl<'a> Ctx<'a> {
                     //
                     // note that stack depth 1 == stack index 0
                     trace!("stack_depth: {}", ctx.stack_depth);
-                    let dup_idx = (ctx.stack_depth - 1) - idx;
+                    let dup_idx = (ctx.stack_depth - 1) - info.stack_idx;
                     trace!("dup_idx: {dup_idx}");
                     if dup_idx == 0 {
                         ctx.current_section().extend_from_slice(&[AsmOp::DUP0]);
@@ -1072,7 +1113,7 @@ pub struct CheckScope<'a> {
     #[expect(dead_code)]
     tag: String,
     label: ScopeLabel<'a>,
-    vars: BTreeMap<Ident<'a>, VarValue>,
+    vars: BTreeMap<Ident<'a>, (CheckVarInfo, VarValue)>,
     /// fn name -> label
     defs: BTreeMap<Ident<'a>, Def<'a>>,
 }
@@ -1407,7 +1448,7 @@ impl<'a> CheckCtx<'a> {
 
                         out.push(Statement::If(if_));
                     }
-                    Statement::Assignment(Assignment { vars, expr }) => {
+                    Statement::Assignment(Assignment { const_, vars, expr }) => {
                         let arity = ctx.expr_arity(0, expr, true)?;
                         assert_eq!(vars.len(), arity);
 
@@ -1421,8 +1462,16 @@ impl<'a> CheckCtx<'a> {
                         for var in vars.iter().rev() {
                             if !ctx.has_var(var) {
                                 trace!("var decl '{var}'");
-                                ctx.init_var(var, VarValue::Dyn);
+                                ctx.init_var(var, CheckVarInfo { const_: *const_ }, VarValue::Dyn);
                             } else {
+                                let (var_info, _var_value, var_def) =
+                                    ctx.get_var_full(var).unwrap();
+                                if var_info.const_ {
+                                    return Err(CompileError::ConstReassign {
+                                        var: var.as_static(),
+                                        var_def: var_def.as_static(),
+                                    });
+                                }
                                 ctx.set_var_value_dyn(var);
                             }
                         }
@@ -1440,6 +1489,7 @@ impl<'a> CheckCtx<'a> {
                         let expr = ctx.check_expr(expr, visitor)?;
 
                         out.push(Statement::Assignment(Assignment {
+                            const_: *const_,
                             vars: vars.clone(),
                             expr: expr.clone(),
                         }));
@@ -1471,7 +1521,11 @@ impl<'a> CheckCtx<'a> {
                                 // args are provided by the caller, init them in the new ctx
                                 for arg in &def.args {
                                     trace!("arg '{arg}'");
-                                    def_ctx.init_var(arg, VarValue::Dyn);
+                                    def_ctx.init_var(
+                                        arg,
+                                        CheckVarInfo { const_: false },
+                                        VarValue::Dyn,
+                                    );
                                 }
 
                                 // account for @caller_ptr, also provided by the caller
@@ -1484,7 +1538,11 @@ impl<'a> CheckCtx<'a> {
                                 for ret in def.rets.iter().rev() {
                                     trace!("ret '{ret}'");
                                     // REVIEW: Should this actually start at Const(0)?
-                                    def_ctx.init_var(ret, VarValue::Const(Val::new(0)));
+                                    def_ctx.init_var(
+                                        ret,
+                                        CheckVarInfo { const_: false },
+                                        VarValue::Const(Val::new(0)),
+                                    );
                                 }
 
                                 // functions can access other functions visible in this scope
@@ -1534,8 +1592,8 @@ impl<'a> CheckCtx<'a> {
         self.scopes.iter().any(|s| s.vars.keys().any(|v| v.eq(var)))
     }
 
-    fn init_var<'b>(&'b mut self, var: &Ident<'a>, value: VarValue) {
-        self.scopes.last_mut().expect("no scopes?").vars.insert(var.clone(), value);
+    fn init_var<'b>(&'b mut self, var: &Ident<'a>, var_info: CheckVarInfo, value: VarValue) {
+        self.scopes.last_mut().expect("no scopes?").vars.insert(var.clone(), (var_info, value));
     }
 
     fn set_var_value_const<'b>(&'b mut self, var: &Ident<'a>, value: Val) {
@@ -1544,7 +1602,7 @@ impl<'a> CheckCtx<'a> {
         // for s in self.scopes.iter_mut().rev() {
         if let Some(old_value) = self.scopes.last_mut().unwrap().vars.get_mut(var) {
             trace!("var '{var}' exists in this scope, setting it's value to {value}");
-            *old_value = VarValue::Const(value);
+            old_value.1 = VarValue::Const(value);
         }
         // }
     }
@@ -1554,7 +1612,7 @@ impl<'a> CheckCtx<'a> {
 
         for s in self.scopes.iter_mut().rev() {
             if let Some(val) = s.vars.get_mut(var) {
-                *val = VarValue::Dyn;
+                val.1 = VarValue::Dyn;
                 return;
             };
         }
@@ -1835,7 +1893,13 @@ impl<'a> CheckCtx<'a> {
     }
 
     fn var_value<'b>(&'b self, var: &Ident<'a>) -> &'b VarValue {
-        self.scopes.iter().rev().find_map(|s| s.vars.get(var)).unwrap()
+        &self.scopes.iter().rev().find_map(|s| s.vars.get(var)).unwrap().1
+    }
+
+    fn get_var_full(&self, var: &Ident<'a>) -> Option<(CheckVarInfo, &VarValue, &Ident<'a>)> {
+        self.scopes
+            .iter()
+            .find_map(|s| s.vars.iter().find_map(|(v, i)| v.eq(var).then_some((i.0, &i.1, v))))
     }
 }
 

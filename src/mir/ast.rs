@@ -560,6 +560,7 @@ impl<'a> PartialEq for Else<'a> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assignment<'a> {
+    pub const_: bool,
     pub vars: Vec<Ident<'a>>,
     pub expr: Expr<'a>,
 }

@@ -39,6 +39,7 @@ impl Normalize {
                                 let next_var = self.next_var();
                                 new_args.push(Expr::Var(next_var.clone()));
                                 statements.push(Statement::Assignment(Assignment {
+                                    const_: false,
                                     vars: vec![next_var],
                                     expr,
                                 }));
@@ -101,10 +102,10 @@ impl Pass for Normalize {
                     new_block.extend(statements);
                     new_block.push(Statement::If(if_));
                 }
-                Statement::Assignment(Assignment { vars, expr }) => {
+                Statement::Assignment(Assignment { const_, vars, expr }) => {
                     let (statements, expr) = self.normalize_expr(expr);
                     new_block.extend(statements);
-                    new_block.push(Statement::Assignment(Assignment { vars, expr }));
+                    new_block.push(Statement::Assignment(Assignment { const_, vars, expr }));
                 }
                 Statement::Def(Def { ident, args, rets, body }) => {
                     new_block.push(Statement::Def(Def {

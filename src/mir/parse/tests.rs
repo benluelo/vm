@@ -184,3 +184,38 @@ fn multiline_params_def() {
 
     // println!("{pretty}");
 }
+
+#[test]
+fn def_comment_after_ret() {
+    let raw = "
+    def f(
+    ) -> r # c
+    {
+    }
+        ";
+
+    let res = grammar().def.parse(raw).unwrap();
+
+    dbg!(&res);
+
+    // let pretty = print_ast(&res);
+
+    // println!("{pretty}");
+}
+
+#[test]
+fn def_empty_body_only_comments() {
+    let raw = "
+    def f() {
+      # c
+    }
+        ";
+
+    let res = grammar().def.parse(raw).unwrap();
+
+    dbg!(&res);
+
+    // let pretty = print_ast(&res);
+
+    // println!("{pretty}");
+}
