@@ -16,7 +16,6 @@
       url = "github:ipetkov/crane";
     };
     treefmt-nix.url = "github:numtide/treefmt-nix";
-
   };
   outputs =
     inputs@{

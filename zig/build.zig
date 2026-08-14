@@ -23,10 +23,11 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    exe.lto = .full;
+    // exe.lto = .full;
     exe.use_llvm = false;
-    exe.linkage = .static;
-    exe.root_module.error_tracing = false;
+    // exe.use_lld = false;
+    // exe.linkage = .static;
+    // exe.root_module.error_tracing = false;
 
     const exe_check = b.addExecutable(.{
         .name = "foo",
