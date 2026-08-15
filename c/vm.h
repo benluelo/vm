@@ -14,24 +14,28 @@ typedef struct Stack {
   uint64_t *data;
 } Stack;
 
-typedef enum VM_ERR {
-  VM_ERR_OK = 0,
+typedef enum VmResult {
+  VM_OK = 0,
   /// Out of memory.
-  VM_ERR_OUT_OF_MEMORY = 1,
+  VM_ERR_OUT_OF_MEMORY = -1,
   /// Attempted to pop off of an empty stack.
-  VM_ERR_STACK_EMPTY = 2,
+  VM_ERR_STACK_EMPTY = -2,
   /// Attempted to read a stack index that doesn't exist.
-  VM_ERR_INVALID_STACK_IDX = 3,
+  VM_ERR_INVALID_STACK_IDX = -3,
   /// Attempted to read past the max allocated memory address.
-  VM_ERR_SEGFAULT = 4,
+  VM_ERR_SEGFAULT = -4,
   /// Unexpected EOF when executing code.
-  VM_ERR_EOF = 5,
+  VM_ERR_EOF = -5,
   /// Attempted to divide by zero.
-  VM_ERR_DIVIDE_BY_ZERO = 6,
+  VM_ERR_DIVIDE_BY_ZERO = -6,
   /// Invalid stack value for operation.
-  VM_ERR_INVALID_STACK_VALUE = 7,
-  VM_ERR_UNKNOWN_OP = 8,
-} VM_ERR;
+  VM_ERR_INVALID_STACK_VALUE = -7,
+  VM_ERR_UNKNOWN_OP = -8,
+
+  VM_STEP_RESULT_EOF = 1,
+  VM_STEP_RESULT_TRAP = 2,
+  VM_STEP_RESULT_EXIT = 3,
+} VmResult;
 
 typedef struct Memory {
   size_t size;
@@ -49,49 +53,15 @@ typedef struct Vm {
   Stack stack;
   Memory memory;
   size_t pc;
+  union {
+    uint64_t trap;
+    Fat exit;
+  } out;
 } Vm;
 
-typedef enum StepResultTag {
-  STEP_RESULT_STEPPED,
-  STEP_RESULT_EOF,
-  STEP_RESULT_TRAP,
-  STEP_RESULT_EXIT,
-  STEP_RESULT_ERROR,
-} StepResultTag;
+VmResult step_vm(Vm *vm);
 
-typedef union StepResultData {
-  uint64_t trap;
-  Fat exit;
-  VM_ERR error;
-} StepResultData;
-
-typedef enum RunResultTag {
-  RUN_RESULT_DONE,
-  RUN_RESULT_EOF,
-  RUN_RESULT_TRAP,
-  RUN_RESULT_EXIT,
-  RUN_RESULT_ERROR,
-} RunResultTag;
-
-typedef union RunResultData {
-  uint64_t trap;
-  Fat exit;
-  VM_ERR error;
-} RunResultData;
-
-typedef struct StepResult {
-  StepResultTag tag;
-  StepResultData data;
-} StepResult;
-
-typedef struct RunResult {
-  RunResultTag tag;
-  RunResultData data;
-} RunResult;
-
-StepResult step_vm(Vm *vm);
-
-RunResult run_vm(Vm *vm);
+VmResult run_vm(Vm *vm);
 
 Vm new_vm(Fat code, Fat data);
 

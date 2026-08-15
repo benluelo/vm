@@ -115,12 +115,13 @@
               pname = "vm-c";
               version = "0.0.0";
               src = ./c;
-              buildInputs = [ ];
+              buildInputs = [ pkgs.gcc16Stdenv.cc.libc.static ];
               buildPhase = ''
                 gcc --version
-                gcc -flto -Ofast vm.c
+                gcc -flto -Ofast -static -g vm.c
                 # clang -flto -O3 vm.c
               '';
+              dontStrip = true;
               installPhase = ''
                 mkdir "$out"
                 mkdir "$out/bin"
@@ -202,6 +203,7 @@
               ]);
             };
             nativeBuildInputs = [
+              pkgs.gcc16Stdenv.cc.libc.static
               config.treefmt.build.wrapper
             ]
             ++ pkgs.lib.attrsets.attrValues config.treefmt.build.programs;

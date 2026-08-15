@@ -1,4 +1,3 @@
-#include <assert.h>
 #include <stdbool.h>
 #include <stdckdint.h>
 #include <stddef.h>
@@ -14,13 +13,13 @@
 #define debug(...)
 #endif
 
-// #define likely(x) __builtin_expect(!!(x), 1)
-// #define unlikely(x) __builtin_expect(!!(x), 0)
-#define likely(x) x
-#define unlikely(x) x
+#define likely(x) __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+// #define likely(x) x
+// #define unlikely(x) x
 
-#define bail(err)                                                              \
-  return (StepResult){.tag = STEP_RESULT_ERROR, .data = {.error = (err)}};
+#define bail(err) return err
+// #include <assert.h>
 // #define bail(err) assert(err)
 
 #define ensure_stack(n)                                                        \
@@ -69,8 +68,8 @@
 
 #define try(expr)                                                              \
   {                                                                            \
-    VM_ERR res = expr;                                                         \
-    if (unlikely(res != VM_ERR_OK)) {                                          \
+    VmResult res = expr;                                                       \
+    if (unlikely(res != VM_OK)) {                                              \
       bail(res);                                                               \
     }                                                                          \
   }
@@ -133,14 +132,19 @@ inline uint64_t u64_from_bytes(size_t n, const uint8_t *arr) {
   memcpy(out.bz, arr, n);
   // debug("n: %zu, value: %02lx\n", n, out.n);
   // TODO: only do this if target endianness is LE
-  out.n = __builtin_bswap64(out.n) >> (8 * (8 - n));
+  // out.n = __builtin_bswap64(out.n) >> (8 * (8 - n));
+#if BYTE_ORDER == __LITTLE_ENDIAN
+  out.n = htobe64(out.n) >> (8 * (8 - n));
+#endif
   return out.n;
 }
 
 inline void write_u64(size_t n, uint64_t value, uint8_t *buffer) {
   u64 out;
   // TODO: only do this if target endianness is LE
-  out.n = __builtin_bswap64(value << (8 * (8 - n)));
+#if BYTE_ORDER == __LITTLE_ENDIAN
+  out.n = be64toh(value << (8 * (8 - n)));
+#endif
   memcpy(buffer, out.bz, n);
   debug("WRITE_U64: n: %zu, value: %016lx, out: %016lx\n", n, value, out.n);
 }
@@ -153,7 +157,7 @@ inline void write_u64(size_t n, uint64_t value, uint8_t *buffer) {
 //   }
 // }
 
-VM_ERR push_stack(Stack *stack, uint64_t value) {
+VmResult push_stack(Stack *stack, uint64_t value) {
   if (unlikely(stack->capacity == 0)) {
     uint64_t *ptr = (uint64_t *)malloc(4 * 8);
     if (unlikely(ptr == NULL)) {
@@ -173,10 +177,10 @@ VM_ERR push_stack(Stack *stack, uint64_t value) {
   stack->data[stack->len] = value;
   stack->len++;
 
-  return VM_ERR_OK;
+  return VM_OK;
 }
 
-VM_ERR alloc_memory(Memory *memory, size_t additional) {
+VmResult alloc_memory(Memory *memory, size_t additional) {
   uint8_t *ptr = (uint8_t *)realloc(memory->data, memory->size + additional);
   if (unlikely(ptr == NULL)) {
     return VM_ERR_OUT_OF_MEMORY;
@@ -187,10 +191,10 @@ VM_ERR alloc_memory(Memory *memory, size_t additional) {
 
   memory->size += additional;
 
-  return VM_ERR_OK;
+  return VM_OK;
 }
 
-VM_ERR pop_stack(Stack *stack, uint64_t *value) {
+VmResult pop_stack(Stack *stack, uint64_t *value) {
   if (unlikely(stack->len == 0)) {
     return VM_ERR_STACK_EMPTY;
   }
@@ -198,12 +202,12 @@ VM_ERR pop_stack(Stack *stack, uint64_t *value) {
   stack->len--;
   *value = stack->data[stack->len];
 
-  return VM_ERR_OK;
+  return VM_OK;
 }
 
-StepResult step_vm(Vm *vm) {
+inline VmResult step_vm(Vm *vm) {
   if (unlikely(vm->pc >= vm->code.len)) {
-    return (StepResult){.tag = STEP_RESULT_EOF};
+    return VM_STEP_RESULT_EOF;
   }
 
   uint8_t op = vm->code.ptr[vm->pc];
@@ -516,52 +520,40 @@ StepResult step_vm(Vm *vm) {
     uint64_t ptr = vm->stack.data[vm->stack.len - 2];
     vm->stack.len -= 2;
 
-    return (StepResult){.tag = STEP_RESULT_EXIT,
-                        .data.exit = new_fat(vm->memory.data + ptr, len)};
+    vm->out.exit = new_fat(vm->memory.data + ptr, len);
+    return VM_STEP_RESULT_EXIT;
   };
   case TRAP: {
-    // debug("TRAP\n");
-    assert(false);
-    break;
+    debug("TRAP\n");
+    ensure_stack(1);
+    vm->stack.len--;
+    vm->out.trap = vm->stack.data[vm->stack.len];
+    return VM_STEP_RESULT_TRAP;
   };
   default:
-    // debug("unknown op %02x\n", op);
+    debug("unknown op %02x\n", op);
     bail(VM_ERR_UNKNOWN_OP);
   }
 
-  return (StepResult){.tag = STEP_RESULT_STEPPED};
+  return VM_OK;
 }
 
-RunResult run_vm(Vm *vm) {
+VmResult run_vm(Vm *vm) {
   int cycles = 0;
   while (likely(vm->pc < vm->code.len)) {
     // debug("\n[%d] ", cycles);
-    StepResult res = step_vm(vm);
+    VmResult res = step_vm(vm);
     cycles++;
 
     // switch (__builtin_expect(res.tag, STEP_RESULT_STEPPED)) {
-    switch (res.tag) {
-    case STEP_RESULT_STEPPED:
+    if (res) {
+      return res;
+    } else {
       continue;
-    case STEP_RESULT_EOF:
-      return (RunResult){
-          .tag = RUN_RESULT_EOF,
-      };
-    case STEP_RESULT_TRAP:
-      return (RunResult){.tag = RUN_RESULT_TRAP,
-                         .data = {.trap = res.data.trap}};
-    case STEP_RESULT_EXIT:
-      return (RunResult){.tag = RUN_RESULT_EXIT,
-                         .data = {.exit = res.data.exit}};
-    case STEP_RESULT_ERROR:
-      return (RunResult){.tag = RUN_RESULT_ERROR,
-                         .data = {.error = res.data.error}};
     }
   }
 
-  return (RunResult){
-      .tag = RUN_RESULT_DONE,
-  };
+  return VM_OK;
 }
 
 Vm new_vm(Fat code, Fat data) {
@@ -580,6 +572,7 @@ Vm new_vm(Fat code, Fat data) {
               .len = 0,
           },
       .pc = 0,
+      .out = {0},
   };
 }
 
@@ -646,31 +639,31 @@ int main(int argc, char *argv[]) {
 
   Vm vm = new_vm(new_fat(code, code_len), new_fat(data, data_len));
 
-  RunResult res = run_vm(&vm);
+  VmResult res = run_vm(&vm);
 
-  switch (res.tag) {
-  case RUN_RESULT_DONE: {
+  switch (__builtin_expect(res, VM_OK)) {
+  case VM_OK: {
     fprintf(stdout, "done\n");
     break;
   }
-  case RUN_RESULT_EOF: {
+  case VM_STEP_RESULT_EOF: {
     fprintf(stdout, "eof\n");
     break;
   }
-  case RUN_RESULT_TRAP: {
-    fprintf(stdout, "trap %zu\n", res.data.trap);
+  case VM_STEP_RESULT_TRAP: {
+    fprintf(stdout, "trap %zu\n", vm.out.trap);
     break;
   }
-  case RUN_RESULT_EXIT: {
+  case VM_STEP_RESULT_EXIT: {
     fprintf(stdout, "exit ");
-    for (size_t i = 0; i < res.data.exit.len; i++) {
-      fprintf(stdout, "%02x", res.data.exit.ptr[i]);
+    for (size_t i = 0; i < vm.out.exit.len; i++) {
+      fprintf(stdout, "%02x", vm.out.exit.ptr[i]);
     }
     fprintf(stdout, "\n");
     break;
   }
-  case RUN_RESULT_ERROR:
-    fprintf(stdout, "error: %d", res.data.error);
+  default:
+    fprintf(stdout, "error: %d", res);
     break;
   }
 }
