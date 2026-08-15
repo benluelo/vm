@@ -111,12 +111,13 @@
               '';
               meta.mainProgram = "vm";
             };
-            build-c = pkgs.stdenv.mkDerivation {
+            build-c = pkgs.gcc16Stdenv.mkDerivation {
               pname = "vm-c";
               version = "0.0.0";
               src = ./c;
               buildInputs = [ ];
               buildPhase = ''
+                gcc --version
                 gcc -flto -Ofast vm.c
                 # clang -flto -O3 vm.c
               '';
@@ -173,7 +174,7 @@
             };
           };
           devShells = {
-            default = pkgs.mkShell {
+            default = pkgs.mkShell.override { stdenv = pkgs.gcc16Stdenv; } {
               buildInputs = [
                 self'.packages.rust-nightly
               ]

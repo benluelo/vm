@@ -30,6 +30,7 @@ typedef enum VM_ERR {
   VM_ERR_DIVIDE_BY_ZERO = 6,
   /// Invalid stack value for operation.
   VM_ERR_INVALID_STACK_VALUE = 7,
+  VM_ERR_UNKNOWN_OP = 8,
 } VM_ERR;
 
 typedef struct Memory {
@@ -55,11 +56,13 @@ typedef enum StepResultTag {
   STEP_RESULT_EOF,
   STEP_RESULT_TRAP,
   STEP_RESULT_EXIT,
+  STEP_RESULT_ERROR,
 } StepResultTag;
 
 typedef union StepResultData {
   uint64_t trap;
   Fat exit;
+  VM_ERR error;
 } StepResultData;
 
 typedef enum RunResultTag {
@@ -67,11 +70,13 @@ typedef enum RunResultTag {
   RUN_RESULT_EOF,
   RUN_RESULT_TRAP,
   RUN_RESULT_EXIT,
+  RUN_RESULT_ERROR,
 } RunResultTag;
 
 typedef union RunResultData {
   uint64_t trap;
   Fat exit;
+  VM_ERR error;
 } RunResultData;
 
 typedef struct StepResult {
