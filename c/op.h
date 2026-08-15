@@ -1,6 +1,6 @@
 #include <stdint.h>
 
-enum Op {
+enum Op: uint8_t {
   PUSH0 = 0x00,
   PUSH1 = 0x01,
   PUSH2 = 0x02,
@@ -108,7 +108,7 @@ inline uint64_t op_expmod(uint64_t a, uint64_t b) {
       acc = (acc * base) % 0xFFFFFFFFFFFFFFFF;
       // since exp!=0, finally the exp must be 1.
       if (exp == 1) {
-        return (uint64_t)acc;
+        return acc;
       }
     }
     exp >>= 1;

@@ -20,6 +20,27 @@ def copyWords(from, to, len) {
   }
 }
 
+def copyWordsFromData(from, to, len) {
+  # for (four_bytes, word) in chunk_state_block_buffer
+  #     .as_chunks::<4>()
+  #     .0
+  #     .iter()
+  #     .zip(mut words_16)
+  # {
+  #     *word <- u32::from_le_bytes(*four_bytes)
+  # }
+  i <- 0
+  loop :copy {
+    if eq(i, len) {
+      break :copy
+    }
+
+    write4(add(to, i), read4(add(from, i)))
+
+    i <- add(i, 4)
+  }
+}
+
 def zeroWords(words, len) {
   i <- 0
   loop :copy {
@@ -28,6 +49,83 @@ def zeroWords(words, len) {
     }
 
     write4(add(words, mul(i, 4)), 0)
+
+    i <- add(i, 1)
+  }
+}
+
+
+
+def compress(
+    state,          # &mut [u32; 16]
+    chaining_value, # &[u32; 8]
+    block_words,    # &[u32; 16]
+    counter,        # u64
+    block_len,      # u32
+    flags,          # u32
+) {
+  IV_0 <- 0x6A09E667
+  IV_1 <- 0xBB67AE85
+  IV_2 <- 0x3C6EF372
+  IV_3 <- 0xA54FF53A
+  IV_4 <- 0x510E527F
+  IV_5 <- 0x9B05688C
+  IV_6 <- 0x1F83D9AB
+  IV_7 <- 0x5BE0CD19
+
+  counter_low <- counter
+  counter_high <- shr(counter, 32)
+  writeWord(state, 0, readWord(chaining_value, 0))
+  writeWord(state, 1, readWord(chaining_value, 1))
+  writeWord(state, 2, readWord(chaining_value, 2))
+  writeWord(state, 3, readWord(chaining_value, 3))
+  writeWord(state, 4, readWord(chaining_value, 4))
+  writeWord(state, 5, readWord(chaining_value, 5))
+  writeWord(state, 6, readWord(chaining_value, 6))
+  writeWord(state, 7, readWord(chaining_value, 7))
+  writeWord(state, 8, IV_0)
+  writeWord(state, 9, IV_1)
+  writeWord(state, 10, IV_2)
+  writeWord(state, 11, IV_3)
+  writeWord(state, 12, counter_low)
+  writeWord(state, 13, counter_high)
+  writeWord(state, 14, block_len)
+  writeWord(state, 15, flags)
+
+  block <- block_words
+
+  round(state, block) # round 1
+  permute(block)
+  round(state, block) # round 2
+  permute(block)
+  round(state, block) # round 3
+  permute(block)
+  round(state, block) # round 4
+  permute(block)
+  round(state, block) # round 5
+  permute(block)
+  round(state, block) # round 6
+  permute(block)
+  round(state, block) # round 7
+
+  i <- 0
+  loop :a {
+    if eq(i, 8) {
+      break :a
+    }
+
+    state_i <- readWord(state, i)
+    state_i_plus_8 <- readWord(state, add(i, 8))
+    # state[i] ^= state[i + 8]
+    writeWord(
+      state, i,
+      xor(state_i, state_i_plus_8)
+    )
+    # state[i + 8] ^= chaining_value[i]
+    writeWord(
+      state, add(i, 8),
+      xor(state_i_plus_8, readWord(chaining_value, add(i, 8)))
+    )
 
     i <- add(i, 1)
   }
@@ -70,90 +168,114 @@ cv_stack_SIZE <- mul(mul(4, 8), 54)
 alloc(cv_stack_SIZE)
 cv_stack <- add(chaining_value_SIZE, chaining_value)
 
+compress_state_SIZE <- mul(4, 16)
+alloc(compress_state_SIZE)
+compress_stack <- add(cv_stack, cv_stack_SIZE)
+
 chunk_counter <- 0
 chunk_state_block_len <- 0
 blocks_compressed <- 0
 
 cv_stack_len <- 0
 
+chunk_idx <- 0
+chunk_input <- 0
+chunk_input_len <- 0
 loop :chunk_input {
-}
-for chunk_input in input.chunks(CHUNK_LEN) {
-    if (BLOCK_LEN * blocks_compressed as usize + chunk_state_block_len as usize) <- CHUNK_LEN {
-        # for (four_bytes, word) in chunk_state_block_buffer
-        #     .as_chunks::<4>()
-        #     .0
-        #     .iter()
-        #     .zip(mut words_16)
-        # {
-        #     *word <- u32::from_le_bytes(*four_bytes)
-        # }
+  chunk_input <- mul(CHUNK_LEN(), chunk_idx);
+  # dlen 10,   idx 0 -> len 10
+  # dlen 1030, idx 0 -> len 1024
+  # dlen 1030, idx 1 -> len 6
+  # dlen 2050, idx 0 -> len 1024
+  # dlen 2050, idx 1 -> len 1024
+  # dlen 2050, idx 2 -> len 6
+  chunk_input_len <- mod(sub(dlen(), chunk_idx), CHUNK_LEN())
 
-        total_chunks <- chunk_counter + 1
+  if eq(add(mul(BLOCK_LEN(), blocks_compressed), chunk_state_block_len), CHUNK_LEN()) {
+    copyWordsFromData(chunk_input, words_16, CHUNK_LEN())
+    total_chunks <- chunk_counter + 1
 
-        words_8 <- first_8_words(compress(
-            chaining_value,
-            words_16,
-            chunk_counter,
-            chunk_state_block_len as u32,
-            if blocks_compressed <- 0 {
-                CHUNK_START
-            } else {
-                0
-            } | CHUNK_END,
-        ))
-
-        total_chunks_ <- total_chunks
-        while total_chunks_ & 1 <- 0 {
-            cv_stack_len -<- 1
-            words_16[..8].copy_from_slice(&cv_stack[cv_stack_len])
-            words_16[8..].copy_from_slice(&words_8)
-            words_8 <- first_8_words(compress(&IV, &words_16, 0, BLOCK_LEN as u32, PARENT))
-            total_chunks_ >><- 1
-        }
-
-        copyWords(add(cv_stack, mul(cv_stack_len, mul(8, 4))), words_8)
-        cv_stack_len <- add(cv_stack_len, 1)
-
-        copyWords(IV, chaining_value, 8)
-        chunk_counter <- total_chunks
-        chunk_state_block_buffer <- [0; BLOCK_LEN]
-        chunk_state_block_len <- 0
-        blocks_compressed <- 0
+    flags <- 0
+    if blocks_compressed <- 0 {
+      flags <- or(CHUNK_END(), CHUNK_START())
+    } else {
+      flags <- CHUNK_END()
     }
 
-    # assert!(!chunk_input.is_empty() && chunk_input.len() <<- CHUNK_LEN)
+    compress(
+      compress_state,
+      chaining_value,
+      words_16,
+      chunk_counter,
+      chunk_state_block_len as u32,
+      flags,
+    )
 
-    for chunk_block in chunk_input.chunks(BLOCK_LEN) {
-        if chunk_state_block_len as usize <- BLOCK_LEN {
-            for (four_bytes, word) in chunk_state_block_buffer
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .zip(&mut words_16)
-            {
-                *word <- u32::from_le_bytes(*four_bytes)
-            }
-            chaining_value <- first_8_words(compress(
-                chaining_value,
-                words_16,
-                chunk_counter,
-                BLOCK_LEN as u32,
-                if blocks_compressed <- 0 {
-                    CHUNK_START
-                } else {
-                    0
-                },
-            ))
-            blocks_compressed +<- 1
-            chunk_state_block_buffer <- [0; BLOCK_LEN]
-            chunk_state_block_len <- 0
-        }
+    copyWords(compress_state, words_8, 8)
 
-        chunk_state_block_buffer[chunk_state_block_len as usize..][..chunk_block.len()]
-            .copy_from_slice(chunk_block)
-        chunk_state_block_len +<- chunk_block.len() as u8
+    total_chunks_ <- total_chunks
+    loop :total_chunks {
+      cv_stack_len <- sub(cv_stack_len, 1)
+      # words_16[..8].copy_from_slice(&cv_stack[cv_stack_len])
+      copyWords(add(cv_stack, mul(cv_stack_len, mul(4, 8))), words_16, 8)
+      # words_16[8..].copy_from_slice(&words_8)
+      copyWords(words_8, words_16, 8)
+      compress(compress_state, IV, words_16, 0, BLOCK_LEN(), PARENT())
+      copyWords(compress_state, words_8, 8)
+      total_chunks_ <- shr(total_chunks_, 1)
+
+      if eq(and(total_chunks_, 1), 0) {
+        break :total_chunks
+      }
     }
+
+    copyWords(add(cv_stack, mul(cv_stack_len, mul(8, 4))), words_8)
+    cv_stack_len <- add(cv_stack_len, 1)
+
+    copyWords(IV, chaining_value, 8)
+    chunk_counter <- total_chunks
+    chunk_state_block_buffer <- [0; BLOCK_LEN]
+    chunk_state_block_len <- 0
+    blocks_compressed <- 0
+  }
+
+  # assert!(!chunk_input.is_empty() && chunk_input.len() <<- CHUNK_LEN)
+
+  loop :chunk_block {
+    if eq(chunk_state_block_len, BLOCK_LEN()) {
+      for (four_bytes, word) in chunk_state_block_buffer
+          .as_chunks::<4>()
+          .0
+          .iter()
+          .zip(&mut words_16)
+      {
+          *word <- u32::from_le_bytes(*four_bytes)
+      }
+      chaining_value <- first_8_words(compress(
+          chaining_value,
+          add(chunk_block, mul(block_idx, BLOCK_LEN())),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          if blocks_compressed <- 0 {
+              CHUNK_START
+          } else {
+              0
+          },
+      ))
+      blocks_compressed <- add(blocks_compressed, 1)
+      zeroWords(chunk_state_block_buffer, BLOCK_LEN())
+      chunk_state_block_len <- 0
+    }
+
+    # chunk_state_block_buffer[chunk_state_block_len..][..chunk_block.len()]
+    #     .copy_from_slice(chunk_block)
+    # chunk_state_block_len += chunk_block.len() as u8
+    chunk_state_block_len <- add(chunk_state_block_len, chunk_block_len)
+  }
+
+  if lt(chunk_input_len, CHUNK_LEN()) {
+    break :chunk_input
+  }
 }
 
 output_flags <- 0

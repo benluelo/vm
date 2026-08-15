@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <endian.h>
 
 #include "./vm.h"
 
@@ -24,28 +25,28 @@
 
 #define ensure_stack(n)                                                        \
   {                                                                            \
-    if (unlikely(vm->stack.len < n)) {                                         \
+    if (unlikely(vm->stack.len < (n))) {                                       \
       bail(VM_ERR_STACK_EMPTY);                                                \
     }                                                                          \
   }
 
 #define ensure_memory(ptr, n)                                                  \
   {                                                                            \
-    if (unlikely(vm->memory.size < (ptr + n))) {                               \
+    if (unlikely(vm->memory.size < ((ptr) + (n)))) {                           \
       bail(VM_ERR_SEGFAULT);                                                   \
     }                                                                          \
   }
 
 #define ensure_data(ptr, n)                                                    \
   {                                                                            \
-    if (unlikely(vm->data.len < (ptr + n))) {                                  \
+    if (unlikely(vm->data.len < ((ptr) + (n)))) {                              \
       bail(VM_ERR_SEGFAULT);                                                   \
     }                                                                          \
   }
 
 #define ensure_code(n)                                                         \
   {                                                                            \
-    if (unlikely(vm->code.len < (vm->pc + n))) {                               \
+    if (unlikely(vm->code.len < (vm->pc + (n)))) {                             \
       bail(VM_ERR_EOF);                                                        \
     }                                                                          \
   }
@@ -78,70 +79,67 @@
   {                                                                            \
     debug("PUSH%d\n", n);                                                      \
     ensure_code(n);                                                            \
-    try(push_stack(&vm->stack, u64_from_bytes(n, vm->code.ptr + vm->pc)));     \
-    vm->pc += n;                                                               \
+    try(push_stack(&vm->stack, u64_from_bytes((n), vm->code.ptr + vm->pc)));   \
+    vm->pc += (n);                                                             \
   }
 
 #define read_n(n)                                                              \
   {                                                                            \
-    debug("READ%d\n", n);                                                      \
+    debug("READ%d\n", (n));                                                    \
     ensure_stack(1);                                                           \
     size_t *top = &vm->stack.data[vm->stack.len - 1];                          \
     uint64_t ptr = *top;                                                       \
-    ensure_memory(ptr, n);                                                     \
-    uint64_t res = u64_from_bytes(n, vm->memory.data + ptr);                   \
+    ensure_memory(ptr, (n));                                                   \
+    uint64_t res = u64_from_bytes((n), vm->memory.data + ptr);                 \
     *top = res;                                                                \
   }
 
 #define dread_n(n)                                                             \
   {                                                                            \
-    debug("DREAD%d\n", n);                                                     \
+    debug("DREAD%d\n", (n));                                                   \
     ensure_stack(1);                                                           \
     uint64_t *top = &vm->stack.data[vm->stack.len - 1];                        \
     uint64_t ptr = *top;                                                       \
-    ensure_data(ptr, n);                                                       \
-    uint64_t res = u64_from_bytes(n, vm->data.ptr + ptr);                      \
+    ensure_data(ptr, (n));                                                     \
+    uint64_t res = u64_from_bytes((n), vm->data.ptr + ptr);                    \
     *top = res;                                                                \
   }
 
 #define write_n(n)                                                             \
   {                                                                            \
-    debug("WRITE%d\n", n);                                                     \
+    debug("WRITE%d\n", (n));                                                   \
     ensure_stack(2);                                                           \
     uint64_t value = vm->stack.data[vm->stack.len - 1];                        \
     size_t ptr = vm->stack.data[vm->stack.len - 2];                            \
-    ensure_memory(ptr, n);                                                     \
-    write_u64(n, value, vm->memory.data + ptr);                                \
+    ensure_memory(ptr, (n));                                                   \
+    write_u64((n), value, vm->memory.data + ptr);                              \
     vm->stack.len -= 2;                                                        \
   }
 
 #define try_add(res, val, n)                                                   \
   {                                                                            \
-    if (unlikely(ckd_add(res, val, n))) {                                      \
+    if (unlikely(ckd_add((res), (val), (n)))) {                                \
       bail(VM_ERR_INVALID_STACK_IDX);                                          \
     };                                                                         \
   }
 
 typedef union u64 {
   uint64_t n;
-  uint8_t bz[8];
+  uint8_t bz[sizeof(uint64_t)];
 } u64;
 
 inline uint64_t u64_from_bytes(size_t n, const uint8_t *arr) {
   u64 out = {0};
   memcpy(out.bz, arr, n);
-  // debug("n: %zu, value: %02lx\n", n, out.n);
-  // TODO: only do this if target endianness is LE
-  // out.n = __builtin_bswap64(out.n) >> (8 * (8 - n));
+  debug("n: %zu, value: %02lx\n", n, out.n);
 #if BYTE_ORDER == __LITTLE_ENDIAN
-  out.n = htobe64(out.n) >> (8 * (8 - n));
+  out.n = htobe64(out.n) >> (sizeof(uint64_t) * (sizeof(uint64_t) - n));
 #endif
   return out.n;
 }
 
 inline void write_u64(size_t n, uint64_t value, uint8_t *buffer) {
   u64 out;
-  // TODO: only do this if target endianness is LE
 #if BYTE_ORDER == __LITTLE_ENDIAN
   out.n = be64toh(value << (8 * (8 - n)));
 #endif
@@ -149,24 +147,17 @@ inline void write_u64(size_t n, uint64_t value, uint8_t *buffer) {
   debug("WRITE_U64: n: %zu, value: %016lx, out: %016lx\n", n, value, out.n);
 }
 
-// inline void write_u64(size_t n, uint64_t value, uint8_t *buffer) {
-//   for (size_t i = n; i > 0; i--) {
-//     uint8_t byte = (uint8_t)(value & 0x00000000000000FF);
-//     buffer[i - 1] = byte;
-//     value >>= 8;
-//   }
-// }
-
 VmResult push_stack(Stack *stack, uint64_t value) {
   if (unlikely(stack->capacity == 0)) {
-    uint64_t *ptr = (uint64_t *)malloc(4 * 8);
+    uint64_t *ptr = (uint64_t *)malloc(4 * sizeof(uint64_t));
     if (unlikely(ptr == NULL)) {
       return VM_ERR_OUT_OF_MEMORY;
     }
     stack->data = ptr;
     stack->capacity = 4;
   } else if (unlikely(stack->len == stack->capacity)) {
-    uint64_t *ptr = (uint64_t *)realloc(stack->data, stack->capacity * 2 * 8);
+    uint64_t *ptr = (uint64_t *)realloc(stack->data,
+                                        stack->capacity * 2 * sizeof(uint64_t));
     if (unlikely(ptr == NULL)) {
       return VM_ERR_OUT_OF_MEMORY;
     }
@@ -548,8 +539,6 @@ VmResult run_vm(Vm *vm) {
     // switch (__builtin_expect(res.tag, STEP_RESULT_STEPPED)) {
     if (res) {
       return res;
-    } else {
-      continue;
     }
   }
 
@@ -587,8 +576,9 @@ int readFile(char *path, uint8_t **out, size_t *size) {
 
   infile = fopen(path, "r");
 
-  if (infile == NULL)
+  if (infile == NULL) {
     return 1;
+  }
 
   fseek(infile, 0L, SEEK_END);
   *size = ftell(infile);
@@ -598,11 +588,15 @@ int readFile(char *path, uint8_t **out, size_t *size) {
 
   *out = (uint8_t *)calloc(*size, sizeof(uint8_t));
 
-  if (out == NULL)
+  if (out == NULL) {
+    fclose(infile);
     return 1;
+  }
 
   unsigned long res = fread(*out, sizeof(char), *size, infile);
   if (res != *size) {
+    free(*out);
+    fclose(infile);
     // debug("only read %lu/%zu bytes\n", res, *size);
     return 2;
   }
@@ -632,6 +626,7 @@ int main(int argc, char *argv[]) {
   int data_res = readFile(argv[2], &data, &data_len);
   if (data_res != 0) {
     // debug("unable to read data: %d\n", data_res);
+    free(code);
     return data_res;
   }
 
@@ -666,4 +661,9 @@ int main(int argc, char *argv[]) {
     fprintf(stdout, "error: %d", res);
     break;
   }
+
+  free((void *)vm.code.ptr);
+  free((void *)vm.data.ptr);
+  free(vm.memory.data);
+  free(vm.stack.data);
 }

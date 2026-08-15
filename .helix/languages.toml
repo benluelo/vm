@@ -1,3 +1,6 @@
+[language-server]
+clangd = { command = "clangd", args = [ "--clang-tidy" ] }
+
 [[language]]
 name = "mir"
 scope = "source.mir"

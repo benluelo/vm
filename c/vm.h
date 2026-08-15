@@ -1,5 +1,4 @@
 #include <assert.h>
-#include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -14,7 +13,7 @@ typedef struct Stack {
   uint64_t *data;
 } Stack;
 
-typedef enum VmResult {
+typedef enum VmResult : int8_t {
   VM_OK = 0,
   /// Out of memory.
   VM_ERR_OUT_OF_MEMORY = -1,
