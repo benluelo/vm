@@ -1,4 +1,3 @@
-def OUT_LEN() -> x { x <- 32 }     # usize
 def BLOCK_LEN() -> x { x <- 64 }   # usize
 def CHUNK_LEN() -> x { x <- 1024 } # usize
 
@@ -7,31 +6,61 @@ def CHUNK_END() -> x { x <- shl(1, 1) }           # u32
 def PARENT() -> x { x <- shl(1, 2) }              # u32
 def ROOT() -> x { x <- shl(1, 3) }                # u32
 
-def copyWords(from, to, len) {
+def min(a, b) -> c {
+  if lt(a, b) {
+    c <- a
+  } else {
+    c <- b
+  }
+}
+
+def swap_endianness(in) -> out {
+  out <- or(
+    or(shr(and(in, 0xFF000000), 24), shr(and(in, 0x00FF0000),  8)),
+    or(shl(and(in, 0x0000FF00),  8), shl(and(in, 0x000000FF), 24))
+  )
+}
+
+def copy_bytes(src, dst, len) {
+  # dst[0..len].copy_from_slice(&src[0..len]);
+  i <- 0
+  loop :a {
+    if eq(i, len) {
+      break :a
+    }
+    write1(add(dst, i), read1(add(src, i)))
+    i <- add(i, 1)
+  }
+}
+
+def readWord(base, at) -> value {
+  value <- read4(add(base, mul(at, 4)))
+  value <- swap_endianness(value)
+}
+
+def writeWord(base, at, value) {
+  value <- swap_endianness(value)
+  write4(add(base, mul(at, 4)), value)
+}
+
+def copy_words(from, to, len) {
   i <- 0
   loop :copy {
     if eq(i, len) {
       break :copy
     }
 
+    # writeWord(to, i, readWord(from, i))
     write4(add(to, mul(i, 4)), read4(add(from, mul(i, 4))))
 
     i <- add(i, 1)
   }
 }
 
-def copyWordsFromData(from, to, len) {
-  # for (four_bytes, word) in chunk_state_block_buffer
-  #     .as_chunks::<4>()
-  #     .0
-  #     .iter()
-  #     .zip(mut words_16)
-  # {
-  #     *word <- u32::from_le_bytes(*four_bytes)
-  # }
+def copy_words_from_input(from, to) {
   i <- 0
   loop :copy {
-    if eq(i, len) {
+    if eq(i, 64) {
       break :copy
     }
 
@@ -41,7 +70,15 @@ def copyWordsFromData(from, to, len) {
   }
 }
 
-def zeroWords(words, len) {
+def wrappingAdd(a, b) -> c {
+  c <- mod(add(a, b), exp(2, 32))
+}
+
+def rotateRight(a, offset) -> n {
+  n <- and(xor(shr(a, offset), shl(a, sub(32, offset))), 0x00000000FFFFFFFF)
+}
+
+def zero_words(words, len) {
   i <- 0
   loop :copy {
     if eq(i, len) {
@@ -56,91 +93,154 @@ def zeroWords(words, len) {
 
 
 
+def MSG_SCHEDULE(i) -> n {
+  n <- read1(i)
+}
+
+# The mixing function, G, which mixes either a column or a diagonal.
+def g(round, n, state, a, b, c, d, mx, my) {
+  writeWord(state, a, wrappingAdd(wrappingAdd(readWord(state, a),     readWord(state, b)), mx))
+# if and(eq(round, 0), eq(n, 5)) {
+# }
+  writeWord(state, d, rotateRight(xor(readWord(state, d),             readWord(state, a)), 16))
+  writeWord(state, c, wrappingAdd(    readWord(state, c),             readWord(state, d)))
+  writeWord(state, b, rotateRight(xor(readWord(state, b),             readWord(state, c)), 12))
+  writeWord(state, a, wrappingAdd(wrappingAdd(readWord(state, a),     readWord(state, b)), my))
+# if and(eq(round, 1), eq(n, 2)) { exit(state, 64) }
+  writeWord(state, d, rotateRight(xor(readWord(state, d),             readWord(state, a)), 8))
+  writeWord(state, c, wrappingAdd(    readWord(state, c),             readWord(state, d)))
+  writeWord(state, b, rotateRight(xor(readWord(state, b),             readWord(state, c)), 7))
+}
+
+def round(state, msg, round) {
+    # Select the message schedule based on the round.
+
+    # Mix the columns.
+    g(round, 0, state, 0, 4, 8, 12,  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 0))),  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 1))))
+    g(round, 1, state, 1, 5, 9, 13,  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 2))),  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 3))))
+# if eq(round, 1) {
+# v round idx ->
+#     0  1  2  3  4  5  6  7  8  9  10 11 12 13 14 15
+#
+# 0   00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 
+# 1   02 06 03 10 07 00 04 13 01 11 12 05 09 14 15 08 
+# 2   03 04 10 12 13 02 07 14 06 05 09 00 11 15 08 01 
+# 3   10 07 12 09 14 03 13 15 04 00 11 02 05 08 01 06 
+# 4   12 13 09 11 15 10 14 08 07 02 05 03 00 01 06 04 
+# 5   09 14 11 05 08 12 15 01 13 03 00 10 02 06 04 07 
+# 6   11 15 05 00 01 09 08 06 14 10 02 12 03 04 07 13 
+
+    g(round, 2, state, 2, 6, 10, 14, readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 4))),  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 5))))
+    g(round, 3, state, 3, 7, 11, 15, readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 6))),  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 7))))
+
+    # Mix the diagonals.
+    g(round, 4, state, 0, 5, 10, 15, readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 8))),  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 9))))
+    g(round, 5, state, 1, 6, 11, 12, readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 10))), readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 11))))
+    g(round, 6, state, 2, 7, 8, 13,  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 12))), readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 13))))
+    g(round, 16, state, 3, 4, 9, 14,  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 14))), readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 15))))
+}
+
 def compress(
-    state,          # &mut [u32; 16]
-    chaining_value, # &[u32; 8]
-    block_words,    # &[u32; 16]
-    counter,        # u64
-    block_len,      # u32
-    flags,          # u32
+    state,
+    chaining_value,
+    block_words,
+    counter,
+    block_len,
+    flags,
 ) {
-  IV_0 <- 0x6A09E667
-  IV_1 <- 0xBB67AE85
-  IV_2 <- 0x3C6EF372
-  IV_3 <- 0xA54FF53A
-  IV_4 <- 0x510E527F
-  IV_5 <- 0x9B05688C
-  IV_6 <- 0x1F83D9AB
-  IV_7 <- 0x5BE0CD19
+    IV_0 <- 0x6A09E667
+    IV_1 <- 0xBB67AE85
+    IV_2 <- 0x3C6EF372
+    IV_3 <- 0xA54FF53A
+    IV_4 <- 0x510E527F
+    IV_5 <- 0x9B05688C
+    IV_6 <- 0x1F83D9AB
+    IV_7 <- 0x5BE0CD19
 
-  counter_low <- counter
-  counter_high <- shr(counter, 32)
-  writeWord(state, 0, readWord(chaining_value, 0))
-  writeWord(state, 1, readWord(chaining_value, 1))
-  writeWord(state, 2, readWord(chaining_value, 2))
-  writeWord(state, 3, readWord(chaining_value, 3))
-  writeWord(state, 4, readWord(chaining_value, 4))
-  writeWord(state, 5, readWord(chaining_value, 5))
-  writeWord(state, 6, readWord(chaining_value, 6))
-  writeWord(state, 7, readWord(chaining_value, 7))
-  writeWord(state, 8, IV_0)
-  writeWord(state, 9, IV_1)
-  writeWord(state, 10, IV_2)
-  writeWord(state, 11, IV_3)
-  writeWord(state, 12, counter_low)
-  writeWord(state, 13, counter_high)
-  writeWord(state, 14, block_len)
-  writeWord(state, 15, flags)
+    counter_low <- and(counter, 0x00000000FFFFFFFF)
+    counter_high <- shr(counter, 32)
 
-  block <- block_words
+    writeWord(state, 0, readWord(chaining_value, 0))
+    writeWord(state, 1, readWord(chaining_value, 1))
+    writeWord(state, 2, readWord(chaining_value, 2))
+    writeWord(state, 3, readWord(chaining_value, 3))
+    writeWord(state, 4, readWord(chaining_value, 4))
+    writeWord(state, 5, readWord(chaining_value, 5))
+    writeWord(state, 6, readWord(chaining_value, 6))
+    writeWord(state, 7, readWord(chaining_value, 7))
+    writeWord(state, 8, IV_0)
+    writeWord(state, 9, IV_1)
+    writeWord(state, 10, IV_2)
+    writeWord(state, 11, IV_3)
+    writeWord(state, 12, counter_low)
+    writeWord(state, 13, counter_high)
+    writeWord(state, 14, block_len)
+    writeWord(state, 15, flags)
 
-  round(state, block) # round 1
-  permute(block)
-  round(state, block) # round 2
-  permute(block)
-  round(state, block) # round 3
-  permute(block)
-  round(state, block) # round 4
-  permute(block)
-  round(state, block) # round 5
-  permute(block)
-  round(state, block) # round 6
-  permute(block)
-  round(state, block) # round 7
 
-  i <- 0
-  loop :a {
-    if eq(i, 8) {
-      break :a
+    # exit(block_words, 64)
+    round(state, block_words, 0)
+    round(state, block_words, 1)
+    round(state, block_words, 2)
+    round(state, block_words, 3)
+    round(state, block_words, 4)
+    round(state, block_words, 5)
+    round(state, block_words, 6)
+
+
+    i <- 0
+    loop :a {
+      if eq(i, 8) {
+        break :a
+      }
+
+      # state[i] ^= state[i + 8]
+      writeWord(
+        state, i,
+        xor(readWord(state, i), readWord(state, add(i, 8)))
+      )
+      # state[i + 8] ^= chaining_value[i]
+      writeWord(
+        state, add(i, 8),
+        xor(readWord(state, add(i, 8)), readWord(chaining_value, i))
+      )
+
+      i <- add(i, 1)
     }
-
-    state_i <- readWord(state, i)
-    state_i_plus_8 <- readWord(state, add(i, 8))
-    # state[i] ^= state[i + 8]
-    writeWord(
-      state, i,
-      xor(state_i, state_i_plus_8)
-    )
-    # state[i + 8] ^= chaining_value[i]
-    writeWord(
-      state, add(i, 8),
-      xor(state_i_plus_8, readWord(chaining_value, add(i, 8)))
-    )
-
-    i <- add(i, 1)
-  }
 }
 
 # STATE:
 
+msg_schedule_state <- 0
+msg_schedule_state_SIZE <- mul(16, 7)
+alloc(msg_schedule_state_SIZE)
+
+write8(add(msg_schedule_state, mul(8, 0)), 0x0001020304050607)
+write8(add(msg_schedule_state, mul(8, 1)), 0x08090a0b0c0d0e0f)
+write8(add(msg_schedule_state, mul(8, 2)), 0x0206030a0700040d)
+write8(add(msg_schedule_state, mul(8, 3)), 0x010b0c05090e0f08)
+write8(add(msg_schedule_state, mul(8, 4)), 0x03040a0c0d02070e)
+write8(add(msg_schedule_state, mul(8, 5)), 0x060509000b0f0801)
+write8(add(msg_schedule_state, mul(8, 6)), 0x0a070c090e030d0f)
+write8(add(msg_schedule_state, mul(8, 7)), 0x04000b0205080106)
+write8(add(msg_schedule_state, mul(8, 8)), 0x0c0d090b0f0a0e08)
+write8(add(msg_schedule_state, mul(8, 9)), 0x0702050300010604)
+write8(add(msg_schedule_state, mul(8, 10)), 0x090e0b05080c0f01)
+write8(add(msg_schedule_state, mul(8, 11)), 0x0d03000a02060407)
+write8(add(msg_schedule_state, mul(8, 12)), 0x0b0f050001090806)
+write8(add(msg_schedule_state, mul(8, 13)), 0x0e0a020c0304070d)
+
+
 chunk_state_block_buffer_SIZE <- BLOCK_LEN()
 alloc(chunk_state_block_buffer_SIZE)
-chunk_state_block_buffer <- 0
+chunk_state_block_buffer <- add(msg_schedule_state, msg_schedule_state_SIZE)
 
+# 16-word scratch state
 words_16_SIZE <- mul(4, 16)
 alloc(words_16_SIZE)
 words_16 <- add(chunk_state_block_buffer_SIZE, chunk_state_block_buffer)
 
+# 8-word scratch state
 words_8_SIZE <- mul(4, 8)
 alloc(words_8_SIZE)
 words_8 <- add(words_16_SIZE, words_16)
@@ -158,19 +258,26 @@ writeWord(IV, 5, 0x9B05688C)
 writeWord(IV, 6, 0x1F83D9AB)
 writeWord(IV, 7, 0x5BE0CD19)
 
+# output buffer
+out_len <- 32
+alloc(out_len)
+out <- add(IV, IV_SIZE)
+
 chaining_value_SIZE <- mul(4, 8)
 alloc(chaining_value_SIZE)
-chaining_value <- add(mul(4, 8), IV)
+chaining_value <- add(out, out_len)
 
-copyWords(IV, chaining_value, 8)
+copy_words(IV, chaining_value, 8)
 
-cv_stack_SIZE <- mul(mul(4, 8), 54)
-alloc(cv_stack_SIZE)
-cv_stack <- add(chaining_value_SIZE, chaining_value)
-
+# scratch state for compress
 compress_state_SIZE <- mul(4, 16)
 alloc(compress_state_SIZE)
-compress_stack <- add(cv_stack, cv_stack_SIZE)
+compress_state <- add(chaining_value, chaining_value_SIZE)
+
+# chaining values
+cv_stack_SIZE <- mul(mul(4, 8), 54)
+alloc(cv_stack_SIZE)
+cv_stack <- add(compress_state_SIZE, compress_state)
 
 chunk_counter <- 0
 chunk_state_block_len <- 0
@@ -179,156 +286,187 @@ blocks_compressed <- 0
 cv_stack_len <- 0
 
 chunk_idx <- 0
-chunk_input <- 0
+chunk_input_ptr <- 0
 chunk_input_len <- 0
-loop :chunk_input {
-  chunk_input <- mul(CHUNK_LEN(), chunk_idx);
-  # dlen 10,   idx 0 -> len 10
-  # dlen 1030, idx 0 -> len 1024
-  # dlen 1030, idx 1 -> len 6
-  # dlen 2050, idx 0 -> len 1024
-  # dlen 2050, idx 1 -> len 1024
-  # dlen 2050, idx 2 -> len 6
-  chunk_input_len <- mod(sub(dlen(), chunk_idx), CHUNK_LEN())
+loop :a {
+    val <- mul(chunk_idx, CHUNK_LEN())
+    if or(gt(val, dlen()), eq(val, dlen())) {
+        break :a
+    }
+    chunk_input_ptr <- min(dlen(), mul(CHUNK_LEN(), chunk_idx))
+    chunk_input_len <- min(sub(dlen(), chunk_input_ptr), CHUNK_LEN())
+    chunk_idx <- add(chunk_idx, 1)
 
-  if eq(add(mul(BLOCK_LEN(), blocks_compressed), chunk_state_block_len), CHUNK_LEN()) {
-    copyWordsFromData(chunk_input, words_16, CHUNK_LEN())
-    total_chunks <- chunk_counter + 1
+    # If the current chunk is complete, finalize it and reset the
+    # chunk state. More input is coming, so this chunk is not ROOT.
+    if eq(add(mul(BLOCK_LEN(), blocks_compressed), chunk_state_block_len), CHUNK_LEN()) {
+        copy_words_from_input(chunk_state_block_buffer, words_16)
 
-    flags <- 0
-    if blocks_compressed <- 0 {
-      flags <- or(CHUNK_END(), CHUNK_START())
-    } else {
-      flags <- CHUNK_END()
+        total_chunks <- add(chunk_counter, 1)
+
+        flags <- 0
+        if eq(blocks_compressed, 0) {
+            flags <- CHUNK_START()
+        }
+        compress(
+            compress_state,
+            chaining_value,
+            words_16,
+            chunk_counter,
+            chunk_state_block_len,
+            or(flags, CHUNK_END())
+        )
+        copy_words(compress_state, words_8, 8)
+
+        total_chunks_ <- total_chunks
+        loop :a {
+            if not(eq(and(total_chunks_, 1), 0))  {
+                break :a
+            }
+
+            cv_stack_len <- sub(cv_stack_len, 1)
+            # REVIEW: I think this needs to be cv_stack_len * 32
+            copy_words(add(cv_stack, mul(cv_stack_len, 32)), words_16, 8)
+            copy_words(words_8, add(words_16, 8), 8)
+            compress(
+                compress_state,
+                IV,
+                words_16,
+                0,
+                BLOCK_LEN(),
+                PARENT()
+            )
+            copy_words(compress_state, words_8, 8)
+            total_chunks_ <- shr(total_chunks_, 1)
+        }
+
+        copy_words(words_8, add(cv_stack, mul(cv_stack_len, 8)), 8)
+        cv_stack_len <- add(cv_stack_len, 1)
+
+        # chaining_value <- IV
+        copy_words(IV, chaining_value, 8)
+        chunk_counter <- total_chunks
+        zero_words(chunk_state_block_buffer, BLOCK_LEN())
+        chunk_state_block_len <- 0
+        blocks_compressed <- 0
     }
 
-    compress(
-      compress_state,
-      chaining_value,
-      words_16,
-      chunk_counter,
-      chunk_state_block_len as u32,
-      flags,
-    )
+    chunk_block_idx <- 0
+    chunk_block_input_ptr <- 0
+    chunk_block_input_len <- 0
+    loop :a {
+        val <- mul(chunk_block_idx, BLOCK_LEN())
+        if or(gt(val, chunk_input_len), eq(val, chunk_input_len)) {
+            break :a
+        }
+        chunk_block_input_ptr <- min(chunk_input_len, mul(BLOCK_LEN(), chunk_block_idx))
+        chunk_block_input_len <- min(sub(chunk_input_len, chunk_block_input_ptr), BLOCK_LEN())
+        chunk_block_idx <- add(chunk_block_idx, 1)
 
-    copyWords(compress_state, words_8, 8)
+        # chunk_block = input[chunk_input_ptr + chunk_block_input_ptr..]
+        chunk_block <- add(chunk_input_ptr, chunk_block_input_ptr)
 
-    total_chunks_ <- total_chunks
-    loop :total_chunks {
-      cv_stack_len <- sub(cv_stack_len, 1)
-      # words_16[..8].copy_from_slice(&cv_stack[cv_stack_len])
-      copyWords(add(cv_stack, mul(cv_stack_len, mul(4, 8))), words_16, 8)
-      # words_16[8..].copy_from_slice(&words_8)
-      copyWords(words_8, words_16, 8)
-      compress(compress_state, IV, words_16, 0, BLOCK_LEN(), PARENT())
-      copyWords(compress_state, words_8, 8)
-      total_chunks_ <- shr(total_chunks_, 1)
+        if eq(chunk_state_block_len, BLOCK_LEN()) {
+            copy_words_from_input(chunk_state_block_buffer, words_16)
 
-      if eq(and(total_chunks_, 1), 0) {
-        break :total_chunks
-      }
+            flags <- 0
+            if eq(blocks_compressed, 0) {
+                flags <- CHUNK_START()
+            }
+            compress(
+                compress_state,
+                chaining_value,
+                words_16,
+                chunk_counter,
+                BLOCK_LEN(),
+                flags
+            )
+
+            copy_words(compress_state, chaining_value, 8)
+            blocks_compressed <- add(blocks_compressed, 1)
+            zero_words(chunk_state_block_buffer, 16)
+            chunk_state_block_len <- 0
+        }
+
+        dcopy(
+            chunk_block,
+            chunk_state_block_buffer,
+            chunk_block_input_len
+        )
+        chunk_state_block_len <- add(chunk_state_block_len, chunk_block_input_len)
     }
-
-    copyWords(add(cv_stack, mul(cv_stack_len, mul(8, 4))), words_8)
-    cv_stack_len <- add(cv_stack_len, 1)
-
-    copyWords(IV, chaining_value, 8)
-    chunk_counter <- total_chunks
-    chunk_state_block_buffer <- [0; BLOCK_LEN]
-    chunk_state_block_len <- 0
-    blocks_compressed <- 0
-  }
-
-  # assert!(!chunk_input.is_empty() && chunk_input.len() <<- CHUNK_LEN)
-
-  loop :chunk_block {
-    if eq(chunk_state_block_len, BLOCK_LEN()) {
-      for (four_bytes, word) in chunk_state_block_buffer
-          .as_chunks::<4>()
-          .0
-          .iter()
-          .zip(&mut words_16)
-      {
-          *word <- u32::from_le_bytes(*four_bytes)
-      }
-      chaining_value <- first_8_words(compress(
-          chaining_value,
-          add(chunk_block, mul(block_idx, BLOCK_LEN())),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          if blocks_compressed <- 0 {
-              CHUNK_START
-          } else {
-              0
-          },
-      ))
-      blocks_compressed <- add(blocks_compressed, 1)
-      zeroWords(chunk_state_block_buffer, BLOCK_LEN())
-      chunk_state_block_len <- 0
-    }
-
-    # chunk_state_block_buffer[chunk_state_block_len..][..chunk_block.len()]
-    #     .copy_from_slice(chunk_block)
-    # chunk_state_block_len += chunk_block.len() as u8
-    chunk_state_block_len <- add(chunk_state_block_len, chunk_block_len)
-  }
-
-  if lt(chunk_input_len, CHUNK_LEN()) {
-    break :chunk_input
-  }
 }
 
-output_flags <- 0
-if blocks_compressed <- 0 {
-    output_flags <- or(CHUNK_END, CHUNK_START)
-} else {
-    output_flags <- or(CHUNK_END)
+output_flags <- CHUNK_END()
+if eq(blocks_compressed, 0) {
+    output_flags <- or(output_flags, CHUNK_START())
 }
 
-# for (four_bytes, word) in chunk_state_block_buffer
-#     .as_chunks::<4>()
-#     .0
-#     .iter()
-#     .zip(mut words_16)
-# {
-#     *word <- u32::from_le_bytes(*four_bytes)
-# }
+copy_words_from_input(chunk_state_block_buffer, words_16)
 
 loop :a {
-  if gt(cv_stack_len, 0) {
-    cv_stack_len <- sub(cv_stack_len, 1)
-    # let right_child_cv <- first_8_words(compress(
-    #     chaining_value,
-    #     words_16,
-    #     chunk_counter,
-    #     chunk_state_block_len as u32,
-    #     output_flags,
-    # ))
-    # words_16[..8].copy_from_slice(cv_stack[cv_stack_len])
-    # words_16[8..].copy_from_slice(right_child_cv)
-
-    # chaining_value <- IV
-    # chunk_counter <- 0
-    # chunk_state_block_len <- BLOCK_LEN as u8
-    # output_flags <- PARENT
-  } else {
+  if eq(cv_stack_len, 0) {
     break :a
   }
+  cv_stack_len <- sub(cv_stack_len, 1)
+  compress(
+    compress_state,
+    chaining_value,
+    words_16,
+    chunk_counter,
+    chunk_state_block_len,
+    output_flags
+  )
+  copy_words(add(cv_stack, mul(cv_stack_len, 8)), words_16, 8)
+  copy_words(compress_state, add(words_16, 8), 8)
+
+  # chaining_value <- IV
+  copy_words(IV, chaining_value, 8)
+  chunk_counter <- 0
+  chunk_state_block_len <- BLOCK_LEN()
+  output_flags <- PARENT()
 }
 
 output_block_counter <- 0
-words <- 0 # TODO: Pointer
-# for out_block in out.chunks_mut(2 * OUT_LEN) {
-#     words <- compress(
-#         chaining_value,
-#         words_16,
-#         output_block_counter,
-#         chunk_state_block_len as u32,
-#         output_flags | ROOT,
-#     )
-#     // The output length might not be a multiple of 4.
-#     for (word, out_word) in words.iter().zip(out_block.chunks_mut(4)) {
-#         out_word.copy_from_slice(word.to_le_bytes()[..out_word.len()])
-#     }
-#     output_block_counter +<- 1
-# }
+out_block_ptr <- 0
+loop :a {
+    if or(gt(out_block_ptr, out_len), eq(out_block_ptr, out_len)) {
+        break :a
+    }
+
+    compress(
+        compress_state,
+        chaining_value,
+        words_16,
+        output_block_counter,
+        chunk_state_block_len,
+        or(output_flags, ROOT())
+    )
+
+    i <- 0
+    loop :a {
+        if eq(i, 16) {
+            break :a
+        }
+
+        if or(gt(out_block_ptr, out_len), eq(out_block_ptr, out_len)) {
+            break :a
+        }
+
+        out_word_len <- min(sub(out_len, out_block_ptr), 4)
+
+        copy_bytes(
+            # to_le_bytes(readWord(compress_state, i)),
+            add(compress_state, mul(i, 4)),
+            add(out, out_block_ptr),
+            out_word_len
+        )
+
+        out_block_ptr <- add(out_block_ptr, 4)
+        i <- add(i, 1)
+    }
+
+    output_block_counter <- add(output_block_counter, 1)
+}
+
+exit(out, out_len)

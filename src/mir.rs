@@ -989,6 +989,10 @@ impl<'a> Ctx<'a> {
                             ensure_arity_and_eval_args(ctx, depth, "dread1", 1, exprs)?;
                             ctx.current_section().push(AsmOp::DREAD1);
                         }
+                        BuiltinOrDef::Builtin(Builtin::Dread4) => {
+                            ensure_arity_and_eval_args(ctx, depth, "dread4", 1, exprs)?;
+                            ctx.current_section().push(AsmOp::DREAD4);
+                        }
                         BuiltinOrDef::Builtin(Builtin::Dread8) => {
                             ensure_arity_and_eval_args(ctx, depth, "dread8", 1, exprs)?;
                             ctx.current_section().push(AsmOp::DREAD8);

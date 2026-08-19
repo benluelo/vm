@@ -273,9 +273,19 @@ fn main() -> anyhow::Result<()> {
                     println!("time: {}", elapsed.as_secs_f64());
                     println!("total cycles: {}", vm.hook.cycles());
                     println!("binary size: {}", vm.code.len());
+                    println!("data size: {}", vm.data.len());
                     match res {
                         Some(res) => {
-                            println!("output: {}", res.encode_hex());
+                            println!(
+                                "output: {}",
+                                res.encode_hex()
+                                    .chars()
+                                    .collect::<Vec<_>>()
+                                    .chunks(8)
+                                    .map(|s| s.iter().collect::<String>())
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            );
                         }
                         None => {
                             println!("output: <no output>");

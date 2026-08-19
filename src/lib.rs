@@ -178,8 +178,7 @@ impl<H: Hook> Vm<H> {
                 let top = last!();
                 let ptr = as_ptr!(*top);
                 trace!("ptr: {ptr:x}");
-                let res =
-                    ok_or!(self.memory.get(ptr..((ptr + 8) - (8 - $n))), Error::<H>::Segfault);
+                let res = ok_or!(self.memory.get(ptr..ptr + $n), Error::<H>::Segfault);
                 *top = u64_from_bytes(res);
             }};
         }
@@ -578,7 +577,7 @@ pub mod op {
 
     #[inline(always)]
     pub const fn r#mod(a: u64, b: u64) -> Result<u64, Error> {
-        if a == 0 { Err(Error::DivideByZero) } else { Ok(a.wrapping_rem(b)) }
+        if b == 0 { Err(Error::DivideByZero) } else { Ok(a.wrapping_rem(b)) }
     }
 
     #[inline(always)]
