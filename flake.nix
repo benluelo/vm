@@ -111,7 +111,7 @@
               '';
               meta.mainProgram = "vm";
             };
-            build-c = pkgs.gcc16Stdenv.mkDerivation {
+            build-c-gcc = pkgs.gcc16Stdenv.mkDerivation {
               pname = "vm-c";
               version = "0.0.0";
               src = ./c;
@@ -119,6 +119,24 @@
               buildPhase = ''
                 gcc --version
                 gcc -flto -Ofast -static -g vm.c
+                # clang -flto -O3 vm.c
+              '';
+              dontStrip = true;
+              installPhase = ''
+                mkdir "$out"
+                mkdir "$out/bin"
+                mv ./a.out "$out/bin/vm"
+              '';
+              meta.mainProgram = "vm";
+            };
+            build-c-clang = pkgs.clangStdenv.mkDerivation {
+              pname = "vm-c";
+              version = "0.0.0";
+              src = ./c;
+              buildInputs = [ pkgs.clangStdenv.cc.libc.static ];
+              buildPhase = ''
+                clang --version
+                clang -flto -Ofast -static -g vm.c
                 # clang -flto -O3 vm.c
               '';
               dontStrip = true;
@@ -137,10 +155,16 @@
                 program = value;
               })
               {
-                run-c = pkgs.writeShellApplication {
-                  name = "run-c";
+                run-c-gcc = pkgs.writeShellApplication {
+                  name = "run-c-gcc";
                   text = ''
-                    time ${pkgs.lib.getExe self'.packages.build-c} ${buildObject ./tests/sha3-256.mir} ${./random.bin}
+                    time ${pkgs.lib.getExe self'.packages.build-c-gcc} ${buildObject ./tests/sha3-256.mir} ${./random.bin}
+                  '';
+                };
+                run-c-clang = pkgs.writeShellApplication {
+                  name = "run-c-clang";
+                  text = ''
+                    time ${pkgs.lib.getExe self'.packages.build-c-clang} ${buildObject ./tests/sha3-256.mir} ${./random.bin}
                   '';
                 };
                 run-zig = pkgs.writeShellApplication {
