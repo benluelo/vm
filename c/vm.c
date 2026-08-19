@@ -1,10 +1,10 @@
+#include <endian.h>
 #include <stdbool.h>
 #include <stdckdint.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <endian.h>
 
 #include "./vm.h"
 
@@ -64,7 +64,7 @@
                                                                                \
     vm->stack.len -= 1;                                                        \
     vm->stack.data[len - 2] = op(lhs, rhs);                                    \
-    break;                                                                     \
+    DISPATCH();                                                                \
   }
 
 #define try(expr)                                                              \
@@ -197,334 +197,406 @@ VmResult pop_stack(Stack *stack, uint64_t *value) {
 }
 
 inline VmResult step_vm(Vm *vm) {
+  static void *ops_table[256] = {
+      [0 ... 255] = &&unknown_op,
+      [0x00] = &&_PUSH0,
+      [0x01] = &&_PUSH1,
+      [0x02] = &&_PUSH2,
+      [0x03] = &&_PUSH3,
+      [0x04] = &&_PUSH4,
+      [0x05] = &&_PUSH5,
+      [0x06] = &&_PUSH6,
+      [0x07] = &&_PUSH7,
+      [0x08] = &&_PUSH8,
+      [0x09] = &&_DUP,
+      [0x0a] = &&_DUP0,
+      [0x0b] = &&_SWAP,
+      [0x0c] = &&_SWAP0,
+      [0x0d] = &&_POP,
+      [0x20] = &&_ALLOC,
+      [0x21] = &&_WRITE1,
+      [0x22] = &&_WRITE2,
+      [0x23] = &&_WRITE3,
+      [0x24] = &&_WRITE4,
+      [0x25] = &&_WRITE5,
+      [0x26] = &&_WRITE6,
+      [0x27] = &&_WRITE7,
+      [0x28] = &&_WRITE8,
+      [0x29] = &&_READ1,
+      [0x2a] = &&_READ2,
+      [0x2b] = &&_READ3,
+      [0x2c] = &&_READ4,
+      [0x2d] = &&_READ5,
+      [0x2e] = &&_READ6,
+      [0x2f] = &&_READ7,
+      [0x30] = &&_READ8,
+      [0x31] = &&_DREAD1,
+      [0x32] = &&_DREAD2,
+      [0x33] = &&_DREAD3,
+      [0x34] = &&_DREAD4,
+      [0x35] = &&_DREAD5,
+      [0x36] = &&_DREAD6,
+      [0x37] = &&_DREAD7,
+      [0x38] = &&_DREAD8,
+      [0x39] = &&_DCOPY,
+      [0x3a] = &&_DLEN,
+      [0x40] = &&_ADD,
+      [0x41] = &&_SUB,
+      [0x42] = &&_MUL,
+      [0x43] = &&_DIV,
+      [0x44] = &&_EXP,
+      [0x45] = &&_MOD,
+      [0x4a] = &&_EQ,
+      [0x4b] = &&_NEQ,
+      [0x4c] = &&_LT,
+      [0x4d] = &&_GT,
+      [0x4e] = &&_NOT,
+      [0x4f] = &&_SHL,
+      [0x50] = &&_SHR,
+      [0x51] = &&_NEG,
+      [0x52] = &&_OR,
+      [0x53] = &&_XOR,
+      [0x54] = &&_AND,
+      [0xa0] = &&_JUMP,
+      [0xa1] = &&_JNZ,
+      [0xa2] = &&_CALL,
+      [0xa4] = &&_EXIT,
+      [0xa5] = &&_TRAP,
+  };
+
   if (unlikely(vm->pc >= vm->code.len)) {
     return VM_STEP_RESULT_EOF;
   }
 
-  uint8_t op = vm->code.ptr[vm->pc];
+  uint8_t op;
 
-  debug("pc: %zu, op: %02x\n", vm->pc, op);
-  debug("stack (%ld): [ ", vm->stack.len);
-  // for (int i = 0; i < vm->stack.len; i++) {
-  //   debug("%016lx ", vm->stack.data[i]);
-  // }
-  debug("]\n");
-  debug("memory (%ld): ", vm->memory.size);
-  // for (int i = 0; i < vm->memory.size; i++) {
-  //   debug("%02x", vm->memory.data[i]);
-  // }
-  debug("\n");
-
-  vm->pc++;
-
-  switch (op) {
-  case PUSH0:
-    try(push_stack(&vm->stack, 0));
-    break;
-  case PUSH1:
-    push_n(1);
-    break;
-  case PUSH2:
-    push_n(2);
-    break;
-  case PUSH3:
-    push_n(3);
-    break;
-  case PUSH4:
-    push_n(4);
-    break;
-  case PUSH5:
-    push_n(5);
-    break;
-  case PUSH6:
-    push_n(6);
-    break;
-  case PUSH7:
-    push_n(7);
-    break;
-  case PUSH8:
-    push_n(8);
-    break;
-  case DUP: {
-    // debug("DUP\n");
-    ensure_stack(1);
-    uint64_t *idx = &vm->stack.data[vm->stack.len - 1];
-    uint64_t stack_idx;
-    try_add(&stack_idx, *idx, 1);
-    // debug("idx: %lu\n", *idx);
-    ensure_stack(stack_idx);
-    *idx = vm->stack.data[(vm->stack.len - 1) - stack_idx];
-    break;
-  };
-  case DUP0: {
-    // debug("DUP0\n");
-    ensure_stack(1);
-    try(push_stack(&vm->stack, vm->stack.data[vm->stack.len - 1]));
-    break;
-  };
-  case SWAP: {
-    // debug("SWAP\n");
-    uint64_t idx = 0;
-    try(pop_stack(&vm->stack, &idx));
-    try_add(&idx, idx, 1);
-    size_t len = vm->stack.len;
-    if (unlikely(len < idx)) {
-      bail(VM_ERR_INVALID_STACK_IDX);
-    }
-    size_t a_idx = len - 1;
-    size_t b_idx = a_idx - idx;
-    uint64_t a = vm->stack.data[a_idx];
-    vm->stack.data[a_idx] = vm->stack.data[b_idx];
-    vm->stack.data[b_idx] = a;
-    break;
-  };
-  case SWAP0: {
-    // debug("SWAP0\n");
-    ensure_stack(2);
-    uint64_t a = vm->stack.data[vm->stack.len - 1];
-    vm->stack.data[vm->stack.len - 1] = vm->stack.data[vm->stack.len - 2];
-    vm->stack.data[vm->stack.len - 2] = a;
-    break;
-  };
-  case POP: {
-    // debug("POP\n");
-    ensure_stack(1);
-    vm->stack.len--;
-    break;
-  };
-  case ALLOC: {
-    // debug("ALLOC\n");
-    uint64_t value = 0;
-    try(pop_stack(&vm->stack, &value));
-    // debug("%lu\n", value);
-    try(alloc_memory(&vm->memory, value));
-    break;
-  };
-
-  case WRITE1:
-    write_n(1);
-    break;
-  case WRITE2:
-    write_n(2);
-    break;
-  case WRITE3:
-    write_n(3);
-    break;
-  case WRITE4:
-    write_n(4);
-    break;
-  case WRITE5:
-    write_n(5);
-    break;
-  case WRITE6:
-    write_n(6);
-    break;
-  case WRITE7:
-    write_n(7);
-    break;
-  case WRITE8:
-    write_n(8);
-    break;
-
-  case READ1:
-    read_n(1);
-    break;
-  case READ2:
-    read_n(2);
-    break;
-  case READ3:
-    read_n(3);
-    break;
-  case READ4:
-    read_n(4);
-    break;
-  case READ5:
-    read_n(5);
-    break;
-  case READ6:
-    read_n(6);
-    break;
-  case READ7:
-    read_n(7);
-    break;
-  case READ8:
-    read_n(8);
-    break;
-
-  case DREAD1:
-    dread_n(1);
-    break;
-  case DREAD2:
-    dread_n(2);
-    break;
-  case DREAD3:
-    dread_n(3);
-    break;
-  case DREAD4:
-    dread_n(4);
-    break;
-  case DREAD5:
-    dread_n(5);
-    break;
-  case DREAD6:
-    dread_n(6);
-    break;
-  case DREAD7:
-    dread_n(7);
-    break;
-  case DREAD8:
-    dread_n(8);
-    break;
-
-  case DCOPY: {
-    // debug("DCOPY\n");
-    if (unlikely(vm->stack.len < 3)) {
-      bail(VM_ERR_STACK_EMPTY);
-    }
-
-    size_t len = vm->stack.data[vm->stack.len - 1];
-    size_t dst = vm->stack.data[vm->stack.len - 2];
-    size_t src = vm->stack.data[vm->stack.len - 3];
-
-    ensure_data(src, len);
-    ensure_memory(dst, len);
-
-    vm->stack.len -= 3;
-
-    memcpy(vm->memory.data + dst, vm->data.ptr + src, len);
-    break;
-  };
-  case DLEN: {
-    try(push_stack(&vm->stack, vm->data.len));
-    break;
-  };
-  case ADD:
-    binop(op_add);
-  case SUB:
-    binop(op_sub);
-  case MUL:
-    binop(op_mul);
-  case DIV: {
-    size_t len = vm->stack.len;
-    if (unlikely(len < 2)) {
-      bail(VM_ERR_STACK_EMPTY);
-    }
-    uint64_t lhs = vm->stack.data[len - 2];
-    uint64_t rhs = vm->stack.data[len - 1];
-    vm->stack.len -= 1;
-    if (unlikely(rhs == 0)) {
-      bail(VM_ERR_DIVIDE_BY_ZERO);
-    }
-    vm->stack.data[len - 2] = op_div(lhs, rhs);
-    break;
-  };
-  case EXP:
-    binop(op_expmod);
-  case MOD: {
-    size_t len = vm->stack.len;
-    if (unlikely(len < 2)) {
-      bail(VM_ERR_STACK_EMPTY);
-    }
-    uint64_t lhs = vm->stack.data[len - 2];
-    uint64_t rhs = vm->stack.data[len - 1];
-    vm->stack.len -= 1;
-    if (unlikely(rhs == 0)) {
-      bail(VM_ERR_DIVIDE_BY_ZERO);
-    }
-    vm->stack.data[len - 2] = op_mod(lhs, rhs);
-    break;
-  };
-  case EQ:
-    binop(op_eq);
-  case NEQ:
-    binop(op_neq);
-  case LT:
-    binop(op_lt);
-  case GT:
-    binop(op_gt);
-  case NOT: {
-    // debug("NOT\n");
-    ensure_stack(1);
-    uint64_t *a = &vm->stack.data[vm->stack.len - 1];
-    *a = op_not(*a);
-    break;
-  };
-  case SHL:
-    binop(op_shl);
-  case SHR:
-    binop(op_shr);
-  case NEG: {
-    // debug("NEG\n");
-    ensure_stack(1);
-    uint64_t *a = &vm->stack.data[vm->stack.len - 1];
-    *a = op_neg(*a);
-    break;
-  };
-  case OR:
-    binop(op_or);
-  case XOR:
-    binop(op_xor);
-  case AND:
-    binop(op_and);
-  case JUMP: {
-    // debug("JUMP\n");
-    try(pop_stack(&vm->stack, &vm->pc));
-    break;
-  };
-  case JNZ: {
-    // debug("JNZ\n");
-
-    ensure_stack(2);
-
-    uint64_t dst = vm->stack.data[vm->stack.len - 1];
-    uint64_t value = vm->stack.data[vm->stack.len - 2];
-
-    vm->stack.len -= 2;
-
-    if (value != 0) {
-      vm->pc = dst;
-    }
-    break;
-  };
-  case CALL: {
-    // debug("CALL\n");
-
-    ensure_stack(1);
-
-    uint64_t *top = &vm->stack.data[vm->stack.len - 1];
-    uint64_t address = *top;
-    *top = vm->pc;
-    vm->pc = address;
-    break;
-  };
-  case EXIT: {
-    // debug("EXIT\n");
-    ensure_stack(2);
-
-    // debug("memory: ");
-    // for (int i; i < vm->memory.size; i++) {
-    //   // debug("%02x", vm->memory.data[i]);
-    // }
-    // debug("\n");
-
-    uint64_t len = vm->stack.data[vm->stack.len - 1];
-    uint64_t ptr = vm->stack.data[vm->stack.len - 2];
-    vm->stack.len -= 2;
-
-    vm->out.exit = new_fat(vm->memory.data + ptr, len);
-    return VM_STEP_RESULT_EXIT;
-  };
-  case TRAP: {
-    debug("TRAP\n");
-    ensure_stack(1);
-    vm->stack.len--;
-    vm->out.trap = vm->stack.data[vm->stack.len];
-    return VM_STEP_RESULT_TRAP;
-  };
-  default:
-    debug("unknown op %02x\n", op);
-    bail(VM_ERR_UNKNOWN_OP);
+#define DISPATCH()                                                             \
+  {                                                                            \
+    op = vm->code.ptr[vm->pc];                                                 \
+    vm->pc++;                                                                  \
+    goto *ops_table[op];                                                       \
   }
+    // debug("pc: %zu, op: %02x\n", vm->pc, op);                                  \
+    // debug("stack (%ld): [ ", vm->stack.len);                                   \
+    // for (int i = 0; i < vm->stack.len; i++) {                                  \
+    //   debug("%016lx ", vm->stack.data[i]);                                     \
+    // }                                                                          \
+    // debug("]\n");                                                              \
+    // debug("memory (%ld)\n", vm->memory.size);                                  \
+    // debug("\n");                                                               \
+    // debug("memory (%ld): ", vm->memory.size);                                  \
+    // for (int i = 0; i < vm->memory.size; i++) {                                \
+    //   debug("%02x", vm->memory.data[i]);                                       \
+    // }                                                                          \
+
+  DISPATCH();
+
+_PUSH0:
+  try(push_stack(&vm->stack, 0));
+  DISPATCH();
+_PUSH1:
+  push_n(1);
+  DISPATCH();
+_PUSH2:
+  push_n(2);
+  DISPATCH();
+_PUSH3:
+  push_n(3);
+  DISPATCH();
+_PUSH4:
+  push_n(4);
+  DISPATCH();
+_PUSH5:
+  push_n(5);
+  DISPATCH();
+_PUSH6:
+  push_n(6);
+  DISPATCH();
+_PUSH7:
+  push_n(7);
+  DISPATCH();
+_PUSH8:
+  push_n(8);
+  DISPATCH();
+_DUP: {
+  debug("DUP\n");
+  ensure_stack(1);
+  uint64_t *idx = &vm->stack.data[vm->stack.len - 1];
+  uint64_t stack_idx;
+  try_add(&stack_idx, *idx, 1);
+  debug("idx: %lu\n", *idx);
+  ensure_stack(stack_idx);
+  *idx = vm->stack.data[(vm->stack.len - 1) - stack_idx];
+  DISPATCH();
+};
+_DUP0: {
+  // debug("DUP0\n");
+  ensure_stack(1);
+  try(push_stack(&vm->stack, vm->stack.data[vm->stack.len - 1]));
+  DISPATCH();
+};
+_SWAP: {
+  // debug("SWAP\n");
+  uint64_t idx = 0;
+  try(pop_stack(&vm->stack, &idx));
+  try_add(&idx, idx, 1);
+  size_t len = vm->stack.len;
+  if (unlikely(len < idx)) {
+    bail(VM_ERR_INVALID_STACK_IDX);
+  }
+  size_t a_idx = len - 1;
+  size_t b_idx = a_idx - idx;
+  uint64_t a = vm->stack.data[a_idx];
+  vm->stack.data[a_idx] = vm->stack.data[b_idx];
+  vm->stack.data[b_idx] = a;
+  DISPATCH();
+};
+_SWAP0: {
+  // debug("SWAP0\n");
+  ensure_stack(2);
+  uint64_t a = vm->stack.data[vm->stack.len - 1];
+  vm->stack.data[vm->stack.len - 1] = vm->stack.data[vm->stack.len - 2];
+  vm->stack.data[vm->stack.len - 2] = a;
+  DISPATCH();
+};
+_POP: {
+  // debug("POP\n");
+  ensure_stack(1);
+  vm->stack.len--;
+  DISPATCH();
+};
+_ALLOC: {
+  // debug("ALLOC\n");
+  uint64_t value = 0;
+  try(pop_stack(&vm->stack, &value));
+  // debug("%lu\n", value);
+  try(alloc_memory(&vm->memory, value));
+  DISPATCH();
+};
+
+_WRITE1:
+  write_n(1);
+  DISPATCH();
+_WRITE2:
+  write_n(2);
+  DISPATCH();
+_WRITE3:
+  write_n(3);
+  DISPATCH();
+_WRITE4:
+  write_n(4);
+  DISPATCH();
+_WRITE5:
+  write_n(5);
+  DISPATCH();
+_WRITE6:
+  write_n(6);
+  DISPATCH();
+_WRITE7:
+  write_n(7);
+  DISPATCH();
+_WRITE8:
+  write_n(8);
+  DISPATCH();
+
+_READ1:
+  read_n(1);
+  DISPATCH();
+_READ2:
+  read_n(2);
+  DISPATCH();
+_READ3:
+  read_n(3);
+  DISPATCH();
+_READ4:
+  read_n(4);
+  DISPATCH();
+_READ5:
+  read_n(5);
+  DISPATCH();
+_READ6:
+  read_n(6);
+  DISPATCH();
+_READ7:
+  read_n(7);
+  DISPATCH();
+_READ8:
+  read_n(8);
+  DISPATCH();
+
+_DREAD1:
+  dread_n(1);
+  DISPATCH();
+_DREAD2:
+  dread_n(2);
+  DISPATCH();
+_DREAD3:
+  dread_n(3);
+  DISPATCH();
+_DREAD4:
+  dread_n(4);
+  DISPATCH();
+_DREAD5:
+  dread_n(5);
+  DISPATCH();
+_DREAD6:
+  dread_n(6);
+  DISPATCH();
+_DREAD7:
+  dread_n(7);
+  DISPATCH();
+_DREAD8:
+  dread_n(8);
+  DISPATCH();
+
+_DCOPY: {
+  // debug("DCOPY\n");
+  if (unlikely(vm->stack.len < 3)) {
+    bail(VM_ERR_STACK_EMPTY);
+  }
+
+  size_t len = vm->stack.data[vm->stack.len - 1];
+  size_t dst = vm->stack.data[vm->stack.len - 2];
+  size_t src = vm->stack.data[vm->stack.len - 3];
+
+  ensure_data(src, len);
+  ensure_memory(dst, len);
+
+  vm->stack.len -= 3;
+
+  memcpy(vm->memory.data + dst, vm->data.ptr + src, len);
+  DISPATCH();
+};
+_DLEN: {
+  try(push_stack(&vm->stack, vm->data.len));
+  DISPATCH();
+};
+_ADD:
+  binop(op_add);
+_SUB:
+  binop(op_sub);
+_MUL:
+  binop(op_mul);
+_DIV: {
+  size_t len = vm->stack.len;
+  if (unlikely(len < 2)) {
+    bail(VM_ERR_STACK_EMPTY);
+  }
+  uint64_t lhs = vm->stack.data[len - 2];
+  uint64_t rhs = vm->stack.data[len - 1];
+  vm->stack.len -= 1;
+  if (unlikely(rhs == 0)) {
+    bail(VM_ERR_DIVIDE_BY_ZERO);
+  }
+  vm->stack.data[len - 2] = op_div(lhs, rhs);
+  DISPATCH();
+};
+_EXP:
+  binop(op_expmod);
+_MOD: {
+  size_t len = vm->stack.len;
+  if (unlikely(len < 2)) {
+    bail(VM_ERR_STACK_EMPTY);
+  }
+  uint64_t lhs = vm->stack.data[len - 2];
+  uint64_t rhs = vm->stack.data[len - 1];
+  vm->stack.len -= 1;
+  if (unlikely(rhs == 0)) {
+    bail(VM_ERR_DIVIDE_BY_ZERO);
+  }
+  vm->stack.data[len - 2] = op_mod(lhs, rhs);
+  DISPATCH();
+};
+_EQ:
+  binop(op_eq);
+_NEQ:
+  binop(op_neq);
+_LT:
+  binop(op_lt);
+_GT:
+  binop(op_gt);
+_NOT: {
+  // debug("NOT\n");
+  ensure_stack(1);
+  uint64_t *a = &vm->stack.data[vm->stack.len - 1];
+  *a = op_not(*a);
+  DISPATCH();
+};
+_SHL:
+  binop(op_shl);
+_SHR:
+  binop(op_shr);
+_NEG: {
+  // debug("NEG\n");
+  ensure_stack(1);
+  uint64_t *a = &vm->stack.data[vm->stack.len - 1];
+  *a = op_neg(*a);
+  DISPATCH();
+};
+_OR:
+  binop(op_or);
+_XOR:
+  binop(op_xor);
+_AND:
+  binop(op_and);
+_JUMP: {
+  // debug("JUMP\n");
+  try(pop_stack(&vm->stack, &vm->pc));
+  DISPATCH();
+};
+_JNZ: {
+  // debug("JNZ\n");
+
+  ensure_stack(2);
+
+  uint64_t dst = vm->stack.data[vm->stack.len - 1];
+  uint64_t value = vm->stack.data[vm->stack.len - 2];
+
+  vm->stack.len -= 2;
+
+  if (value != 0) {
+    vm->pc = dst;
+  }
+  DISPATCH();
+};
+_CALL: {
+  // debug("CALL\n");
+
+  ensure_stack(1);
+
+  uint64_t *top = &vm->stack.data[vm->stack.len - 1];
+  uint64_t address = *top;
+  *top = vm->pc;
+  vm->pc = address;
+  DISPATCH();
+};
+_EXIT: {
+  // debug("EXIT\n");
+  ensure_stack(2);
+
+  // debug("memory: ");
+  // for (int i; i < vm->memory.size; i++) {
+  //   // debug("%02x", vm->memory.data[i]);
+  // }
+  // debug("\n");
+
+  uint64_t len = vm->stack.data[vm->stack.len - 1];
+  uint64_t ptr = vm->stack.data[vm->stack.len - 2];
+  vm->stack.len -= 2;
+
+  vm->out.exit = new_fat(vm->memory.data + ptr, len);
+  return VM_STEP_RESULT_EXIT;
+};
+_TRAP: {
+  debug("TRAP\n");
+  ensure_stack(1);
+  vm->stack.len--;
+  vm->out.trap = vm->stack.data[vm->stack.len];
+  return VM_STEP_RESULT_TRAP;
+};
+unknown_op:
+  debug("unknown op %02x\n", op);
+  bail(VM_ERR_UNKNOWN_OP);
 
   return VM_OK;
 }

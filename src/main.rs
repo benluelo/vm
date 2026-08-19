@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use argh::{FromArgValue, FromArgs};
 use ariadne::{Label, Report, ReportKind, Source};
 use chumsky::{Parser, error::Rich};
@@ -234,7 +234,7 @@ fn main() -> anyhow::Result<()> {
             }
 
             let obj = if obj {
-                fs::read(&file)?
+                fs::read(&file).with_context(|| format!("path: {}", file.display()))?
             } else if asm {
                 let source = fs::read_to_string(&file)?;
                 match parse_asm().parse(&source).into_result() {
@@ -349,7 +349,9 @@ fn read_input(
         (None, true, None) => bail!("--input-hex requires --input"),
         (None, false, None) => vec![],
         (None, true, Some(path)) => const_hex::decode(fs::read(path)?)?,
-        (None, false, Some(path)) => fs::read(path)?,
+        (None, false, Some(path)) => {
+            fs::read(&path).with_context(|| format!("path: {}", path.display()))?
+        }
         (Some(input), true, None) => const_hex::decode(input)?,
         (Some(input), false, None) => input.into_bytes(),
         (Some(_), _, Some(_)) => {
