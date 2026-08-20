@@ -1,9 +1,8 @@
 use tracing::trace;
 
-use crate::{Error, Hook, Vm, raw};
+use crate::{Error, Hook, Vm, raw::WRITE1};
 
-// type VmResult<H: Hook> = Result<Option<Vec<u8>>, Error<H>>;
-type VmResult<H> = Result<Option<Vec<u8>>, Error<H>>;
+type VmResult<H: Hook> = Result<Option<Vec<u8>>, Error<H>>;
 
 type F<H = ()> = fn(&mut Vm<H>) -> VmResult<H>;
 
@@ -12,85 +11,6 @@ impl<H: Hook> Vm<H> {
         dispatch(self)
     }
 }
-
-const TABLE<H: Hook>: [F<H>; 256] = {
-    let mut out = [unknown_op::<H> as F<H>; 256];
-
-    out[raw::PUSH0 as usize]  = do_push0::<H>  as F<H>;
-    out[raw::PUSH1 as usize]  = do_push1::<H>  as F<H>;
-    out[raw::PUSH2 as usize]  = do_push2::<H>  as F<H>;
-    out[raw::PUSH3 as usize]  = do_push3::<H>  as F<H>;
-    out[raw::PUSH4 as usize]  = do_push4::<H>  as F<H>;
-    out[raw::PUSH5 as usize]  = do_push5::<H>  as F<H>;
-    out[raw::PUSH6 as usize]  = do_push6::<H>  as F<H>;
-    out[raw::PUSH7 as usize]  = do_push7::<H>  as F<H>;
-    out[raw::PUSH8 as usize]  = do_push8::<H>  as F<H>;
-
-    out[raw::DUP as usize]    = do_dup::<H>    as F<H>;
-    out[raw::DUP0 as usize]   = do_dup0::<H>   as F<H>;
-    out[raw::SWAP as usize]   = do_swap::<H>   as F<H>;
-    out[raw::SWAP0 as usize]  = do_swap0::<H>  as F<H>;
-    out[raw::POP as usize]    = do_pop::<H>    as F<H>;
-
-    out[raw::ALLOC as usize]  = do_alloc::<H>  as F<H>;
-
-    out[raw::WRITE1 as usize] = do_write1::<H> as F<H>;
-    out[raw::WRITE2 as usize] = do_write2::<H> as F<H>;
-    out[raw::WRITE3 as usize] = do_write3::<H> as F<H>;
-    out[raw::WRITE4 as usize] = do_write4::<H> as F<H>;
-    out[raw::WRITE5 as usize] = do_write5::<H> as F<H>;
-    out[raw::WRITE6 as usize] = do_write6::<H> as F<H>;
-    out[raw::WRITE7 as usize] = do_write7::<H> as F<H>;
-    out[raw::WRITE8 as usize] = do_write8::<H> as F<H>;
-
-    out[raw::READ1 as usize]  = do_read1::<H>  as F<H>;
-    out[raw::READ2 as usize]  = do_read2::<H>  as F<H>;
-    out[raw::READ3 as usize]  = do_read3::<H>  as F<H>;
-    out[raw::READ4 as usize]  = do_read4::<H>  as F<H>;
-    out[raw::READ5 as usize]  = do_read5::<H>  as F<H>;
-    out[raw::READ6 as usize]  = do_read6::<H>  as F<H>;
-    out[raw::READ7 as usize]  = do_read7::<H>  as F<H>;
-    out[raw::READ8 as usize]  = do_read8::<H>  as F<H>;
-
-    out[raw::DREAD1 as usize] = do_dread1::<H> as F<H>;
-    out[raw::DREAD2 as usize] = do_dread2::<H> as F<H>;
-    out[raw::DREAD3 as usize] = do_dread3::<H> as F<H>;
-    out[raw::DREAD4 as usize] = do_dread4::<H> as F<H>;
-    out[raw::DREAD5 as usize] = do_dread5::<H> as F<H>;
-    out[raw::DREAD6 as usize] = do_dread6::<H> as F<H>;
-    out[raw::DREAD7 as usize] = do_dread7::<H> as F<H>;
-    out[raw::DREAD8 as usize] = do_dread8::<H> as F<H>;
-
-    out[raw::DCOPY as usize]  = do_dcopy::<H>  as F<H>;
-    out[raw::DLEN as usize]   = do_dlen::<H>   as F<H>;
-
-    out[raw::ADD as usize]    = do_add::<H>    as F<H>;
-    out[raw::SUB as usize]    = do_sub::<H>    as F<H>;
-    out[raw::MUL as usize]    = do_mul::<H>    as F<H>;
-    out[raw::DIV as usize]    = do_div::<H>    as F<H>;
-    out[raw::EXP as usize]    = do_exp::<H>    as F<H>;
-    out[raw::MOD as usize]    = do_mod::<H>    as F<H>;
-
-    out[raw::EQ as usize]     = do_eq::<H>     as F<H>;
-    out[raw::NEQ as usize]    = do_neq::<H>    as F<H>;
-    out[raw::LT as usize]     = do_lt::<H>     as F<H>;
-    out[raw::GT as usize]     = do_gt::<H>     as F<H>;
-    out[raw::NOT as usize]    = do_not::<H>    as F<H>;
-    out[raw::SHL as usize]    = do_shl::<H>    as F<H>;
-    out[raw::SHR as usize]    = do_shr::<H>    as F<H>;
-    out[raw::NEG as usize]    = do_neg::<H>    as F<H>;
-    out[raw::OR as usize]     = do_or::<H>     as F<H>;
-    out[raw::XOR as usize]    = do_xor::<H>    as F<H>;
-    out[raw::AND as usize]    = do_and::<H>    as F<H>;
-
-    out[raw::JUMP as usize]   = do_jump::<H>   as F<H>;
-    out[raw::JNZ as usize]    = do_jnz::<H>    as F<H>;
-    out[raw::CALL as usize]   = do_call::<H>   as F<H>;
-    out[raw::EXIT as usize]   = do_exit::<H>   as F<H>;
-    out[raw::TRAP as usize]   = do_trap::<H>   as F<H>;
-
-    out
-};
 
 fn dispatch<H: Hook>(vm: &mut Vm<H>) -> VmResult<H> {
     let table = const {
@@ -172,16 +92,6 @@ fn dispatch<H: Hook>(vm: &mut Vm<H>) -> VmResult<H> {
         out
     };
 
-    trace!("");
-    trace!("pc: {}", vm.pc);
-    trace!("stack: {:x?}", vm.stack);
-    // trace!("memory: {}", vm.memory.encode_hex());
-
-    trace!("stack: {}, memory: {}", vm.stack.len(), vm.memory.len());
-
-    std::thread::sleep(std::time::Duration::from_millis(20));
-
-    // trace!("pre_cycle");
     if let Err(err) = vm.hook.pre_cycle() {
         return Err(Error::Hook(err));
     };
