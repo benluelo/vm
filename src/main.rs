@@ -126,6 +126,10 @@ pub struct RunCmd {
     /// whether to treat --input as hex.
     #[argh(switch)]
     pub input_hex: bool,
+
+    /// use the tail call implementation of the vm.
+    #[argh(switch)]
+    pub tc: bool,
 }
 
 /// debug the execution of compiled bytecode against provided input
@@ -228,7 +232,7 @@ fn main() -> anyhow::Result<()> {
             let out = out.unwrap_or(file.with_extension("o"));
             fs::write(out, obj)?;
         }
-        Cmd::Run(RunCmd { file, asm, obj, input, input_file, input_hex }) => {
+        Cmd::Run(RunCmd { file, asm, obj, input, input_file, input_hex, tc }) => {
             if obj && asm {
                 bail!("--asm is incompatible with --obj")
             }
@@ -266,7 +270,7 @@ fn main() -> anyhow::Result<()> {
             // let hook = ();
             let mut vm = Vm::new_with(obj, data, hook);
             let now = Instant::now();
-            let res = vm.run();
+            let res = if tc { vm.run_tc() } else { vm.run() };
             let elapsed = now.elapsed();
             match res {
                 Ok(res) => {

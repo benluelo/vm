@@ -1,5 +1,6 @@
 #![feature(slice_swap_unchecked, never_type, split_array)]
 // #![warn(clippy::panic, clippy::unwrap_in_result)]
+#![feature(generic_const_items, explicit_tail_calls)]
 
 use std::{
     error::Error as StdError,
@@ -12,6 +13,8 @@ use tracing::trace;
 
 pub mod assembler;
 pub mod mir;
+
+pub mod tail;
 
 #[cfg(test)]
 mod vm_tests;
