@@ -515,11 +515,13 @@ impl CycleCountHook {
 impl Hook for CycleCountHook {
     type Error = !;
 
+    #[inline]
     fn pre_cycle(&mut self) -> Result<(), Self::Error> {
+        // trace!("cycles: {}", self.cycles + 1);
         Ok(())
     }
 
-    #[inline(always)]
+    #[inline]
     fn cycle(&mut self, _: usize, _: Op, _: &[u64], _: &[u8]) -> Result<(), Self::Error> {
         self.cycles += 1;
         Ok(())
