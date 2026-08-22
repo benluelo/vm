@@ -29,6 +29,7 @@ typedef enum VmResult : int8_t {
   VM_ERR_DIVIDE_BY_ZERO = -6,
   /// Invalid stack value for operation.
   VM_ERR_INVALID_STACK_VALUE = -7,
+  /// Unknonw opcode.
   VM_ERR_UNKNOWN_OP = -8,
 
   VM_STEP_RESULT_EOF = 1,

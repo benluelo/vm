@@ -54,7 +54,11 @@
             ) value;
 
           crane = {
-            lib = (inputs.crane.mkLib pkgs).overrideToolchain (_: self'.packages.rust-nightly);
+            lib = ((inputs.crane.mkLib pkgs).overrideToolchain (_: self'.packages.rust-nightly)).overrideScope (
+              final: prev: {
+                stdenvSelector = p: p.clangStdenv;
+              }
+            );
           };
 
           nist-vectors = pkgs.fetchzip {
@@ -63,8 +67,28 @@
             hash = "sha256-nWNYO4H2piqf6CW7NJfqc4+DHzByYoNbbjGE3QeO4uc=";
           };
           build-rust = crane.lib.buildPackage {
-            src = crane.lib.cleanCargoSource ./.;
+            src =
+              let
+                unfilteredRoot = ./.; # The original, unfiltered source
+              in
+              pkgs.lib.fileset.toSource {
+                root = unfilteredRoot;
+                fileset = pkgs.lib.fileset.unions [
+                  (crane.lib.fileset.commonCargoSources unfilteredRoot)
+                  ./c
+                ];
+              };
             doCheck = false;
+            nativeBuildInputs = [
+              pkgs.pkg-config
+              pkgs.rustPlatform.bindgenHook
+            ];
+            buildInputs = [
+              pkgs.llvmPackages_latest.libclang.lib
+              pkgs.llvmPackages_latest.libllvm
+              pkgs.stdenv.cc.libc
+            ];
+            LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang.lib}/lib";
             cargoBuildCommand = "cargo build --release -Ftracing-off";
             meta.mainProgram = "vm";
           };
@@ -136,7 +160,8 @@
               buildInputs = [ pkgs.clangStdenv.cc.libc.static ];
               buildPhase = ''
                 clang --version
-                clang -flto -Ofast -static -g vm.c
+                # clang -flto -Ofast -static -g vm.c -std=c23 -DDO_RESTRICT -DDEBUG
+                clang -flto -Ofast -static -g vm.c -DDO_RESTRICT
                 # clang -flto -O3 vm.c
               '';
               dontStrip = true;
@@ -226,6 +251,7 @@
                 # llvmPackages_latest.clang
               ]);
             };
+            LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang.lib}/lib";
             nativeBuildInputs = [
               pkgs.gcc16Stdenv.cc.libc.static
               config.treefmt.build.wrapper

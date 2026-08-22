@@ -14,6 +14,12 @@
 #define debug(...)
 #endif
 
+#ifdef DO_RESTRICT
+#define RESTRICT restrict
+#else
+#define RESTRICT
+#endif
+
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 // #define likely(x) x
@@ -128,7 +134,7 @@ typedef union u64 {
   uint8_t bz[sizeof(uint64_t)];
 } u64;
 
-inline uint64_t u64_from_bytes(size_t n, const uint8_t *arr) {
+static inline uint64_t u64_from_bytes(size_t n, const uint8_t *RESTRICT arr) {
   u64 out = {0};
   memcpy(out.bz, arr, n);
   debug("n: %zu, value: %02lx\n", n, out.n);
@@ -138,7 +144,8 @@ inline uint64_t u64_from_bytes(size_t n, const uint8_t *arr) {
   return out.n;
 }
 
-inline void write_u64(size_t n, uint64_t value, uint8_t *buffer) {
+static inline void write_u64(size_t n, uint64_t value,
+                             uint8_t *RESTRICT buffer) {
   u64 out;
 #if BYTE_ORDER == __LITTLE_ENDIAN
   out.n = be64toh(value << (8 * (8 - n)));
@@ -147,7 +154,7 @@ inline void write_u64(size_t n, uint64_t value, uint8_t *buffer) {
   debug("WRITE_U64: n: %zu, value: %016lx, out: %016lx\n", n, value, out.n);
 }
 
-VmResult push_stack(Stack *stack, uint64_t value) {
+static inline VmResult push_stack(Stack *RESTRICT stack, uint64_t value) {
   if (unlikely(stack->capacity == 0)) {
     uint64_t *ptr = (uint64_t *)malloc(4 * sizeof(uint64_t));
     if (unlikely(ptr == NULL)) {
@@ -171,7 +178,8 @@ VmResult push_stack(Stack *stack, uint64_t value) {
   return VM_OK;
 }
 
-VmResult alloc_memory(Memory *memory, size_t additional) {
+static inline VmResult alloc_memory(Memory *RESTRICT memory,
+                                    size_t additional) {
   uint8_t *ptr = (uint8_t *)realloc(memory->data, memory->size + additional);
   if (unlikely(ptr == NULL)) {
     return VM_ERR_OUT_OF_MEMORY;
@@ -185,7 +193,7 @@ VmResult alloc_memory(Memory *memory, size_t additional) {
   return VM_OK;
 }
 
-VmResult pop_stack(Stack *stack, uint64_t *value) {
+static inline VmResult pop_stack(Stack *stack, uint64_t *value) {
   if (unlikely(stack->len == 0)) {
     return VM_ERR_STACK_EMPTY;
   }
@@ -276,18 +284,18 @@ inline VmResult step_vm(Vm *vm) {
     vm->pc++;                                                                  \
     goto *ops_table[op];                                                       \
   }
-    // debug("pc: %zu, op: %02x\n", vm->pc, op);                                  \
-    // debug("stack (%ld): [ ", vm->stack.len);                                   \
-    // for (int i = 0; i < vm->stack.len; i++) {                                  \
-    //   debug("%016lx ", vm->stack.data[i]);                                     \
-    // }                                                                          \
-    // debug("]\n");                                                              \
-    // debug("memory (%ld)\n", vm->memory.size);                                  \
-    // debug("\n");                                                               \
-    // debug("memory (%ld): ", vm->memory.size);                                  \
-    // for (int i = 0; i < vm->memory.size; i++) {                                \
-    //   debug("%02x", vm->memory.data[i]);                                       \
-    // }                                                                          \
+  // debug("pc: %zu, op: %02x\n", vm->pc, op); \
+  // debug("stack (%ld): [ ", vm->stack.len); \
+  // for (int i = 0; i < vm->stack.len; i++) { \
+  //   debug("%016lx ", vm->stack.data[i]); \
+  // } \
+  // debug("]\n"); \
+  // debug("memory (%ld)\n", vm->memory.size); \
+  // debug("\n"); \
+  // debug("memory (%ld): ", vm->memory.size); \
+  // for (int i = 0; i < vm->memory.size; i++) { \
+  //   debug("%02x", vm->memory.data[i]); \
+  // } \
 
   DISPATCH();
 
@@ -643,99 +651,99 @@ Fat new_fat(uint8_t const *ptr, size_t len) {
 
 // ENTRYPOINT
 
-int readFile(char *path, uint8_t **out, size_t *size) {
-  FILE *infile;
+// int readFile(char *path, uint8_t **out, size_t *size) {
+//   FILE *infile;
 
-  infile = fopen(path, "r");
+//   infile = fopen(path, "r");
 
-  if (infile == NULL) {
-    return 1;
-  }
+//   if (infile == NULL) {
+//     return 1;
+//   }
 
-  fseek(infile, 0L, SEEK_END);
-  *size = ftell(infile);
-  // debug("file size: %lu\n", *size);
+//   fseek(infile, 0L, SEEK_END);
+//   *size = ftell(infile);
+//   // debug("file size: %lu\n", *size);
 
-  fseek(infile, 0L, SEEK_SET);
+//   fseek(infile, 0L, SEEK_SET);
 
-  *out = (uint8_t *)calloc(*size, sizeof(uint8_t));
+//   *out = (uint8_t *)calloc(*size, sizeof(uint8_t));
 
-  if (out == NULL) {
-    fclose(infile);
-    return 1;
-  }
+//   if (out == NULL) {
+//     fclose(infile);
+//     return 1;
+//   }
 
-  unsigned long res = fread(*out, sizeof(char), *size, infile);
-  if (res != *size) {
-    free(*out);
-    fclose(infile);
-    // debug("only read %lu/%zu bytes\n", res, *size);
-    return 2;
-  }
-  fclose(infile);
+//   unsigned long res = fread(*out, sizeof(char), *size, infile);
+//   if (res != *size) {
+//     free(*out);
+//     fclose(infile);
+//     // debug("only read %lu/%zu bytes\n", res, *size);
+//     return 2;
+//   }
+//   fclose(infile);
 
-  return 0;
-}
+//   return 0;
+// }
 
-int main(int argc, char *argv[]) {
-  if (argc < 2) {
-    fprintf(stderr, "missing argument\n");
-    return 1;
-  }
+// int main(int argc, char *argv[]) {
+//   if (argc < 2) {
+//     fprintf(stderr, "missing argument\n");
+//     return 1;
+//   }
 
-  uint8_t *code;
-  size_t code_len;
-  int code_res = readFile(argv[1], &code, &code_len);
-  if (code_res != 0) {
-    // debug("unable to read code: %d\n", code_res);
-    return code_res;
-  }
+//   uint8_t *code;
+//   size_t code_len;
+//   int code_res = readFile(argv[1], &code, &code_len);
+//   if (code_res != 0) {
+//     // debug("unable to read code: %d\n", code_res);
+//     return code_res;
+//   }
 
-  // debug("code size: %zu\n", code_len);
+//   // debug("code size: %zu\n", code_len);
 
-  uint8_t *data;
-  size_t data_len;
-  int data_res = readFile(argv[2], &data, &data_len);
-  if (data_res != 0) {
-    // debug("unable to read data: %d\n", data_res);
-    free(code);
-    return data_res;
-  }
+//   uint8_t *data;
+//   size_t data_len;
+//   int data_res = readFile(argv[2], &data, &data_len);
+//   if (data_res != 0) {
+//     // debug("unable to read data: %d\n", data_res);
+//     free(code);
+//     return data_res;
+//   }
 
-  // debug("data size: %zu\n", data_len);
+//   // debug("data size: %zu\n", data_len);
 
-  Vm vm = new_vm(new_fat(code, code_len), new_fat(data, data_len));
+//   Vm vm = new_vm(new_fat(code, code_len), new_fat(data, data_len));
 
-  VmResult res = run_vm(&vm);
+//   VmResult res = run_vm(&vm);
 
-  switch (__builtin_expect(res, VM_OK)) {
-  case VM_OK: {
-    fprintf(stdout, "done\n");
-    break;
-  }
-  case VM_STEP_RESULT_EOF: {
-    fprintf(stdout, "eof\n");
-    break;
-  }
-  case VM_STEP_RESULT_TRAP: {
-    fprintf(stdout, "trap %zu\n", vm.out.trap);
-    break;
-  }
-  case VM_STEP_RESULT_EXIT: {
-    fprintf(stdout, "exit ");
-    for (size_t i = 0; i < vm.out.exit.len; i++) {
-      fprintf(stdout, "%02x", vm.out.exit.ptr[i]);
-    }
-    fprintf(stdout, "\n");
-    break;
-  }
-  default:
-    fprintf(stdout, "error: %d", res);
-    break;
-  }
+//   switch (__builtin_expect(res, VM_OK)) {
+//   case VM_OK: {
+//     fprintf(stdout, "done\n");
+//     break;
+//   }
+//   case VM_STEP_RESULT_EOF: {
+//     fprintf(stdout, "eof\n");
+//     break;
+//   }
+//   case VM_STEP_RESULT_TRAP: {
+//     fprintf(stdout, "trap %zu\n", vm.out.trap);
+//     break;
+//   }
+//   case VM_STEP_RESULT_EXIT: {
+//     fprintf(stdout, "exit ");
+//     for (size_t i = 0; i < vm.out.exit.len; i++) {
+//       fprintf(stdout, "%02x", vm.out.exit.ptr[i]);
+//     }
+//     fprintf(stdout, "\n");
+//     break;
+//   }
+//   default:
+//     fprintf(stdout, "error: %d", res);
+//     break;
+//   }
 
-  free((void *)vm.code.ptr);
-  free((void *)vm.data.ptr);
-  free(vm.memory.data);
-  free(vm.stack.data);
-}
+//   free((void *)vm.code.ptr);
+//   free((void *)vm.data.ptr);
+//   free(vm.memory.data);
+//   free(vm.stack.data);
+// }
