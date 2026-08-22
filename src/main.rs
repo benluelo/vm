@@ -32,8 +32,9 @@ use ratatui::{
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
-    CycleCountHook, Error, Hook, Op, StepResult, Vm,
+    CycleCountHook, Error, Hook, Op, StepResult, Vm, VmT,
     assembler::parse_asm,
+    ffi,
     mir::{
         self, CheckCtx, CompileResult, Ctx,
         parse::print_ast,
@@ -130,6 +131,10 @@ pub struct RunCmd {
     /// use the tail call implementation of the vm.
     #[argh(switch)]
     pub tc: bool,
+
+    /// use the c implementation of the vm.
+    #[argh(switch)]
+    pub c: bool,
 }
 
 /// debug the execution of compiled bytecode against provided input
@@ -266,42 +271,14 @@ fn main() -> anyhow::Result<()> {
 
             let data = read_input(input, input_file, input_hex)?;
 
-            let hook = CycleCountHook::new();
-            // let hook = ();
-            let mut vm = Vm::new_with(obj, data, hook);
-            let now = Instant::now();
-            let res = if tc { vm.run_tc() } else { vm.run() };
-            let elapsed = now.elapsed();
-            match res {
-                Ok(res) => {
-                    println!("time: {}", elapsed.as_secs_f64());
-                    println!("total cycles: {}", vm.hook.cycles());
-                    println!("binary size: {}", vm.code.len());
-                    println!("data size: {}", vm.data.len());
-                    match res {
-                        Some(res) => {
-                            println!(
-                                "output: {}",
-                                res.encode_hex()
-                                    .chars()
-                                    .collect::<Vec<_>>()
-                                    .chunks(8)
-                                    .map(|s| s.iter().collect::<String>())
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            );
-                        }
-                        None => {
-                            println!("output: <no output>");
-                        }
-                    }
-                }
-                Err(err) => {
-                    println!("err: {err}");
-                    // println!("cycles: {}", vm.cycles);
-
-                    // println!("{}", const_hex::encode(vm.memory));
-                }
+            if c {
+                let mut vm = ffi::Vm::new(obj, data);
+                do_run(vm);
+            } else {
+                let hook = CycleCountHook::new();
+                // let hook = ();
+                let mut vm = Vm::new_with(obj, data, hook);
+                do_run(vm);
             }
         }
         Cmd::Debug(DebugCmd { file, input, input_file, input_hex }) => {
@@ -342,6 +319,43 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn do_run(mut vm: impl VmT) {
+    let now = Instant::now();
+    let res = vm.run();
+    let elapsed = now.elapsed();
+    match res {
+        Ok(res) => {
+            println!("time: {}", elapsed.as_secs_f64());
+            // println!("total cycles: {}", vm.hook.cycles());
+            // println!("binary size: {}", vm.code.len());
+            // println!("data size: {}", vm.data.len());
+            match res {
+                Some(res) => {
+                    println!(
+                        "output: {}",
+                        res.encode_hex()
+                            .chars()
+                            .collect::<Vec<_>>()
+                            .chunks(8)
+                            .map(|s| s.iter().collect::<String>())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    );
+                }
+                None => {
+                    println!("output: <no output>");
+                }
+            }
+        }
+        Err(err) => {
+            println!("err: {err}");
+            // println!("cycles: {}", vm.cycles);
+
+            // println!("{}", const_hex::encode(vm.memory));
+        }
+    }
 }
 
 fn read_input(

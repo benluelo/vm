@@ -14,10 +14,17 @@ use tracing::trace;
 pub mod assembler;
 pub mod mir;
 
+pub mod ffi;
 pub mod tail;
 
 #[cfg(test)]
 mod vm_tests;
+
+pub trait VmT {
+    type Error: core::error::Error;
+
+    fn run(&mut self) -> Result<Option<Vec<u8>>, Self::Error>;
+}
 
 pub struct Vm<H: Hook = ()> {
     pub code: Vec<u8>,
@@ -26,6 +33,14 @@ pub struct Vm<H: Hook = ()> {
     pub memory: Vec<u8>,
     pub hook: H,
     pub pc: usize,
+}
+
+impl<H: Hook> VmT for Vm<H> {
+    type Error = Error<H>;
+
+    fn run(&mut self) -> Result<Option<Vec<u8>>, Self::Error> {
+        Vm::run(self)
+    }
 }
 
 impl<H: Hook + Debug> fmt::Debug for Vm<H> {
