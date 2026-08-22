@@ -86,6 +86,7 @@
             buildInputs = [
               pkgs.llvmPackages_latest.libclang.lib
               pkgs.llvmPackages_latest.libllvm
+              pkgs.llvmPackages_latest.lld
               pkgs.stdenv.cc.libc
             ];
             LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang.lib}/lib";
@@ -143,7 +144,6 @@
               buildPhase = ''
                 gcc --version
                 gcc -flto -Ofast -static -g vm.c
-                # clang -flto -O3 vm.c
               '';
               dontStrip = true;
               installPhase = ''
