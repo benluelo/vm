@@ -89,6 +89,7 @@
               pkgs.llvmPackages_latest.lld
               pkgs.stdenv.cc.libc
             ];
+            RUSTFLAGS = "-Clinker-plugin-lto -Clinker=clang -Clink-arg=-fuse-ld=lld";
             LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang.lib}/lib";
             cargoBuildCommand = "cargo build --release -Ftracing-off";
             meta.mainProgram = "vm";
