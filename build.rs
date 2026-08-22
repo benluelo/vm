@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, process::Stdio};
 
 fn main() {
     // This is the directory where the `c` library is located.
@@ -28,14 +28,17 @@ fn main() {
     // Unwrap if it is not possible to spawn the process.
     if !std::process::Command::new("clang")
         .arg("-O3")
-        // .arg("-flto")
-        // .arg("-static")
+        .arg("-flto=full")
+        // .arg("-ffat-lto-objects")
+        .arg("-static")
         .arg("-DDO_RESTRICT")
         .arg("-g")
         .arg("-c")
         .arg("-o")
         .arg(&obj_path)
         .arg(libdir_path.join("vm.c"))
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::inherit())
         .output()
         .expect("could not spawn `clang`")
         .status
@@ -48,7 +51,7 @@ fn main() {
     // Run `ar` to generate the `libvm.a` file from the `vm.o` file.
     // Unwrap if it is not possible to spawn the process.
     if !std::process::Command::new("llvm-ar")
-        .arg("rcs")
+        .arg("crus")
         .arg(lib_path)
         .arg(obj_path)
         .output()
