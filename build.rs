@@ -50,7 +50,7 @@ fn main() {
 
     // Run `ar` to generate the `libvm.a` file from the `vm.o` file.
     // Unwrap if it is not possible to spawn the process.
-    if !std::process::Command::new("llvm-ar")
+    if !std::process::Command::new("ar")
         .arg("crus")
         .arg(lib_path)
         .arg(obj_path)

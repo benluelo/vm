@@ -1,6 +1,6 @@
 use core::slice;
 
-use crate::VmT;
+use crate::{CycleCountVm, VmT};
 
 mod bindings {
     #![allow(non_upper_case_globals)]
@@ -20,6 +20,12 @@ impl VmT for Vm {
 
     fn run(&mut self) -> anyhow::Result<Option<Vec<u8>>, Self::Error> {
         Vm::run(self).map_err(Error)
+    }
+}
+
+impl CycleCountVm for Vm {
+    fn cycles(&mut self) -> u64 {
+        self.vm.cycles
     }
 }
 

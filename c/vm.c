@@ -281,6 +281,7 @@ inline VmResult step_vm(Vm *vm) {
 #define DISPATCH()                                                             \
   {                                                                            \
     op = vm->code.ptr[vm->pc];                                                 \
+    vm->cycles++;                                                              \
     vm->pc++;                                                                  \
     goto *ops_table[op];                                                       \
   }

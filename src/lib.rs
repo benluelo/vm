@@ -24,6 +24,10 @@ pub trait VmT {
     fn run(&mut self) -> Result<Option<Vec<u8>>, Self::Error>;
 }
 
+pub trait CycleCountVm: VmT {
+    fn cycles(&mut self) -> u64;
+}
+
 pub struct Vm<H: Hook = ()> {
     pub code: Vec<u8>,
     pub data: Vec<u8>,
@@ -38,6 +42,12 @@ impl<H: Hook> VmT for Vm<H> {
 
     fn run(&mut self) -> Result<Option<Vec<u8>>, Self::Error> {
         Vm::run(self)
+    }
+}
+
+impl CycleCountVm for Vm<CycleCountHook> {
+    fn cycles(&mut self) -> u64 {
+        self.hook.cycles()
     }
 }
 

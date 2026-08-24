@@ -57,6 +57,7 @@ typedef struct Vm {
     uint64_t trap;
     Fat exit;
   } out;
+  uint64_t cycles;
 } Vm;
 
 VmResult step_vm(Vm *vm);

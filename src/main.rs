@@ -32,7 +32,7 @@ use ratatui::{
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
-    CycleCountHook, Error, Hook, Op, StepResult, Vm, VmT,
+    CycleCountHook, CycleCountVm, Error, Hook, Op, StepResult, Vm, VmT,
     assembler::parse_asm,
     ffi,
     mir::{
@@ -268,12 +268,12 @@ fn main() -> anyhow::Result<()> {
             let data = read_input(input, input_file, input_hex)?;
 
             if c {
-                let mut vm = ffi::Vm::new(obj, data);
+                let vm = ffi::Vm::new(obj, data);
                 do_run(vm);
             } else {
                 let hook = CycleCountHook::new();
                 // let hook = ();
-                let mut vm = Vm::new_with(obj, data, hook);
+                let vm = Vm::new_with(obj, data, hook);
                 do_run(vm);
             }
         }
@@ -317,14 +317,14 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn do_run(mut vm: impl VmT) {
+fn do_run(mut vm: impl CycleCountVm) {
     let now = Instant::now();
     let res = vm.run();
     let elapsed = now.elapsed();
     match res {
         Ok(res) => {
             println!("time: {}", elapsed.as_secs_f64());
-            // println!("total cycles: {}", vm.hook.cycles());
+            println!("total cycles: {}", vm.cycles());
             // println!("binary size: {}", vm.code.len());
             // println!("data size: {}", vm.data.len());
             match res {
