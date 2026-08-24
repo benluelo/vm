@@ -87,16 +87,16 @@
               pkgs.llvmPackages_latest.libclang.lib
               pkgs.llvmPackages_latest.libllvm
               pkgs.llvmPackages_latest.lld
-              pkgs.stdenv.cc.libc
+              pkgs.llvmPackages_latest.bintools
+              pkgs.clangStdenv.cc.libc
             ];
-            RUSTFLAGS = "-Clinker-plugin-lto -Clinker=clang -Clink-arg=-fuse-ld=lld";
             LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang.lib}/lib";
             cargoBuildCommand = "cargo build --release -Ftracing-off";
             meta.mainProgram = "vm";
           };
           buildObject =
             mirFile:
-            pkgs.stdenv.mkDerivation {
+            pkgs.clangStdenv.mkDerivation {
               name = "${baseNameOf mirFile}.o";
               src = mirFile;
               dontUnpack = true;
@@ -144,7 +144,7 @@
               buildInputs = [ pkgs.gcc16Stdenv.cc.libc.static ];
               buildPhase = ''
                 gcc --version
-                gcc -flto -Ofast -static -g vm.c
+                gcc -flto -Ofast -static -g main.c
               '';
               dontStrip = true;
               installPhase = ''
@@ -161,9 +161,9 @@
               buildInputs = [ pkgs.clangStdenv.cc.libc.static ];
               buildPhase = ''
                 clang --version
-                # clang -flto -Ofast -static -g vm.c -std=c23 -DDO_RESTRICT -DDEBUG
-                clang -flto -Ofast -static -g vm.c -DDO_RESTRICT
-                # clang -flto -O3 vm.c
+                # clang -flto -Ofast -static -g main.c -std=c23 -DDO_RESTRICT -DDEBUG
+                clang -flto=full -O3 -static -g main.c -DDO_RESTRICT
+                # clang -flto -O3 main.c
               '';
               dontStrip = true;
               installPhase = ''
@@ -225,12 +225,19 @@
             };
           };
           devShells = {
-            default = pkgs.mkShell.override { stdenv = pkgs.gcc16Stdenv; } {
+            default = pkgs.mkShellNoCC.override { stdenv = pkgs.clangStdenv; } {
+              # inputsFrom = [ build-rust ];
               buildInputs = [
+                pkgs.llvmPackages_latest.libclang.lib
+                pkgs.llvmPackages_latest.libllvm
+                pkgs.llvmPackages_latest.lld
+                pkgs.llvmPackages_latest.bintools
+                pkgs.clangStdenv.cc.libc
                 self'.packages.rust-nightly
               ]
               ++ [ pkgs.zigpkgs.master ]
               ++ (with pkgs; [
+                # (dbg overrideCC)
                 jq
                 moreutils
                 nixd
@@ -251,13 +258,15 @@
                 # llvmPackages_latest.libcxx
                 # llvmPackages_latest.clang
               ]);
+              LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang.lib}/lib";
+              nativeBuildInputs = [
+                pkgs.pkg-config
+                pkgs.rustPlatform.bindgenHook
+                # pkgs.gcc16Stdenv.cc.libc.static
+                config.treefmt.build.wrapper
+              ]
+              ++ pkgs.lib.attrsets.attrValues config.treefmt.build.programs;
             };
-            LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang.lib}/lib";
-            nativeBuildInputs = [
-              pkgs.gcc16Stdenv.cc.libc.static
-              config.treefmt.build.wrapper
-            ]
-            ++ pkgs.lib.attrsets.attrValues config.treefmt.build.programs;
           };
 
           treefmt = {
