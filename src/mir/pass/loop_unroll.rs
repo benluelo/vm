@@ -121,7 +121,7 @@ impl Visitor for LoopUnroll {
 
         let initial_value = match ctx.var_value(cond_var) {
             VarValue::Dyn => {
-                trace!("condition variable is not constant, can't unroll");
+                trace!("condition variable '{cond_var}' is not constant, can't unroll");
                 return None;
             }
             VarValue::Const(val) => val.value(),

@@ -383,9 +383,14 @@ fn optimize(ast: mir::ast::Block<'_>) -> CompileResult<mir::ast::Block<'_>> {
     ctx.check(&ast)?;
     let ast = DefInline::new().run(&ctx, ast);
     let mut ast = ast;
-    for _ in 1..=2 {
+    for _ in 1..=3 {
         let mut ctx = CheckCtx::new("root");
-        ast = ctx.check_with(&ast, &mut LoopUnroll)?;
+        let new_ast = ctx.check_with(&ast, &mut LoopUnroll)?;
+
+        if new_ast == ast {
+            info!("no loops unrolled");
+        }
+        ast = new_ast;
 
         for i in 1.. {
             let mut ctx = CheckCtx::new("root");
