@@ -1,8 +1,8 @@
-use tracing::trace;
+use tracing::{instrument, trace, trace_span};
 
 use crate::mir::{
-    CheckCtx, Visitor,
-    ast::{Block, Builtin, BuiltinOrDef, Else, Expr, Ident, If, Statement},
+    CheckCtx, VarValue, Visitor,
+    ast::{Assignment, Block, Builtin, BuiltinOrDef, Else, Expr, Ident, If, Statement},
 };
 
 pub struct DeadCodeRemoval;
@@ -15,7 +15,7 @@ impl DeadCodeRemoval {
 }
 
 impl Visitor for DeadCodeRemoval {
-    fn visit_block<'a>(&mut self, _ctx: &CheckCtx, block: &Block<'a>) -> Option<Block<'a>> {
+    fn visit_block<'a>(&mut self, ctx: &CheckCtx, block: &Block<'a>) -> Option<Block<'a>> {
         let mut new_block = vec![];
         let mut removed_dead_code = false;
 
@@ -66,20 +66,8 @@ impl Visitor for DeadCodeRemoval {
                     }
                 }
                 Statement::Assignment(assignment) => {
-                    if let [var] = &*assignment.vars
-                        && is_pure(&assignment.expr)
-                        && let Some(next_assignment_idx) =
-                            next_assignment_idx(var, &block.statements()[(idx + 1)..])
-                        && let Some(statements) =
-                            block.statements().get((idx + 1)..=((idx + 1) + next_assignment_idx))
-                        && !var_is_referenced(var, statements)
-                    {
-                        removed_dead_code = true;
-                        trace!("dropping {assignment}");
-                        // drop
-                    } else {
-                        new_block.push(Statement::Assignment(assignment))
-                    }
+                    removed_dead_code |=
+                        drop_dead_assignment(ctx, block, &mut new_block, idx, assignment);
                 }
                 Statement::Def(def) => {
                     if def_is_referenced(&def.ident, &block.statements()[(idx + 1)..]) {
@@ -96,6 +84,55 @@ impl Visitor for DeadCodeRemoval {
     }
 }
 
+#[instrument(skip_all, fields(%assignment, %idx))]
+fn drop_dead_assignment<'a>(
+    ctx: &CheckCtx,
+    block: &Block<'a>,
+    new_block: &mut Vec<Statement<'a>>,
+    idx: usize,
+    assignment: Assignment<'a>,
+) -> bool {
+    trace_span!("checking assignment {assignment}");
+
+    // only drop pure assignments
+    if let [var] = &*assignment.vars
+        && is_pure(&assignment.expr)
+    {
+        if ctx.has_var(var) {
+            match (ctx.var_value(var), &assignment.expr) {
+                (VarValue::Const(c_val), Expr::Val(e_val)) if c_val == e_val => true,
+                _ => {
+                    new_block.push(Statement::Assignment(assignment));
+                    false
+                }
+            }
+        } else {
+            let maybe_next_assignment_idx =
+                next_assignment_idx(var, &block.statements()[(idx + 1)..]);
+
+            trace!("next_assignment_idx: {maybe_next_assignment_idx:?}");
+
+            if let Some(statements) = match maybe_next_assignment_idx {
+                Some(next_assignment_idx) => {
+                    block.statements().get((idx + 1)..=((idx + 1) + next_assignment_idx))
+                }
+                None => block.statements().get((idx + 1)..),
+            } && !var_is_referenced(var, statements)
+            {
+                trace!("dropping {assignment}");
+                true
+                // drop
+            } else {
+                new_block.push(Statement::Assignment(assignment));
+                false
+            }
+        }
+    } else {
+        new_block.push(Statement::Assignment(assignment));
+        false
+    }
+}
+
 fn next_assignment_idx<'a: 'b, 'b>(
     var: &Ident<'_>,
     block: impl IntoIterator<Item = &'b Statement<'a>>,
@@ -106,7 +143,7 @@ fn next_assignment_idx<'a: 'b, 'b>(
         Statement::Break(_) => None,
         Statement::Continue(_) => None,
         Statement::If(_) => None,
-        Statement::Assignment(assignment) => (assignment.vars == [var.clone()]).then_some(idx),
+        Statement::Assignment(assignment) => assignment.vars.contains(var).then_some(idx),
         Statement::Def(_) => None,
     })
 }
