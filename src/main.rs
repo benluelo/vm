@@ -38,7 +38,7 @@ use vm::{
     mir::{
         self, CheckCtx, CompileResult, Ctx,
         parse::print_ast,
-        pass::{ConstEval, ConstProp, DeadCodeRemoval, DefInline, LoopUnroll, Pass},
+        pass::{ConstEval, ConstProp, DeadCodeRemoval, DefInline, LoopUnroll, MergeAlloc, Pass},
     },
 };
 
@@ -405,6 +405,9 @@ fn optimize(ast: mir::ast::Block<'_>) -> CompileResult<mir::ast::Block<'_>> {
 
             let mut ctx = CheckCtx::new("root");
             let new_ast = ctx.check_with(&new_ast, &mut DeadCodeRemoval)?;
+
+            let mut ctx = CheckCtx::new("root");
+            let new_ast = ctx.check_with(&new_ast, &mut MergeAlloc)?;
 
             if new_ast == ast {
                 info!("ran const prop/eval loop {i} times");

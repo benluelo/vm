@@ -5,6 +5,7 @@ mod const_prop;
 mod dead_code_removal;
 mod def_inline;
 mod loop_unroll;
+mod merge_alloc;
 mod normalize;
 
 pub use const_eval::ConstEval;
@@ -12,6 +13,7 @@ pub use const_prop::ConstProp;
 pub use dead_code_removal::DeadCodeRemoval;
 pub use def_inline::DefInline;
 pub use loop_unroll::LoopUnroll;
+pub use merge_alloc::MergeAlloc;
 pub use normalize::Normalize;
 
 pub trait Pass {

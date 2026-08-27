@@ -4,11 +4,11 @@ use chumsky::Parser;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
-    Vm,
+    Vm, ffi,
     mir::{
         CheckCtx, Ctx,
         parse::grammar,
-        pass::{ConstEval, ConstProp, DeadCodeRemoval, DefInline, LoopUnroll, Pass},
+        pass::{ConstEval, ConstProp, DeadCodeRemoval, DefInline, LoopUnroll, MergeAlloc, Pass},
     },
 };
 
@@ -75,7 +75,7 @@ fn nist_vectors() {
 
     let mut ast = ast;
 
-    for _ in 1..=2 {
+    for _ in 1..=3 {
         let mut ctx = CheckCtx::new("root");
         ast = ctx.check_with(&ast, &mut LoopUnroll).unwrap();
 
@@ -92,6 +92,9 @@ fn nist_vectors() {
 
             let mut ctx = CheckCtx::new("root");
             let new_ast = ctx.check_with(&new_ast, &mut DeadCodeRemoval).unwrap();
+
+            let mut ctx = CheckCtx::new("root");
+            let new_ast = ctx.check_with(&new_ast, &mut MergeAlloc).unwrap();
 
             if new_ast == ast {
                 info!("ran const prop/eval loop {i} times");
