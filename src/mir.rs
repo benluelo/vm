@@ -1483,9 +1483,9 @@ impl<'a> CheckCtx<'a> {
                         if let [var] = &**vars
                             && let Expr::Val(val) = expr
                         {
-                            if var == "temp_arr_ptr" {
-                                trace!("var '{var}' has const value {val}");
-                            }
+                            // if var == "temp_arr_ptr" {
+                            trace!("var '{var}' has const value {val}");
+                            // }
                             ctx.set_var_value_const(var, *val)
                         }
 
@@ -1603,12 +1603,13 @@ impl<'a> CheckCtx<'a> {
     fn set_var_value_const<'b>(&'b mut self, var: &Ident<'a>, value: Val) {
         assert!(self.has_var(var), "bug: var {var} not found");
 
-        // for s in self.scopes.iter_mut().rev() {
-        if let Some(old_value) = self.scopes.last_mut().unwrap().vars.get_mut(var) {
-            trace!("var '{var}' exists in this scope, setting it's value to {value}");
-            old_value.1 = VarValue::Const(value);
+        for s in self.scopes.iter_mut().rev() {
+            if let Some(old_value) = s.vars.get_mut(var) {
+                trace!("var '{var}' exists in this scope, setting it's value to {value}");
+                old_value.1 = VarValue::Const(value);
+                return;
+            }
         }
-        // }
     }
 
     fn set_var_value_dyn<'b>(&'b mut self, var: &Ident<'a>) {

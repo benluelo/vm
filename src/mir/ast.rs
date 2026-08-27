@@ -248,6 +248,14 @@ impl<'a> Expr<'a> {
         // builtins only ever return 0 or 1 value, can never spread
         Expr::Call { spread: false, f: Spanned { inner: BuiltinOrDef::Builtin(f), span }, args }
     }
+
+    pub fn as_val(&self) -> Option<&Val> {
+        if let Self::Val(v) = self { Some(v) } else { None }
+    }
+
+    pub fn as_val_mut(&mut self) -> Option<&mut Val> {
+        if let Self::Val(v) = self { Some(v) } else { None }
+    }
 }
 
 impl<'a> fmt::Debug for Expr<'a> {

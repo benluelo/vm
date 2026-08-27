@@ -3,7 +3,7 @@ use std::{
     iter::{self},
 };
 
-use tracing::trace;
+use tracing::{instrument, trace};
 
 use crate::{
     mir::{
@@ -31,6 +31,7 @@ impl Visitor for LoopUnroll {
     // 7. ensure that the then body only contains a single break statement
     // 8. ensure that the break label is the same as the loop being inlined
     // 7. inline the loop body for every iteration of the loop
+    #[instrument(skip_all, level = "trace", fields(%label))]
     fn visit_loop<'a>(
         &mut self,
         ctx: &CheckCtx,
@@ -62,6 +63,7 @@ impl Visitor for LoopUnroll {
                 Statement::Expr(_) => {}
                 Statement::Loop(loop_) => {
                     if has_exit_point(&loop_.block, &loop_.label) {
+                        trace!("loop has multiple exit points, can't unroll");
                         return None;
                     }
                 }
