@@ -29,6 +29,8 @@ tracing-subscriber = { version = "0.3.22", features = ["ansi", "env-filter"] }
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
 rand = "0.10.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 
 [build-dependencies]
 bindgen = "0.72.1"

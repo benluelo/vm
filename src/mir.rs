@@ -199,12 +199,12 @@ impl<'a> Ctx<'a> {
     }
 
     fn push_scope(&mut self, tag: String, label: ScopeLabel<'a>) {
-        trace!("pushing scope {label} ({tag})",);
+        trace!("pushing scope {label} ({tag})");
         self.scopes.push(Scope { tag, label, vars: Default::default(), defs: Default::default() });
     }
 
     fn pop_scope(&mut self, label: ScopeLabel<'a>, cleanup_asm: bool) -> CompileResult {
-        trace!("pop_scope {label}",);
+        trace!("pop_scope {label}");
 
         loop {
             match self.scopes.pop() {
@@ -1603,12 +1603,17 @@ impl<'a> CheckCtx<'a> {
     fn set_var_value_const<'b>(&'b mut self, var: &Ident<'a>, value: Val) {
         assert!(self.has_var(var), "bug: var {var} not found");
 
-        for s in self.scopes.iter_mut().rev() {
-            if let Some(old_value) = s.vars.get_mut(var) {
-                trace!("var '{var}' exists in this scope, setting it's value to {value}");
-                old_value.1 = VarValue::Const(value);
-                return;
-            }
+        // for s in self.scopes.iter_mut().rev() {
+        //     if let Some(old_value) = s.vars.get_mut(var) {
+        //         trace!("var '{var}' exists in this scope, setting it's value to
+        // {value}");         old_value.1 = VarValue::Const(value);
+        //         return;
+        //     }
+        // }
+
+        if let Some(old_value) = self.scopes.last_mut().and_then(|s| s.vars.get_mut(var)) {
+            trace!("var '{var}' exists in this scope, setting it's value to {value}");
+            old_value.1 = VarValue::Const(value);
         }
     }
 

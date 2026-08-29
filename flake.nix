@@ -66,6 +66,11 @@
             stripRoot = false;
             hash = "sha256-nWNYO4H2piqf6CW7NJfqc4+DHzByYoNbbjGE3QeO4uc=";
           };
+          blake3-vectors = builtins.fetchurl {
+            name = "test_vectors.json";
+            url = "https://raw.githubusercontent.com/BLAKE3-team/BLAKE3/refs/heads/master/test_vectors/test_vectors.json";
+            sha256 = "sha256:097n6bdn9l67jnjqsr6gg2pg7acr3bf7rbrjwvbfcxycmjl1xffw";
+          };
           build-rust = crane.lib.buildPackage {
             src =
               let
@@ -208,9 +213,17 @@
                 fetch-nist-vectors = pkgs.writeShellApplication {
                   name = "fetch-nist-vectors";
                   text = ''
-                    rm -r .nist-vectors/ || echo ""
+                    rm -r .nist-vectors/ 2>/dev/null || echo ""
                     mkdir -p .nist-vectors
                     cp -r --no-preserve=mode ${nist-vectors}/* .nist-vectors
+                  '';
+                };
+                fetch-blake3-vectors = pkgs.writeShellApplication {
+                  name = "fetch-blake3-vectors";
+                  text = ''
+                    rm -r .blake3-vectors/ 2>/dev/null || echo ""
+                    mkdir -p .blake3-vectors
+                    cp -r --no-preserve=mode ${blake3-vectors} .blake3-vectors/test_vectors.json
                   '';
                 };
               };

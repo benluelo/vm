@@ -52,12 +52,11 @@ impl Visitor for DeadCodeRemoval {
                             Expr::Val(val) => {
                                 if val.value() == 0 {
                                     // drop completely, unreachable block
-                                    removed_dead_code = true;
                                 } else {
                                     // trivially true condition, inline the block
-                                    removed_dead_code = true;
                                     new_block.extend(if_.block);
                                 }
+                                removed_dead_code = true;
                             }
                             _ => {
                                 new_block.push(Statement::If(if_));
