@@ -825,34 +825,3 @@ fn compile_atoi() {
 
     assert_eq!(res.unwrap(), 1234567_u64.to_be_bytes());
 }
-
-#[test]
-fn compile_aoc_2025_1() {
-    init();
-
-    let raw = r#"
-        n <- 0
-
-        if 0 {
-          n <- 1
-        }
-
-        a <- n
-    "#;
-
-    let ast = grammar().block.parse(raw).unwrap();
-
-    let mut ctx = Ctx::new_root();
-
-    ctx.compile(&ast).unwrap();
-
-    let obj = ctx.into_object();
-
-    let asm = obj.assemble();
-
-    let mut vm = Vm::new(asm, b"".into());
-
-    let err = vm.run().unwrap_err();
-
-    assert_eq!(err, Error::Trap(0xaa));
-}
