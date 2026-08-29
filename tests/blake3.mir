@@ -15,10 +15,9 @@ def min(a, b) -> c {
 }
 
 def swap_endianness(in) -> out {
-  out <- or(
-    or(shr(and(in, 0xFF000000), 24), shr(and(in, 0x00FF0000),  8)),
-    or(shl(and(in, 0x0000FF00),  8), shl(and(in, 0x000000FF), 24))
-  )
+  a <- or(shr(and(in, 0xFF000000), 24), shr(and(in, 0x00FF0000),  8))
+  b <- or(shl(and(in, 0x0000FF00),  8), shl(and(in, 0x000000FF), 24))
+  out <- or(a, b)
 }
 
 def copy_bytes(src, dst, len) {
@@ -34,26 +33,31 @@ def copy_bytes(src, dst, len) {
 }
 
 def readWord(base, at) -> value {
+  value <- swap_endianness(read4(add(base, mul(at, 4))))
+}
+
+def readWordBE(base, at) -> value {
   value <- read4(add(base, mul(at, 4)))
-  value <- swap_endianness(value)
 }
 
 def writeWord(base, at, value) {
-  value <- swap_endianness(value)
+  write4(add(base, mul(at, 4)), swap_endianness(value))
+}
+
+def writeWordBE(base, at, value) {
   write4(add(base, mul(at, 4)), value)
 }
 
-def copy_words(from, to, len) {
+def copy_words_8(from, to) {
   i <- 0
   loop :copy {
-    if eq(i, len) {
+    if eq(i, 32) {
       break :copy
     }
 
-    # writeWord(to, i, readWord(from, i))
-    write4(add(to, mul(i, 4)), read4(add(from, mul(i, 4))))
+    write8(add(to, i), read8(add(from, i)))
 
-    i <- add(i, 1)
+    i <- add(i, 8)
   }
 }
 
@@ -64,9 +68,9 @@ def copy_words_from_input(from, to) {
       break :copy
     }
 
-    write4(add(to, i), read4(add(from, i)))
+    write8(add(to, i), read8(add(from, i)))
 
-    i <- add(i, 4)
+    i <- add(i, 8)
   }
 }
 
@@ -78,16 +82,16 @@ def rotateRight(a, offset) -> n {
   n <- and(xor(shr(a, offset), shl(a, sub(32, offset))), 0x00000000FFFFFFFF)
 }
 
-def zero_words(words, len) {
+def zero_words_16(words) {
   i <- 0
   loop :copy {
-    if eq(i, len) {
+    if eq(i, 64) {
       break :copy
     }
 
-    write4(add(words, mul(i, 4)), 0)
+    write8(add(words, i), 0)
 
-    i <- add(i, 1)
+    i <- add(i, 8)
   }
 }
 
@@ -99,17 +103,15 @@ def MSG_SCHEDULE(i) -> n {
 
 # The mixing function, G, which mixes either a column or a diagonal.
 def g(round, n, state, a, b, c, d, mx, my) {
-  writeWord(state, a, wrappingAdd(wrappingAdd(readWord(state, a),     readWord(state, b)), mx))
-# if and(eq(round, 0), eq(n, 5)) {
-# }
-  writeWord(state, d, rotateRight(xor(readWord(state, d),             readWord(state, a)), 16))
-  writeWord(state, c, wrappingAdd(    readWord(state, c),             readWord(state, d)))
-  writeWord(state, b, rotateRight(xor(readWord(state, b),             readWord(state, c)), 12))
-  writeWord(state, a, wrappingAdd(wrappingAdd(readWord(state, a),     readWord(state, b)), my))
+  writeWord(state, a, wrappingAdd(wrappingAdd(readWord(state, a),             readWord(state, b)), mx))
+  writeWord(state, d, rotateRight(swap_endianness(xor(readWordBE(state, d), readWordBE(state, a))), 16))
+  writeWord(state, c, wrappingAdd(    readWord(state, c),                     readWord(state, d)))
+  writeWord(state, b, rotateRight(swap_endianness(xor(readWordBE(state, b), readWordBE(state, c))), 12))
+  writeWord(state, a, wrappingAdd(wrappingAdd(readWord(state, a),             readWord(state, b)), my))
 # if and(eq(round, 1), eq(n, 2)) { exit(state, 64) }
-  writeWord(state, d, rotateRight(xor(readWord(state, d),             readWord(state, a)), 8))
-  writeWord(state, c, wrappingAdd(    readWord(state, c),             readWord(state, d)))
-  writeWord(state, b, rotateRight(xor(readWord(state, b),             readWord(state, c)), 7))
+  writeWord(state, d, rotateRight(swap_endianness(xor(readWordBE(state, d), readWordBE(state, a))), 8))
+  writeWord(state, c, wrappingAdd(    readWord(state, c),                     readWord(state, d)))
+  writeWord(state, b, rotateRight(swap_endianness(xor(readWordBE(state, b), readWordBE(state, c))), 7))
 }
 
 def round(state, msg, round) {
@@ -118,18 +120,6 @@ def round(state, msg, round) {
     # Mix the columns.
     g(round, 0, state, 0, 4, 8, 12,  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 0))),  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 1))))
     g(round, 1, state, 1, 5, 9, 13,  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 2))),  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 3))))
-# if eq(round, 1) {
-# v round idx ->
-#     0  1  2  3  4  5  6  7  8  9  10 11 12 13 14 15
-#
-# 0   00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 
-# 1   02 06 03 10 07 00 04 13 01 11 12 05 09 14 15 08 
-# 2   03 04 10 12 13 02 07 14 06 05 09 00 11 15 08 01 
-# 3   10 07 12 09 14 03 13 15 04 00 11 02 05 08 01 06 
-# 4   12 13 09 11 15 10 14 08 07 02 05 03 00 01 06 04 
-# 5   09 14 11 05 08 12 15 01 13 03 00 10 02 06 04 07 
-# 6   11 15 05 00 01 09 08 06 14 10 02 12 03 04 07 13 
-
     g(round, 2, state, 2, 6, 10, 14, readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 4))),  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 5))))
     g(round, 3, state, 3, 7, 11, 15, readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 6))),  readWord(msg, MSG_SCHEDULE(add(mul(round, 16), 7))))
 
@@ -160,14 +150,14 @@ def compress(
     counter_low <- and(counter, 0x00000000FFFFFFFF)
     counter_high <- shr(counter, 32)
 
-    writeWord(state, 0, readWord(chaining_value, 0))
-    writeWord(state, 1, readWord(chaining_value, 1))
-    writeWord(state, 2, readWord(chaining_value, 2))
-    writeWord(state, 3, readWord(chaining_value, 3))
-    writeWord(state, 4, readWord(chaining_value, 4))
-    writeWord(state, 5, readWord(chaining_value, 5))
-    writeWord(state, 6, readWord(chaining_value, 6))
-    writeWord(state, 7, readWord(chaining_value, 7))
+    writeWordBE(state, 0, readWordBE(chaining_value, 0))
+    writeWordBE(state, 1, readWordBE(chaining_value, 1))
+    writeWordBE(state, 2, readWordBE(chaining_value, 2))
+    writeWordBE(state, 3, readWordBE(chaining_value, 3))
+    writeWordBE(state, 4, readWordBE(chaining_value, 4))
+    writeWordBE(state, 5, readWordBE(chaining_value, 5))
+    writeWordBE(state, 6, readWordBE(chaining_value, 6))
+    writeWordBE(state, 7, readWordBE(chaining_value, 7))
     writeWord(state, 8, IV_0)
     writeWord(state, 9, IV_1)
     writeWord(state, 10, IV_2)
@@ -195,14 +185,14 @@ def compress(
       }
 
       # state[i] ^= state[i + 8]
-      writeWord(
+      writeWordBE(
         state, i,
-        xor(readWord(state, i), readWord(state, add(i, 8)))
+        xor(readWordBE(state, i), readWordBE(state, add(i, 8)))
       )
       # state[i + 8] ^= chaining_value[i]
-      writeWord(
+      writeWordBE(
         state, add(i, 8),
-        xor(readWord(state, add(i, 8)), readWord(chaining_value, i))
+        xor(readWordBE(state, add(i, 8)), readWordBE(chaining_value, i))
       )
 
       i <- add(i, 1)
@@ -267,7 +257,7 @@ chaining_value_SIZE <- mul(4, 8)
 alloc(chaining_value_SIZE)
 chaining_value <- add(out, out_len)
 
-copy_words(IV, chaining_value, 8)
+copy_words_8(IV, chaining_value)
 
 # scratch state for compress
 compress_state_SIZE <- mul(4, 16)
@@ -324,7 +314,7 @@ loop :a {
             or(flags, CHUNK_END())
         )
         # exit(compress_state, 64)
-        copy_words(compress_state, words_8, 8)
+        copy_words_8(compress_state, words_8)
         # exit(words_8, 32)
 
         total_chunks_ <- total_chunks
@@ -335,8 +325,8 @@ loop :a {
 
             cv_stack_len <- sub(cv_stack_len, 1)
             # REVIEW: I think this needs to be cv_stack_len * 32
-            copy_words(add(cv_stack, mul(cv_stack_len, mul(4, 8))), words_16, 8)
-            copy_words(words_8, add(words_16, mul(4, 8)), 8)
+            copy_words_8(add(cv_stack, mul(cv_stack_len, mul(4, 8))), words_16)
+            copy_words_8(words_8, add(words_16, mul(4, 8)))
             compress(
                 compress_state,
                 IV,
@@ -345,21 +335,21 @@ loop :a {
                 BLOCK_LEN(),
                 PARENT()
             )
-            copy_words(compress_state, words_8, 8)
+            copy_words_8(compress_state, words_8)
             total_chunks_ <- shr(total_chunks_, 1)
             # trap(2)
         }
 
-        copy_words(words_8, add(cv_stack, mul(cv_stack_len, mul(4, 8))), 8)
+        copy_words_8(words_8, add(cv_stack, mul(cv_stack_len, mul(4, 8))))
         # exit(words_8, 32)
         # trap(1)
         cv_stack_len <- add(cv_stack_len, 1)
 
         # chaining_value <- IV
-        copy_words(IV, chaining_value, 8)
+        copy_words_8(IV, chaining_value)
         # exit(chaining_value, 32)
         chunk_counter <- total_chunks
-        zero_words(chunk_state_block_buffer, 16)
+        zero_words_16(chunk_state_block_buffer)
         chunk_state_block_len <- 0
         blocks_compressed <- 0
     }
@@ -396,9 +386,9 @@ loop :a {
                 flags
             )
 
-            copy_words(compress_state, chaining_value, 8)
+            copy_words_8(compress_state, chaining_value)
             blocks_compressed <- add(blocks_compressed, 1)
-            zero_words(chunk_state_block_buffer, 16)
+            zero_words_16(chunk_state_block_buffer)
             chunk_state_block_len <- 0
         }
 
@@ -438,11 +428,11 @@ loop :a {
     output_flags
   )
   # exit(cv_stack, cv_stack_SIZE)
-  copy_words(add(cv_stack, mul(cv_stack_len, mul(4, 8))), words_16, 8)
-  copy_words(compress_state, add(words_16, mul(8, 4)), 8)
+  copy_words_8(add(cv_stack, mul(cv_stack_len, mul(4, 8))), words_16)
+  copy_words_8(compress_state, add(words_16, mul(8, 4)))
 
   # chaining_value <- IV
-  copy_words(IV, chaining_value, 8)
+  copy_words_8(IV, chaining_value)
   chunk_counter <- 0
   chunk_state_block_len <- BLOCK_LEN()
   output_flags <- PARENT()

@@ -257,10 +257,6 @@ loop :blocks {
   }
 
   round <- 0
-  x <- 0
-  y <- 0
-  j <- 0
-  t <- 0
   loop :permute {
     if eq(round, 24) {
       break :permute
@@ -271,46 +267,46 @@ loop :blocks {
     C <- temp_arr_ptr
 
     # Compute the parity of the columns
-    x <- 0
+    theta_parity_x <- 0
     loop :theta_parity {
-      if eq(x, 5) {
+      if eq(theta_parity_x, 5) {
         break :theta_parity
       }
       # write to C[x]
       store64(
-        add(C, mul(x, 8)),
-        xor(xor(xor(xor(readLaneBE(x, 0), readLaneBE(x, 1)), readLaneBE(x, 2)), readLaneBE(x, 3)), readLaneBE(x, 4))
+        add(C, mul(theta_parity_x, 8)),
+        xor(xor(xor(xor(readLaneBE(theta_parity_x, 0), readLaneBE(theta_parity_x, 1)), readLaneBE(theta_parity_x, 2)), readLaneBE(theta_parity_x, 3)), readLaneBE(theta_parity_x, 4))
       )
-      x <- add(x, 1)
+      theta_parity_x <- add(theta_parity_x, 1)
     }
 
-    x <- 0
+    theta_effect_x <- 0
     D <- 0
     loop :theta_effect_x {
-      if eq(x, 5) {
+      if eq(theta_effect_x, 5) {
         break :theta_effect_x
       }
       # Compute the θ effect for a given column
       D <- xor(
         # C[(x+4)%5]
-        read8(add(C, mul(mod(add(x, 4), 5), 8))),
+        read8(add(C, mul(mod(add(theta_effect_x, 4), 5), 8))),
         # C[(x+1)%5]
-        ROTL64(read8(add(C, mul(mod(add(x, 1), 5), 8))), 1)
+        ROTL64(read8(add(C, mul(mod(add(theta_effect_x, 1), 5), 8))), 1)
       )
 
       # Add the θ effect to the whole column
-      y <- 0
+      theta_effect_y <- 0
       loop :theta_effect_y {
-        if eq(y, 5) {
+        if eq(theta_effect_y, 5) {
           break :theta_effect_y
         }
-        XORLane(x, y, D)
-        y <- add(y, 1)
+        XORLane(theta_effect_x, theta_effect_y, D)
+        theta_effect_y <- add(theta_effect_y, 1)
         # 1591140754
         # 1591810066
       }
 
-      x <- add(x, 1)
+      theta_effect_x <- add(theta_effect_x, 1)
     }
 
     # trap(1)
@@ -344,42 +340,42 @@ loop :blocks {
     }
 
     # === χ step (see [Keccak Reference, Section 2.3.1]) ===
-    y <- 0
+    chi_y <- 0
     loop :chi {
-      if eq(y, 5) {
+      if eq(chi_y, 5) {
         break :chi
       }
       # Take a copy of the plane
-      x <- 0
+      chi_copy_x <- 0
       loop :chi_copy_plane {
-        if eq(x, 5) {
+        if eq(chi_copy_x, 5) {
           break :chi_copy_plane
         }
         write8(
-          add(temp_arr_ptr, mul(x, 8)),
-          readLaneBE(x, y)
+          add(temp_arr_ptr, mul(chi_copy_x, 8)),
+          readLaneBE(chi_copy_x, chi_y)
         )
-        x <- add(x, 1)
+        chi_copy_x <- add(chi_copy_x, 1)
       }
       # Compute χ on the plane
-      x <- 0
+      chi_compute_x <- 0
       loop :chi_compute {
-        if eq(x, 5) {
+        if eq(chi_compute_x, 5) {
           break :chi_compute
         }
         writeLaneBE(
-          x, y,
+          chi_compute_x, chi_y,
           xor(
-            read8(add(temp_arr_ptr, mul(x, 8))),
+            read8(add(temp_arr_ptr, mul(chi_compute_x, 8))),
             and(
-              neg(read8(add(temp_arr_ptr, mul(mod(add(x, 1), 5), 8)))),
-                  read8(add(temp_arr_ptr, mul(mod(add(x, 2), 5), 8)))
+              neg(read8(add(temp_arr_ptr, mul(mod(add(chi_compute_x, 1), 5), 8)))),
+                  read8(add(temp_arr_ptr, mul(mod(add(chi_compute_x, 2), 5), 8)))
             )
           )
         )
-        x <- add(x, 1)
+        chi_compute_x <- add(chi_compute_x, 1)
       }
-      y <- add(y, 1)
+      chi_y <- add(chi_y, 1)
     }
 
     # === ι step (see [Keccak Reference, Section 2.3.5]) ===

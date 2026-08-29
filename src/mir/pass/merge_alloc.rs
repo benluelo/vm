@@ -9,7 +9,7 @@ use crate::mir::{
 pub struct MergeAlloc;
 
 impl Visitor for MergeAlloc {
-    fn visit_block<'a>(&mut self, ctx: &CheckCtx, block: &Block<'a>) -> Option<Block<'a>> {
+    fn visit_block<'a>(&mut self, _ctx: &CheckCtx, block: &Block<'a>) -> Option<Block<'a>> {
         let mut new_block = vec![];
         let mut changed = false;
 

@@ -32,7 +32,7 @@ use ratatui::{
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
-    CycleCountHook, CycleCountVm, Error, Hook, Op, StepResult, Vm, VmT,
+    CycleCountHook, CycleCountVm, Error, Hook, Op, StepResult, Vm,
     assembler::parse_asm,
     ffi,
     mir::{
@@ -383,12 +383,13 @@ fn optimize(ast: mir::ast::Block<'_>) -> CompileResult<mir::ast::Block<'_>> {
     ctx.check(&ast)?;
     let ast = DefInline::new().run(&ctx, ast);
     let mut ast = ast;
-    for _ in 1..=1 {
+    for _ in 1..=3 {
         let mut ctx = CheckCtx::new("root");
         let new_ast = ctx.check_with(&ast, &mut LoopUnroll)?;
 
         if new_ast == ast {
             info!("no loops unrolled");
+            break;
         }
         ast = new_ast;
 
