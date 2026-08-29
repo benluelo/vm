@@ -68,9 +68,6 @@ impl<'a> Object<'a> {
                 let mut it = x.iter().peekable();
                 while let Some(a) = it.next() {
                     match a {
-                        // deduping push1 doesn't make a binary size difference and just costs more
-                        // cycles
-                        // only worth it if there is a sequence of more than 2 AsmOp::PUSH1(_)
                         AsmOp::PUSH1(_)
                         | AsmOp::PUSH2(_)
                         | AsmOp::PUSH3(_)

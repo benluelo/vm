@@ -1,9 +1,11 @@
+use std::collections::{BTreeMap, HashMap};
+
 use chumsky::span::Spanned;
 
 use crate::{
     mir::{
         CheckCtx, Visitor,
-        ast::{self, BuiltinOrDef, Expr, Val},
+        ast::{self, Assignment, Block, Builtin, BuiltinOrDef, Def, Expr, Ident, Statement, Val},
     },
     op,
 };
@@ -19,13 +21,13 @@ impl ConstEval {
 }
 
 impl Visitor for ConstEval {
-    fn visit_expr<'a>(&mut self, _: &CheckCtx, expr: &Expr<'a>) -> Option<Expr<'a>> {
-        let res = const_eval(expr.clone());
+    fn visit_expr<'a>(&mut self, ctx: &CheckCtx, expr: &Expr<'a>) -> Option<Expr<'a>> {
+        let res = eval_to_fixed_point(ctx, expr.clone());
         if &res == expr { None } else { Some(res) }
     }
 }
 
-fn const_eval<'a>(expr: Expr<'a>) -> Expr<'a> {
+fn const_eval<'a>(ctx: &CheckCtx, expr: Expr<'a>) -> Expr<'a> {
     match expr {
         Expr::Val(val) => Expr::Val(val),
         Expr::Var(var) => Expr::Var(var),
@@ -57,7 +59,7 @@ fn const_eval<'a>(expr: Expr<'a>) -> Expr<'a> {
                          op_f: fn(u64, u64) -> u64,
                          f_: fn(Expr<'a>, Expr<'a>) -> Option<Expr<'a>>|
              -> Expr<'a> {
-                match (const_eval(args[0].clone()), const_eval(args[1].clone())) {
+                match (const_eval(ctx, args[0].clone()), const_eval(ctx, args[1].clone())) {
                     (p_val!(l), p_val!(r)) => Expr::val(op_f(l.value(), r.value()), f.span),
                     (l, r) => f_(l.clone(), r.clone()).unwrap_or_else(|| Expr::Call {
                         spread,
@@ -114,7 +116,7 @@ fn const_eval<'a>(expr: Expr<'a>) -> Expr<'a> {
                     (Or, 2) => binop(Or, op::or, |_, _| None),
                     (Xor, 2) => binop(Xor, op::xor, |_, _| None),
                     (And, 2) => binop(And, op::and, |_, _| None),
-                    (Not, 1) => match const_eval(args[0].clone()) {
+                    (Not, 1) => match const_eval(ctx, args[0].clone()) {
                         p_val!(l) => Expr::val(op::not(l.value()), f.span),
                         e => Expr::Call {
                             spread,
@@ -122,7 +124,7 @@ fn const_eval<'a>(expr: Expr<'a>) -> Expr<'a> {
                             args: vec![e],
                         },
                     },
-                    (Neg, 1) => match const_eval(args[0].clone()) {
+                    (Neg, 1) => match const_eval(ctx, args[0].clone()) {
                         p_val!(l) => Expr::val(op::neg(l.value()), f.span),
                         e => Expr::Call {
                             spread,
@@ -131,12 +133,159 @@ fn const_eval<'a>(expr: Expr<'a>) -> Expr<'a> {
                         },
                     },
                     // same as default branch below
-                    _ => Expr::Call { spread, f, args: args.into_iter().map(const_eval).collect() },
+                    _ => Expr::Call {
+                        spread,
+                        f,
+                        args: args.into_iter().map(|a| const_eval(ctx, a)).collect(),
+                    },
                 },
-                (_, _) => {
-                    Expr::Call { spread, f, args: args.into_iter().map(const_eval).collect() }
+                (BuiltinOrDef::Def(def), _) => {
+                    let new_args = args
+                        .iter()
+                        .map(|a| const_eval(ctx, a.clone()).as_val().map(|v| v.value()))
+                        .collect::<Option<Vec<_>>>();
+                    match new_args {
+                        Some(args) => match try_eval_def(ctx, ctx.get_def(def).unwrap(), &args) {
+                            Some(val) => Expr::Val(Val::new(val)),
+                            None => Expr::Call {
+                                spread,
+                                f,
+                                args: args
+                                    .into_iter()
+                                    .map(|a| const_eval(ctx, Expr::Val(Val::new(a))))
+                                    .collect(),
+                            },
+                        },
+                        None => Expr::Call {
+                            spread,
+                            f,
+                            args: args.into_iter().map(|a| const_eval(ctx, a)).collect(),
+                        },
+                    }
                 }
             }
+        }
+    }
+}
+
+fn is_pure(ctx: &CheckCtx, expr: &Expr<'_>) -> bool {
+    use Builtin::*;
+
+    match expr {
+        Expr::Val(_) => true,
+        Expr::Var(_) => true,
+        Expr::Call { spread: _, f, args } => match &**f {
+            BuiltinOrDef::Builtin(builtin) => match builtin {
+                Add | Sub | Mul | Div | Exp | Mod | Eq | Lt | Gt | Shl | Shr | Or | Xor | And
+                | Not | Neg | Dlen => args.iter().all(|arg| is_pure(ctx, arg)),
+                _ => false,
+            },
+            BuiltinOrDef::Def(def) => block_is_pure(ctx, &ctx.get_def(def).unwrap().body),
+        },
+    }
+}
+
+fn block_is_pure(ctx: &CheckCtx<'_>, block: &Block<'_>) -> bool {
+    block.iter().all(|s| match s {
+        Statement::Expr(expr) => is_pure(ctx, expr),
+        Statement::Loop(_) => false,
+        Statement::Break(_) => false,
+        Statement::Continue(_) => false,
+        Statement::If(_) => false,
+        Statement::Assignment(assignment) => is_pure(ctx, &assignment.expr),
+        Statement::Def(def) => false,
+    })
+}
+
+fn try_eval_def(ctx: &CheckCtx<'_>, def: &Def<'_>, params: &[u64]) -> Option<u64> {
+    let [ret] = &*def.rets else {
+        return None;
+    };
+
+    if def.args.len() != params.len() {
+        return None;
+    }
+
+    let mut vars = def.args.iter().zip(params.iter().copied()).collect::<BTreeMap<_, _>>();
+
+    for s in &def.body {
+        match s {
+            Statement::Expr(expr) => {
+                if !is_pure(ctx, expr) {
+                    return None;
+                }
+            }
+            Statement::Loop(_) => return None,
+            Statement::Break(_) => return None,
+            Statement::Continue(_) => return None,
+            Statement::If(_) => return None,
+            Statement::Assignment(assignment) => {
+                let [var] = &*assignment.vars else {
+                    return None;
+                };
+
+                vars.insert(var, eval(ctx, &vars, &assignment.expr)?);
+            }
+            Statement::Def(_) => return None,
+        }
+    }
+
+    Some(vars[ret])
+}
+
+fn eval(ctx: &CheckCtx, vars: &BTreeMap<&Ident<'_>, u64>, expr: &Expr<'_>) -> Option<u64> {
+    match expr {
+        Expr::Val(val) => Some(val.value()),
+        Expr::Var(ident) => Some(vars[&ident]),
+        Expr::Call { spread, f, args } => {
+            if *spread {
+                return None;
+            }
+
+            let new_args = args
+                .iter()
+                .map(|a| eval_to_fixed_point(ctx, inline_vars_into_expr(vars, a)))
+                .collect();
+
+            // match &f.inner {
+            //     BuiltinOrDef::Builtin(_) => eval_to_fixed_point(
+            //         ctx,
+            //         Expr::Call { spread: *spread, f: f.clone(), args: new_args },
+            //     )
+            //     .as_val()
+            //     .map(|v| v.value()),
+            //     BuiltinOrDef::Def(ident) => {
+            //         let def = ctx.get_def(ident).unwrap();
+            //         try_eval_def(ctx, def, new_args)
+            //     },
+            // }
+
+            eval_to_fixed_point(ctx, Expr::Call { spread: *spread, f: f.clone(), args: new_args })
+                .as_val()
+                .map(|v| v.value())
+        }
+    }
+}
+
+fn inline_vars_into_expr<'a>(vars: &BTreeMap<&Ident<'a>, u64>, expr: &Expr<'a>) -> Expr<'a> {
+    match expr {
+        Expr::Val(val) => Expr::Val(*val),
+        Expr::Var(ident) => Expr::Val(Val::new(vars[ident])),
+        Expr::Call { spread, f, args } => Expr::Call {
+            spread: *spread,
+            f: f.clone(),
+            args: args.iter().map(|e| inline_vars_into_expr(vars, e)).collect(),
+        },
+    }
+}
+
+fn eval_to_fixed_point<'a>(ctx: &CheckCtx, mut expr: Expr<'a>) -> Expr<'a> {
+    loop {
+        let res = const_eval(ctx, expr.clone());
+        if res == expr {
+            break expr;
+        } else {
+            expr = res;
         }
     }
 }
