@@ -383,7 +383,7 @@ fn optimize(ast: mir::ast::Block<'_>) -> CompileResult<mir::ast::Block<'_>> {
     ctx.check(&ast)?;
     let ast = DefInline::new().run(&ctx, ast);
     let mut ast = ast;
-    for _ in 1..=3 {
+    for _ in 1..=1 {
         let mut ctx = CheckCtx::new("root");
         let new_ast = ctx.check_with(&ast, &mut LoopUnroll)?;
 
@@ -401,10 +401,10 @@ fn optimize(ast: mir::ast::Block<'_>) -> CompileResult<mir::ast::Block<'_>> {
             let new_ast = DefInline::new().run(&ctx, new_ast);
 
             let mut ctx = CheckCtx::new("root");
-            let new_ast = ctx.check_with(&new_ast, &mut ConstEval::new())?;
+            let new_ast = ctx.check_with(&new_ast, &mut DeadCodeRemoval)?;
 
             let mut ctx = CheckCtx::new("root");
-            let new_ast = ctx.check_with(&new_ast, &mut DeadCodeRemoval)?;
+            let new_ast = ctx.check_with(&new_ast, &mut ConstEval::new())?;
 
             let mut ctx = CheckCtx::new("root");
             let new_ast = ctx.check_with(&new_ast, &mut MergeAlloc)?;

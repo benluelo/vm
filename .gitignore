@@ -9,6 +9,7 @@ profile.json.gz
 *.o
 
 .nist-vectors/
+.blake3-vectors/
 
 tree-sitter-mir/bindings/
 
