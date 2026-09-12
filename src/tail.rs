@@ -1,8 +1,8 @@
 use tracing::trace;
 
-use crate::{Error, Hook, Vm, raw::WRITE1};
+use crate::{Error, Hook, Vm, raw};
 
-type VmResult<H: Hook> = Result<Option<Vec<u8>>, Error<H>>;
+type VmResult<H> = Result<Option<Vec<u8>>, Error<H>>;
 
 type F<H = ()> = fn(&mut Vm<H>) -> VmResult<H>;
 

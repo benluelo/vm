@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use chumsky::span::Spanned;
 
 use crate::{
     mir::{
         CheckCtx, Visitor,
-        ast::{self, Assignment, Block, Builtin, BuiltinOrDef, Def, Expr, Ident, Statement, Val},
+        ast::{self, Block, Builtin, BuiltinOrDef, Def, Expr, Ident, Statement, Val},
     },
     op,
 };

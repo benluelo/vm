@@ -40,6 +40,7 @@ use vm::{
         parse::print_ast,
         pass::{ConstEval, ConstProp, DeadCodeRemoval, DefInline, LoopUnroll, MergeAlloc, Pass},
     },
+    tail,
 };
 
 /// Compiler and assembler.
@@ -127,10 +128,6 @@ pub struct RunCmd {
     /// whether to treat --input as hex.
     #[argh(switch)]
     pub input_hex: bool,
-
-    /// use the tail call implementation of the vm.
-    #[argh(switch)]
-    pub tc: bool,
 
     /// use the c implementation of the vm.
     #[argh(switch)]
@@ -240,7 +237,7 @@ fn main() -> anyhow::Result<()> {
             let out = out.unwrap_or(file.with_extension("o"));
             fs::write(out, obj)?;
         }
-        Cmd::Run(RunCmd { file, asm, obj, input, input_file, input_hex, tc }) => {
+        Cmd::Run(RunCmd { file, asm, obj, input, input_file, input_hex, c, tc }) => {
             if obj && asm {
                 bail!("--asm is incompatible with --obj")
             }
@@ -278,47 +275,12 @@ fn main() -> anyhow::Result<()> {
                 let vm = ffi::Vm::new(obj, data);
                 do_run(vm);
             } else if tc {
+                todo!();
+            } else {
                 let hook = CycleCountHook::new();
                 // let hook = ();
                 let vm = Vm::new_with(obj, data, hook);
                 do_run(vm);
-            }
-            let hook = CycleCountHook::new();
-            // let hook = ();
-            let mut vm = Vm::new_with(obj, data, hook);
-            let now = Instant::now();
-            let res = if tc { vm.run_tc() } else { vm.run() };
-            let elapsed = now.elapsed();
-            match res {
-                Ok(res) => {
-                    println!("time: {}", elapsed.as_secs_f64());
-                    println!("total cycles: {}", vm.hook.cycles());
-                    println!("binary size: {}", vm.code.len());
-                    println!("data size: {}", vm.data.len());
-                    match res {
-                        Some(res) => {
-                            println!(
-                                "output: {}",
-                                res.encode_hex()
-                                    .chars()
-                                    .collect::<Vec<_>>()
-                                    .chunks(8)
-                                    .map(|s| s.iter().collect::<String>())
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            );
-                        }
-                        None => {
-                            println!("output: <no output>");
-                        }
-                    }
-                }
-                Err(err) => {
-                    println!("err: {err}");
-                    // println!("cycles: {}", vm.cycles);
-
-                    // println!("{}", const_hex::encode(vm.memory));
-                }
             }
         }
         Cmd::Debug(DebugCmd { file, input, input_file, input_hex }) => {
