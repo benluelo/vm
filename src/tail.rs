@@ -1,14 +1,34 @@
 use tracing::trace;
 
-use crate::{Error, Hook, Vm, raw};
+use crate::{CycleCountHook, CycleCountVm, Error, Hook, Vm, VmT, raw};
 
 type VmResult<H> = Result<Option<Vec<u8>>, Error<H>>;
 
 type F<H = ()> = fn(&mut Vm<H>) -> VmResult<H>;
 
-impl<H: Hook> Vm<H> {
+pub struct TcVm<H: Hook>(Vm<H>);
+
+impl<H: Hook> VmT for TcVm<H> {
+    type Error = Error<H>;
+
+    fn run(&mut self) -> anyhow::Result<Option<Vec<u8>>, Self::Error> {
+        self.run_tc()
+    }
+}
+
+impl CycleCountVm for TcVm<CycleCountHook> {
+    fn cycles(&mut self) -> u64 {
+        self.0.cycles()
+    }
+}
+
+impl<H: Hook> TcVm<H> {
+    pub fn new(vm: Vm<H>) -> Self {
+        Self(vm)
+    }
+
     pub fn run_tc(&mut self) -> VmResult<H> {
-        dispatch(self)
+        dispatch(&mut self.0)
     }
 }
 

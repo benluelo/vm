@@ -267,7 +267,7 @@ mod tests {
     fn test() {
         init();
 
-        let raw = include_str!("../../../tests/sha3-256.mir");
+        let _raw = include_str!("../../../tests/sha3-256.mir");
         let raw = r#"
         def xor64(at, u) {}
         def store64(at, u) {}

@@ -19,13 +19,16 @@ fn main() {
 
     // Tell cargo to look for shared libraries in the specified directory
     println!("cargo:rustc-link-search={}", libdir_path.to_str().unwrap());
+    println!("cargo:rustc-link-search=/home/ben/projects/benluelo/vm/zig/");
 
     // Tell cargo to tell rustc to link our `vm` library. Cargo will
     // automatically know it must look for a `libvm.a` file.
     println!("cargo:rustc-link-lib=vm");
+    println!("cargo:rustc-link-lib=vm_zig");
 
     // Run `clang` to compile the `vm.c` file into a `vm.o` object file.
     // Unwrap if it is not possible to spawn the process.
+
     if !std::process::Command::new("clang")
         .arg("-O3")
         .arg("-flto=full")

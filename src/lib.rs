@@ -16,6 +16,7 @@ pub mod mir;
 
 pub mod ffi;
 pub mod tail;
+pub mod zig;
 
 #[cfg(test)]
 mod vm_tests;

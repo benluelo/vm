@@ -40,7 +40,8 @@ use vm::{
         parse::print_ast,
         pass::{ConstEval, ConstProp, DeadCodeRemoval, DefInline, LoopUnroll, MergeAlloc, Pass},
     },
-    tail,
+    tail::TcVm,
+    zig,
 };
 
 /// Compiler and assembler.
@@ -129,12 +130,20 @@ pub struct RunCmd {
     #[argh(switch)]
     pub input_hex: bool,
 
-    /// use the c implementation of the vm.
-    #[argh(switch)]
-    pub c: bool,
-    /// use the tail call implementation of the vm.
-    #[argh(switch)]
-    pub tc: bool,
+    /// which implementation to use.
+    #[argh(option, short = 'i', default = "Implementation::Rust")]
+    pub implementation: Implementation,
+}
+
+#[derive(FromArgValue, PartialEq, Debug)]
+pub enum Implementation {
+    Rust,
+    #[argh(name = "rust-tail-call")]
+    RustTailCall,
+    C,
+    #[argh(name = "c-computed-goto")]
+    CComputedGoto,
+    Zig,
 }
 
 /// debug the execution of compiled bytecode against provided input
@@ -237,7 +246,7 @@ fn main() -> anyhow::Result<()> {
             let out = out.unwrap_or(file.with_extension("o"));
             fs::write(out, obj)?;
         }
-        Cmd::Run(RunCmd { file, asm, obj, input, input_file, input_hex, c, tc }) => {
+        Cmd::Run(RunCmd { file, asm, obj, input, input_file, input_hex, implementation }) => {
             if obj && asm {
                 bail!("--asm is incompatible with --obj")
             }
@@ -271,16 +280,20 @@ fn main() -> anyhow::Result<()> {
 
             let data = read_input(input, input_file, input_hex)?;
 
-            if c {
-                let vm = ffi::Vm::new(obj, data);
-                do_run(vm);
-            } else if tc {
-                todo!();
-            } else {
-                let hook = CycleCountHook::new();
-                // let hook = ();
-                let vm = Vm::new_with(obj, data, hook);
-                do_run(vm);
+            match implementation {
+                Implementation::Rust => {
+                    do_run(Vm::new_with(obj, data, CycleCountHook::new()));
+                }
+                Implementation::RustTailCall => {
+                    do_run(TcVm::new(Vm::new_with(obj, data, CycleCountHook::new())));
+                }
+                Implementation::C => bail!("not implemented, use --c-computed-goto"),
+                Implementation::CComputedGoto => {
+                    do_run(ffi::Vm::new(obj, data));
+                }
+                Implementation::Zig => {
+                    do_run(zig::Vm::new(obj, data));
+                }
             }
         }
         Cmd::Debug(DebugCmd { file, input, input_file, input_hex }) => {

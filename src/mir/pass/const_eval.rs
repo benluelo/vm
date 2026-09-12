@@ -193,7 +193,7 @@ fn block_is_pure(ctx: &CheckCtx<'_>, block: &Block<'_>) -> bool {
         Statement::Continue(_) => false,
         Statement::If(_) => false,
         Statement::Assignment(assignment) => is_pure(ctx, &assignment.expr),
-        Statement::Def(def) => false,
+        Statement::Def(_) => false,
     })
 }
 

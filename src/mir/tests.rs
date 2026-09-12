@@ -2,7 +2,7 @@ use chumsky::Parser;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use super::*;
-use crate::{Error, Vm, mir::parse::grammar};
+use crate::{Vm, mir::parse::grammar};
 
 #[test]
 fn reverse_list() {
