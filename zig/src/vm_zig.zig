@@ -65,8 +65,21 @@ pub export fn zig_allocator() *anyopaque {
     return @constCast(&std.heap.brk_allocator);
 }
 
+// b09c0cabaaaa0000
+// c800000000000000
+// e0f2feffffff0000
+// d044e0aaaaaa0000
+// 48f3feffffff0000
+// 80f2feffffff0000
+// 9848feaaaaaa0000
+// 48f3feffffff0000
+// 80f2feffffff0000
+// 6400000000000000
+// 80f2feffffff0000
+// 6400000000000000
+// f0f3feff
 pub const Vm = struct {
-    gpa: *std.mem.Allocator,
+    gpa: std.mem.Allocator,
     code: [*]u8,
     code_len: usize,
     data: [*]const u8,
@@ -115,7 +128,7 @@ pub const Vm = struct {
 
         if (self.stack.items.len == self.stack.capacity) {
             @branchHint(.unlikely);
-            try self.stack.ensureUnusedCapacity(self.gpa.*, 1);
+            try self.stack.ensureUnusedCapacity(self.gpa, 1);
         }
         self.stack.items.len += 1;
         self.stack.items.ptr[self.stack.items.len - 1] = value;
@@ -198,6 +211,8 @@ pub const Vm = struct {
 
         const op = self.code[self.pc];
 
+        // std.debug.print("{}\n", .{op});
+
         self.pc += 1;
 
         switch (op) {
@@ -245,7 +260,7 @@ pub const Vm = struct {
             },
             Op.ALLOC => {
                 const size = try self.pop();
-                try self.memory.appendNTimes(self.gpa.*, 0, size);
+                try self.memory.appendNTimes(self.gpa, 0, size);
             },
 
             Op.WRITE1 => try self.write_n(1),
@@ -400,21 +415,33 @@ export fn zig_cycles(self: *Vm) u64 {
 }
 
 export fn zig_run(self: *Vm) RunResult {
+    std.debug.print("run\n", .{});
+
     while (true) {
         @branchHint(.likely);
 
-        const res = self.step() catch |e| return .{ .cycles = self.cycles, .tag = .err, .data = .{ .err = switch (e) {
-            Error.OutOfMemory => .OutOfMemory,
+        const res = self.step() catch |e| {
+            std.debug.print("error: {}\n", .{e});
 
-            Error.StackEmpty => .StackEmpty,
-            Error.InvalidStackIdx => .InvalidStackIdx,
-            Error.Segfault => .Segfault,
-            Error.Eof => .Eof,
-            Error.DivideByZero => .DivideByZero,
-            Error.InvalidStackValue => .InvalidStackValue,
-            Error.UnknownOp => .UnknownOp,
-            Error.PointerTooBig => .PointerTooBig,
-        } } };
+            return .{
+                .cycles = self.cycles,
+                .tag = .err,
+                .data = .{
+                    .err = switch (e) {
+                        Error.OutOfMemory => .OutOfMemory,
+
+                        Error.StackEmpty => .StackEmpty,
+                        Error.InvalidStackIdx => .InvalidStackIdx,
+                        Error.Segfault => .Segfault,
+                        Error.Eof => .Eof,
+                        Error.DivideByZero => .DivideByZero,
+                        Error.InvalidStackValue => .InvalidStackValue,
+                        Error.UnknownOp => .UnknownOp,
+                        Error.PointerTooBig => .PointerTooBig,
+                    },
+                },
+            };
+        };
 
         self.cycles += 1;
 
@@ -463,18 +490,31 @@ export fn zig_run(self: *Vm) RunResult {
     };
 }
 
-export fn zig_init(gpa: *anyopaque, code: [*]u8, code_len: usize, data: [*]const u8, data_len: usize) *Vm {
-    return @constCast(&Vm{
-        .gpa = @as(*std.mem.Allocator, @ptrCast(@alignCast(@constCast(gpa)))),
-        .code = code,
-        .code_len = code_len,
-        .data = data,
-        .data_len = data_len,
-        .stack = .empty,
-        .memory = .empty,
-        .pc = 0,
-        .cycles = 0,
-    });
+// gpa: *anyopaque,
+export fn zig_init(code: [*]u8, code_len: usize, data: [*]const u8, data_len: usize) *allowzero Vm {
+    const vm = std.heap.brk_allocator.create(Vm) catch {
+        return @ptrFromInt(0);
+    };
+
+    // .gpa = @as(*std.mem.Allocator, @ptrCast(@alignCast(@constCast(gpa))));
+    // .gpa = @constCast(&std.heap.brk_allocator);
+    vm.gpa = std.heap.brk_allocator;
+    vm.code = code;
+    vm.code_len = code_len;
+    vm.data = data;
+    vm.data_len = data_len;
+    vm.stack = .empty;
+    vm.memory = .empty;
+    vm.pc = 0;
+    vm.cycles = 0;
+
+    return vm;
+}
+
+export fn zig_drop(vm: *Vm) void {
+    vm.stack.deinit(vm.gpa);
+    vm.memory.deinit(vm.gpa);
+    vm.gpa.destroy(vm);
 }
 
 inline fn u64_from_bytes(comptime n: usize, arr: [n]u8) u64 {

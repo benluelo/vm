@@ -59,12 +59,13 @@ pub enum Error {
 unsafe extern "C" {
     fn zig_allocator() -> *mut c_void;
     fn zig_init(
-        gpa: *mut c_void,
+        // gpa: *mut c_void,
         code: *mut u8,
         code_len: usize,
         data: *const u8,
         data_len: usize,
     ) -> *mut c_void;
+    fn zig_drop(vm: *mut c_void);
     fn zig_run(vm: *mut c_void) -> RunResult;
     fn zig_cycles(vm: *mut c_void) -> u64;
 }
@@ -79,7 +80,14 @@ impl Vm {
         let (code_ptr, code_len, _) = code.into_raw_parts();
         let (data_ptr, data_len, _) = data.into_raw_parts();
         let gpa = unsafe { zig_allocator() };
-        Self { ptr: unsafe { zig_init(gpa, code_ptr, code_len, data_ptr, data_len) }, gpa }
+        // dbg!(&gpa);
+        let ptr = unsafe {
+            zig_init(/* gpa, */ code_ptr, code_len, data_ptr, data_len)
+        };
+        // unsafe {
+        //     println!("{}", const_hex::encode(slice::from_raw_parts(ptr.cast::<u8>(), 100)));
+        // }
+        Self { ptr, gpa }
     }
 
     pub fn run(&mut self) -> Result<Option<&[u8]>, Error> {
@@ -104,6 +112,14 @@ impl VmT for Vm {
             Ok(Some(res)) => Ok(Some(res.to_owned())),
             Ok(None) => Ok(None),
             Err(err) => Err(err),
+        }
+    }
+}
+
+impl Drop for Vm {
+    fn drop(&mut self) {
+        unsafe {
+            zig_drop(self.ptr);
         }
     }
 }

@@ -81,6 +81,7 @@
                 fileset = pkgs.lib.fileset.unions [
                   (crane.lib.fileset.commonCargoSources unfilteredRoot)
                   ./c
+                  ./zig
                 ];
               };
             doCheck = false;
@@ -94,9 +95,15 @@
               pkgs.llvmPackages_latest.lld
               pkgs.llvmPackages_latest.bintools
               pkgs.clangStdenv.cc.libc
+              pkgs.zigpkgs.master
             ];
             LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang.lib}/lib";
-            cargoBuildCommand = "cargo build --release -Ftracing-off";
+            preBuild = ''
+              # zig needs a $HOME dir for caching (non-configurable)
+              export ZIG_GLOBAL_CACHE_DIR=.
+              zig version
+            '';
+            cargoBuildCommand = "cargo build -vvvvv --release -Ftracing-off";
             meta.mainProgram = "vm";
           };
           buildObject =
