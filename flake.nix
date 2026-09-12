@@ -103,7 +103,7 @@
               export ZIG_GLOBAL_CACHE_DIR=.
               zig version
             '';
-            cargoBuildCommand = "cargo build -vvvvv --release -Ftracing-off";
+            cargoBuildCommand = "cargo build --release -Ftracing-off";
             meta.mainProgram = "vm";
           };
           buildObject =
@@ -217,6 +217,27 @@
                     time ${pkgs.lib.getExe self'.packages.build-rust} run --obj ${buildObject ./tests/sha3-256.mir} --input-file ${./random.bin}
                   '';
                 };
+                run =
+                  let
+                    cmd = "${pkgs.lib.getExe self'.packages.build-rust} run --obj ${buildObject ./tests/sha3-256.mir} --input-file ${./random.bin}";
+                  in
+                  pkgs.writeShellApplication {
+                    name = "run";
+                    text = ''
+                      echo running rust
+                      time ${cmd} -i rust
+
+                      echo running rust-tail-call
+                      time ${cmd} -i rust-tail-call
+
+                      echo running zig
+                      time ${cmd} -i zig
+
+                      echo running c-computed-goto
+                      time ${cmd} -i c-computed-goto
+
+                    '';
+                  };
                 fetch-nist-vectors = pkgs.writeShellApplication {
                   name = "fetch-nist-vectors";
                   text = ''

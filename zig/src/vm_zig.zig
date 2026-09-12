@@ -211,8 +211,6 @@ pub const Vm = struct {
 
         const op = self.code[self.pc];
 
-        // std.debug.print("{}\n", .{op});
-
         self.pc += 1;
 
         switch (op) {
@@ -415,14 +413,10 @@ export fn zig_cycles(self: *Vm) u64 {
 }
 
 export fn zig_run(self: *Vm) RunResult {
-    std.debug.print("run\n", .{});
-
     while (true) {
         @branchHint(.likely);
 
         const res = self.step() catch |e| {
-            std.debug.print("error: {}\n", .{e});
-
             return .{
                 .cycles = self.cycles,
                 .tag = .err,

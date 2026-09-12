@@ -11,6 +11,7 @@ struct RunResult {
 }
 
 #[repr(u8)]
+#[expect(unused)]
 enum RunResultTag {
     Done,
     Eof,
