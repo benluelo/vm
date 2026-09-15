@@ -71,10 +71,10 @@
             url = "https://raw.githubusercontent.com/BLAKE3-team/BLAKE3/refs/heads/master/test_vectors/test_vectors.json";
             sha256 = "sha256:097n6bdn9l67jnjqsr6gg2pg7acr3bf7rbrjwvbfcxycmjl1xffw";
           };
-          build-rust = crane.lib.buildPackage {
+          build = crane.lib.buildPackage {
             src =
               let
-                unfilteredRoot = ./.; # The original, unfiltered source
+                unfilteredRoot = ./.;
               in
               pkgs.lib.fileset.toSource {
                 root = unfilteredRoot;
@@ -112,7 +112,7 @@
               name = "${baseNameOf mirFile}.o";
               src = mirFile;
               dontUnpack = true;
-              buildInputs = [ build-rust ];
+              buildInputs = [ build ];
               buildPhase = ''
                 vm build ${mirFile} -o a.out
               '';
@@ -132,59 +132,8 @@
 
           packages = {
             rust-nightly = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-            default = build-rust;
-            inherit build-rust;
-            build-zig = pkgs.stdenv.mkDerivation {
-              pname = "vm-zig";
-              version = "0.0.0";
-              src = ./zig;
-              buildInputs = [ pkgs.zigpkgs.master ];
-              buildPhase = ''
-                # zig needs a $HOME dir for caching (non-configurable)
-                export HOME=.
-                zig build --release=fast
-              '';
-              installPhase = ''
-                mv ./zig-out "$out"
-              '';
-              meta.mainProgram = "vm";
-            };
-            build-c-gcc = pkgs.gcc16Stdenv.mkDerivation {
-              pname = "vm-c";
-              version = "0.0.0";
-              src = ./c;
-              buildInputs = [ pkgs.gcc16Stdenv.cc.libc.static ];
-              buildPhase = ''
-                gcc --version
-                gcc -flto -Ofast -static -g main.c
-              '';
-              dontStrip = true;
-              installPhase = ''
-                mkdir "$out"
-                mkdir "$out/bin"
-                mv ./a.out "$out/bin/vm"
-              '';
-              meta.mainProgram = "vm";
-            };
-            build-c-clang = pkgs.clangStdenv.mkDerivation {
-              pname = "vm-c";
-              version = "0.0.0";
-              src = ./c;
-              buildInputs = [ pkgs.clangStdenv.cc.libc.static ];
-              buildPhase = ''
-                clang --version
-                # clang -flto -Ofast -static -g main.c -std=c23 -DDO_RESTRICT -DDEBUG
-                clang -flto=full -O3 -static -g main.c -DDO_RESTRICT
-                # clang -flto -O3 main.c
-              '';
-              dontStrip = true;
-              installPhase = ''
-                mkdir "$out"
-                mkdir "$out/bin"
-                mv ./a.out "$out/bin/vm"
-              '';
-              meta.mainProgram = "vm";
-            };
+            default = build;
+            build-rust = build;
           };
           apps =
             builtins.mapAttrs
@@ -193,30 +142,6 @@
                 program = value;
               })
               {
-                run-c-gcc = pkgs.writeShellApplication {
-                  name = "run-c-gcc";
-                  text = ''
-                    time ${pkgs.lib.getExe self'.packages.build-c-gcc} ${buildObject ./tests/sha3-256.mir} ${./random.bin}
-                  '';
-                };
-                run-c-clang = pkgs.writeShellApplication {
-                  name = "run-c-clang";
-                  text = ''
-                    time ${pkgs.lib.getExe self'.packages.build-c-clang} ${buildObject ./tests/sha3-256.mir} ${./random.bin}
-                  '';
-                };
-                run-zig = pkgs.writeShellApplication {
-                  name = "run-zig";
-                  text = ''
-                    time ${pkgs.lib.getExe self'.packages.build-zig} ${buildObject ./tests/sha3-256.mir} ${./random.bin}
-                  '';
-                };
-                run-rust = pkgs.writeShellApplication {
-                  name = "run-rust";
-                  text = ''
-                    time ${pkgs.lib.getExe self'.packages.build-rust} run --obj ${buildObject ./tests/sha3-256.mir} --input-file ${./random.bin}
-                  '';
-                };
                 run =
                   let
                     cmd = "${pkgs.lib.getExe self'.packages.build-rust} run --obj ${buildObject ./tests/sha3-256.mir} --input-file ${./random.bin}";
@@ -226,16 +151,19 @@
                     text = ''
                       echo running rust
                       time ${cmd} -i rust
+                      echo
 
                       echo running rust-tail-call
                       time ${cmd} -i rust-tail-call
+                      echo
 
                       echo running zig
                       time ${cmd} -i zig
+                      echo
 
                       echo running c-computed-goto
                       time ${cmd} -i c-computed-goto
-
+                      echo
                     '';
                   };
                 fetch-nist-vectors = pkgs.writeShellApplication {
