@@ -60,7 +60,7 @@ pub enum Error {
 unsafe extern "C" {
     fn zig_allocator() -> *mut c_void;
     fn zig_init(
-        // gpa: *mut c_void,
+        gpa: *mut c_void,
         code: *mut u8,
         code_len: usize,
         data: *const u8,
@@ -82,9 +82,7 @@ impl Vm {
         let (data_ptr, data_len, _) = data.into_raw_parts();
         let gpa = unsafe { zig_allocator() };
         // dbg!(&gpa);
-        let ptr = unsafe {
-            zig_init(/* gpa, */ code_ptr, code_len, data_ptr, data_len)
-        };
+        let ptr = unsafe { zig_init(gpa, code_ptr, code_len, data_ptr, data_len) };
         // unsafe {
         //     println!("{}", const_hex::encode(slice::from_raw_parts(ptr.cast::<u8>(), 100)));
         // }

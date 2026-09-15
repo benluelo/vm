@@ -484,15 +484,15 @@ export fn zig_run(self: *Vm) RunResult {
     };
 }
 
-// gpa: *anyopaque,
-export fn zig_init(code: [*]u8, code_len: usize, data: [*]const u8, data_len: usize) *allowzero Vm {
-    const vm = std.heap.brk_allocator.create(Vm) catch {
+export fn zig_init(gpa_any: *anyopaque, code: [*]u8, code_len: usize, data: [*]const u8, data_len: usize) *allowzero Vm {
+    const gpa = @as(*std.mem.Allocator, @ptrCast(@alignCast(@constCast(gpa_any))));
+    const vm = gpa.create(Vm) catch {
         return @ptrFromInt(0);
     };
 
-    // .gpa = @as(*std.mem.Allocator, @ptrCast(@alignCast(@constCast(gpa))));
+    vm.gpa = gpa.*;
     // .gpa = @constCast(&std.heap.brk_allocator);
-    vm.gpa = std.heap.brk_allocator;
+    // vm.gpa = std.heap.brk_allocator;
     vm.code = code;
     vm.code_len = code_len;
     vm.data = data;

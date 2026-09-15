@@ -67,3 +67,4 @@ tree-sitter-mir/*.tgz
 tree-sitter-mir/*.zip
 vm.llbc
 a.out
+.out

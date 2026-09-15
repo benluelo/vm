@@ -5,33 +5,17 @@ use std::{
 };
 
 fn main() {
-    let c_libdir_path = PathBuf::from("c").canonicalize().expect("cannot canonicalize path");
+    let outdir = PathBuf::from(".out").canonicalize().expect("cannot canonicalize path");
 
-    let zig_libdir_path = PathBuf::from("zig").canonicalize().expect("cannot canonicalize path");
+    std::fs::create_dir(&outdir).ok();
 
-    // This is the path to the `c` headers file.
-    let headers_path = c_libdir_path.join("vm.h");
-    let headers_path_str = headers_path.to_str().expect("Path is not a valid string");
+    println!("cargo:rustc-link-search={}", outdir.to_str().unwrap());
 
-    // This is the path to the intermediate object file for our library.
-    let obj_path = c_libdir_path.join("vm.o");
-    // This is the path to the static library file.
-    let lib_path = c_libdir_path.join("libvm.a");
-
-    // Tell cargo to look for shared libraries in the specified directory
-    println!("cargo:rustc-link-search={}", c_libdir_path.to_str().unwrap());
-    // no way to change the output path of zig build-lib, the file outputs to the current working directory
-    println!("cargo:rustc-link-search=.");
-
-    // Tell cargo to tell rustc to link our `vm` library. Cargo will
-    // automatically know it must look for a `libvm.a` file.
     println!("cargo:rustc-link-lib=vm");
     println!("cargo:rustc-link-lib=vm_zig");
 
     println!("cargo:rerun-if-changed=c/");
-
-    // Run `clang` to compile the `vm.c` file into a `vm.o` object file.
-    // Unwrap if it is not possible to spawn the process.
+    println!("cargo:rerun-if-changed=zig/");
 
     if !Command::new("clang")
         .arg("-O3")
@@ -42,8 +26,8 @@ fn main() {
         .arg("-g")
         .arg("-c")
         .arg("-o")
-        .arg(&obj_path)
-        .arg(c_libdir_path.join("vm.c"))
+        .arg(outdir.join("vm.o"))
+        .arg("./c/vm.c")
         .stderr(Stdio::inherit())
         .stdout(Stdio::inherit())
         .output()
@@ -59,8 +43,8 @@ fn main() {
     // Unwrap if it is not possible to spawn the process.
     if !Command::new("ar")
         .arg("crus")
-        .arg(lib_path)
-        .arg(obj_path)
+        .arg(outdir.join("libvm.a"))
+        .arg(outdir.join("vm.o"))
         .stderr(Stdio::inherit())
         .stdout(Stdio::inherit())
         .output()
@@ -78,7 +62,7 @@ fn main() {
     let bindings = bindgen::Builder::default()
         // The input header we would like to generate
         // bindings for.
-        .header(headers_path_str)
+        .header("c/vm.h")
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
@@ -98,6 +82,8 @@ fn main() {
         .arg("-static")
         .arg("-fPIC")
         .arg("-Ofast")
+        .arg(format!("-femit-bin={}", outdir.join("libvm_zig.a").to_str().unwrap()))
+        .arg("-flto")
         .stderr(Stdio::inherit())
         .stdout(Stdio::inherit())
         .output()
