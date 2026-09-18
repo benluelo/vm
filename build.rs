@@ -24,8 +24,14 @@ fn main() {
         "clang",
         &[
             &"-O3",
-            &"-flto=full",
+            // &"-fsanitize=fuzzer",
+            // &"-flto=full",
             &"-static",
+            &"-fPIC",
+            &"-fsanitize=address",
+            &"-static-libasan",
+            &"-Wl,-fsanitize=address",
+            // &"-Wl,-Bsymbolic",
             &"-DDO_RESTRICT",
             &"-g",
             &"-c",
@@ -35,7 +41,8 @@ fn main() {
         ],
     );
 
-    run("ar", &[&"crus", &outdir.join("libvm.a"), &outdir.join("vm.o")]);
+    run("ar", &[&"crs", &outdir.join("libvm.a"), &outdir.join("vm.o")]);
+    // run("llvm-ranlib", &[&outdir.join("libvm.a")]);
 
     let bindings = bindgen::Builder::default()
         .header("c/vm.h")
@@ -56,7 +63,7 @@ fn main() {
             &"-fPIC",
             &"-Ofast",
             &format!("-femit-bin={}", outdir.join("libvm_zig.a").to_str().unwrap()),
-            &"-flto",
+            // &"-flto",
         ],
     );
 }

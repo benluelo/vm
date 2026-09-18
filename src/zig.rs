@@ -1,7 +1,7 @@
 use core::slice;
 use std::ffi::c_void;
 
-use crate::{CycleCountVm, VmT};
+use crate::{CycleCountVm, VmRunResult, VmT};
 
 #[repr(C)]
 struct RunResult {
@@ -11,20 +11,19 @@ struct RunResult {
 }
 
 #[repr(u8)]
-#[expect(unused)]
+#[expect(unused, reason = "created in zig")]
 enum RunResultTag {
-    Done,
-    Eof,
-    Trap,
-    Exit,
-    Error,
+    Done = 0,
+    Trap = 1,
+    Exit = 2,
+    Err = 3,
 }
 
 #[repr(C)]
 union RunResultUnion {
     trap: u64,
     exit: ExitData,
-    err: u64,
+    err: Err,
 }
 
 #[derive(Clone, Copy)]
@@ -34,7 +33,7 @@ struct ExitData {
     len: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum Err {
     OutOfMemory,
@@ -74,10 +73,16 @@ unsafe extern "C" {
 pub struct Vm {
     ptr: *mut c_void,
     gpa: *mut c_void,
+    code_ptr: *mut u8,
+    code_len: usize,
+    data_ptr: *mut u8,
+    data_len: usize,
 }
 
 impl Vm {
-    pub fn new(code: Vec<u8>, data: Vec<u8>) -> Self {
+    pub fn new(mut code: Vec<u8>, mut data: Vec<u8>) -> Self {
+        code.shrink_to_fit();
+        data.shrink_to_fit();
         let (code_ptr, code_len, _) = code.into_raw_parts();
         let (data_ptr, data_len, _) = data.into_raw_parts();
         let gpa = unsafe { zig_allocator() };
@@ -86,31 +91,33 @@ impl Vm {
         // unsafe {
         //     println!("{}", const_hex::encode(slice::from_raw_parts(ptr.cast::<u8>(), 100)));
         // }
-        Self { ptr, gpa }
-    }
-
-    pub fn run(&mut self) -> Result<Option<&[u8]>, Error> {
-        let res = unsafe { zig_run(self.ptr) };
-        match res.tag {
-            RunResultTag::Done => Ok(None),
-            RunResultTag::Eof => Ok(None),
-            RunResultTag::Trap => Err(Error::Trap(unsafe { res.data.trap })),
-            RunResultTag::Exit => {
-                Ok(Some(unsafe { slice::from_raw_parts(res.data.exit.ptr, res.data.exit.len) }))
-            }
-            RunResultTag::Error => Err(unsafe { Error::Trap(res.data.err) }),
-        }
+        Self { ptr, gpa, code_ptr, code_len, data_ptr, data_len }
     }
 }
 
 impl VmT for Vm {
-    type Error = Error;
-
-    fn run(&mut self) -> anyhow::Result<Option<Vec<u8>>, Self::Error> {
-        match Vm::run(self) {
-            Ok(Some(res)) => Ok(Some(res.to_owned())),
-            Ok(None) => Ok(None),
-            Err(err) => Err(err),
+    fn run(&mut self) -> VmRunResult {
+        let res = unsafe { zig_run(self.ptr) };
+        match res.tag {
+            RunResultTag::Done => VmRunResult::Done,
+            RunResultTag::Trap => VmRunResult::Trap(unsafe { res.data.trap }),
+            RunResultTag::Exit => VmRunResult::Exit(
+                unsafe { slice::from_raw_parts(res.data.exit.ptr, res.data.exit.len) }.to_vec(),
+            ),
+            RunResultTag::Err => {
+                let err = unsafe { res.data.err };
+                match err {
+                    Err::OutOfMemory => VmRunResult::OutOfMemory,
+                    Err::StackEmpty => VmRunResult::StackEmpty,
+                    Err::InvalidStackIdx => VmRunResult::InvalidStackIdx,
+                    Err::Segfault => VmRunResult::Segfault,
+                    Err::Eof => VmRunResult::Eof,
+                    Err::DivideByZero => VmRunResult::DivideByZero,
+                    Err::InvalidStackValue => VmRunResult::InvalidStackValue,
+                    Err::UnknownOp => VmRunResult::UnknownOp,
+                    Err::PointerTooBig => VmRunResult::PointerTooBig,
+                }
+            }
         }
     }
 }
@@ -118,6 +125,8 @@ impl VmT for Vm {
 impl Drop for Vm {
     fn drop(&mut self) {
         unsafe {
+            Vec::from_raw_parts(self.code_ptr, self.code_len, self.code_len);
+            Vec::from_raw_parts(self.data_ptr, self.data_len, self.data_len);
             zig_drop(self.ptr);
         }
     }

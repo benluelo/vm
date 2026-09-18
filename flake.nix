@@ -197,8 +197,8 @@
             default = pkgs.mkShellNoCC.override { stdenv = pkgs.clangStdenv; } {
               # inputsFrom = [ build-rust ];
               buildInputs = [
-                pkgs.llvmPackages_latest.libclang.lib
-                pkgs.llvmPackages_latest.libllvm
+                (dbg pkgs.llvmPackages_latest.libclang.lib)
+                (dbg pkgs.llvmPackages_latest.libllvm)
                 pkgs.llvmPackages_latest.lld
                 pkgs.llvmPackages_latest.bintools
                 pkgs.clangStdenv.cc.libc
@@ -207,6 +207,7 @@
               ++ [ pkgs.zigpkgs.master ]
               ++ (with pkgs; [
                 # (dbg overrideCC)
+                cargo-fuzz
                 jq
                 moreutils
                 nixd
@@ -222,12 +223,13 @@
                 zig
                 zls
                 # libclang
-                clang-tools
+                (dbg clang-tools)
                 # llvmPackages_latest.libllvm
                 # llvmPackages_latest.libcxx
                 # llvmPackages_latest.clang
               ]);
               LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang.lib}/lib";
+              CUSTOM_LIBFUZZER_PATH = "${pkgs.llvmPackages_latest.compiler-rt}/lib/linux/libclang_rt.fuzzer-aarch64.a";
               nativeBuildInputs = [
                 pkgs.pkg-config
                 pkgs.rustPlatform.bindgenHook

@@ -1,0 +1,20 @@
+[package]
+name = "fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# mutatis = { version = "0.5", features = ["derive"] }
+vm = { path = ".." }
+
+[[bin]]
+name = "random-opcodes"
+path = "fuzz_targets/random-opcodes.rs"
+test = false
+doc = false
+bench = false

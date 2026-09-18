@@ -1,6 +1,6 @@
 use tracing::trace;
 
-use crate::{CycleCountHook, CycleCountVm, Error, Hook, Vm, VmT, raw};
+use crate::{CycleCountHook, CycleCountVm, Error, Hook, Vm, VmRunResult, VmT, raw};
 
 type VmResult<H> = Result<Option<Vec<u8>>, Error<H>>;
 
@@ -8,11 +8,21 @@ type F<H = ()> = fn(&mut Vm<H>) -> VmResult<H>;
 
 pub struct TcVm<H: Hook>(Vm<H>);
 
-impl<H: Hook> VmT for TcVm<H> {
-    type Error = Error<H>;
-
-    fn run(&mut self) -> anyhow::Result<Option<Vec<u8>>, Self::Error> {
-        self.run_tc()
+impl<H: Hook<Error = !>> VmT for TcVm<H> {
+    fn run(&mut self) -> VmRunResult {
+        match self.run_tc() {
+            Ok(Some(exit)) => VmRunResult::Exit(exit),
+            Ok(None) => VmRunResult::Done,
+            Err(Error::OutOfMemory) => VmRunResult::OutOfMemory,
+            Err(Error::StackEmpty) => VmRunResult::StackEmpty,
+            Err(Error::InvalidStackIdx) => VmRunResult::InvalidStackIdx,
+            Err(Error::Segfault) => VmRunResult::Segfault,
+            Err(Error::Eof) => VmRunResult::Eof,
+            Err(Error::DivideByZero) => VmRunResult::DivideByZero,
+            Err(Error::InvalidStackValue) => VmRunResult::InvalidStackValue,
+            Err(Error::Trap(code)) => VmRunResult::Trap(code),
+            Err(Error::UnknownOp(_)) => VmRunResult::UnknownOp,
+        }
     }
 }
 
@@ -133,6 +143,12 @@ macro_rules! ok_or {
     };
 }
 
+macro_rules! try_add {
+    ($a:expr, $b:expr) => {
+        ok_or!(($a).checked_add($b), Error::<H>::InvalidStackValue)
+    };
+}
+
 macro_rules! as_ptr {
     ($e:expr) => {{
         #[cfg(target_pointer_width = "64")]
@@ -179,7 +195,7 @@ macro_rules! push_n {
         let n = u64::from_be_bytes(v);
         trace!("push{} {n:x}", $n);
         hook!($vm, $op(*v.rsplit_array_ref::<$n>().1));
-        $vm.stack.push(n);
+        $vm.push_stack(n);
     }};
 }
 
@@ -199,7 +215,7 @@ macro_rules! write_n {
             $vm.stack.set_len(ptr_idx);
             trace!("{value:x} @ {ptr:x}");
             let bytes = value.to_be_bytes();
-            ok_or!($vm.memory.get_mut(ptr..ptr + $n), Error::<H>::Segfault)
+            ok_or!($vm.memory.get_mut(ptr..try_add!(ptr, $n)), Error::<H>::Segfault)
                 .copy_from_slice(&bytes[8 - $n..]);
         }
     }};
@@ -212,7 +228,7 @@ macro_rules! read_n {
         let top = last!($vm);
         let ptr = as_ptr!(*top);
         trace!("ptr: {ptr:x}");
-        let res = ok_or!($vm.memory.get(ptr..ptr + $n), Error::<H>::Segfault);
+        let res = ok_or!($vm.memory.get(ptr..try_add!(ptr, $n)), Error::<H>::Segfault);
         *top = u64_from_bytes(res);
     }};
 }
@@ -224,7 +240,7 @@ macro_rules! dread_n {
         let top = last!($vm);
         let ptr = as_ptr!(*top);
         trace!("ptr: {ptr:x}");
-        let res = ok_or!($vm.data.get(ptr..ptr + $n), Error::<H>::Segfault);
+        let res = ok_or!($vm.data.get(ptr..try_add!(ptr, $n)), Error::<H>::Segfault);
         *top = u64_from_bytes(res);
     }};
 }
@@ -281,7 +297,7 @@ do_op! {
     fn do_push0<H>(vm) {
         hook!(vm, PUSH0);
         trace!("push0");
-        vm.stack.push(0);
+        vm.push_stack(0);
 
         become dispatch(vm)
     }
@@ -355,9 +371,10 @@ do_op! {
     fn do_dup0<H>(vm) {
         trace!("dup0");
         hook!(vm, DUP0);
-        let stack_idx = ok_or!(vm.stack.len().checked_sub(1), Error::<H>::InvalidStackIdx);
+        let stack_idx = ok_or!(vm.stack.len().checked_sub(1), Error::<H>::StackEmpty);
 
-        vm.stack.push(*ok_or!(vm.stack.get(stack_idx), Error::<H>::InvalidStackIdx));
+        // SAFETY: Len is at least 1 as per above
+        vm.push_stack(unsafe { *vm.stack.get_unchecked(stack_idx) });
 
         become dispatch(vm)
     }
@@ -366,7 +383,7 @@ do_op! {
         trace!("swap");
         hook!(vm, SWAP);
         let idx = as_ptr!(pop!(vm));
-        let idx = ok_or!(idx.checked_add(1), Error::<H>::InvalidStackValue);
+        let idx = ok_or!(idx.checked_add(2), Error::<H>::InvalidStackValue);
         let len = vm.stack.len();
         if len < idx {
             return Err(Error::<H>::InvalidStackIdx);
@@ -374,7 +391,7 @@ do_op! {
         // SAFETY: Len is at least 1 as per above
         let a_idx = unsafe { len.unchecked_sub(1) };
         // SAFETY: Len is at least idx as per above
-        let b_idx = unsafe { a_idx.unchecked_sub(idx) };
+        let b_idx = unsafe { len.unchecked_sub(idx) };
         vm.stack.swap(a_idx, b_idx);
 
         become dispatch(vm)
@@ -527,7 +544,7 @@ do_op! {
     fn do_swap0<H>(vm) {
         trace!("swap0");
         hook!(vm, SWAP0);
-        let b_idx = ok_or!(vm.stack.len().checked_sub(2), Error::<H>::InvalidStackIdx);
+        let b_idx = ok_or!(vm.stack.len().checked_sub(2), Error::<H>::StackEmpty);
         // SAFETY: Len is at least 2 as per above
         let a_idx = unsafe { vm.stack.len().unchecked_sub(1) };
         vm.stack.swap(a_idx, b_idx);
@@ -549,6 +566,9 @@ do_op! {
         hook!(vm, ALLOC);
         let size = as_ptr!(pop!(vm));
         trace!("size: {size}");
+        if vm.memory.try_reserve(size).is_err() {
+            return Err(Error::<H>::OutOfMemory);
+        }
         vm.memory.extend(vec![0; size]);
 
         become dispatch(vm)
@@ -583,7 +603,7 @@ do_op! {
     fn do_dlen<H>(vm) {
         trace!("dlen");
         hook!(vm, DLEN);
-        vm.stack.push(vm.data.len() as u64);
+        vm.push_stack(vm.data.len() as u64);
 
         become dispatch(vm)
     }

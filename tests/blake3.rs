@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
-    ffi,
+    VmT, ffi,
     mir::{
         CheckCtx, Ctx,
         parse::grammar,
@@ -102,7 +102,7 @@ fn blake3_vectors() {
 
         let mut vm = ffi::Vm::new(asm.clone(), input);
 
-        let res = vm.run().unwrap().unwrap();
+        let res = vm.run().try_into_exit().unwrap();
 
         assert_eq!(
             res,

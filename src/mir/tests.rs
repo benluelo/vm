@@ -24,7 +24,7 @@ fn reverse_list() {
         // dbg!(&ops);
         let mut vm = Vm::new(Object::from_ops(ops).assemble(), vec![]);
         vm.stack = list.clone();
-        vm.run().unwrap();
+        vm.run_raw().unwrap();
         list.reverse();
         assert_eq!(vm.stack, list);
     }
@@ -54,7 +54,7 @@ fn compile_expr() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, None);
 
@@ -100,7 +100,7 @@ fn compile_if() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, None);
 
@@ -141,7 +141,7 @@ fn compile_if_else_if_branch() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, None);
 
@@ -182,7 +182,7 @@ fn compile_if_else_else_branch() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, None);
 
@@ -225,7 +225,7 @@ fn compile_if_else_if() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, None);
 
@@ -270,7 +270,7 @@ fn compile_def_single_arg() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, Some([25_u64.to_be_bytes(), 26_u64.to_be_bytes()].as_flattened().to_vec()));
 }
@@ -304,7 +304,7 @@ fn compile_def_multiple_args() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, Some(24_u64.to_be_bytes().to_vec()));
 }
@@ -347,7 +347,7 @@ fn fib_recursive() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, Some(55_u64.to_be_bytes().to_vec()));
 }
@@ -407,7 +407,7 @@ fn compile_def_shadowing() {
 
     let mut vm = Vm::new(asm, b"123".to_vec());
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, Some(123_u64.to_be_bytes().to_vec()));
 }
@@ -442,7 +442,7 @@ fn multiple_if_statements() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, None);
 
@@ -492,7 +492,7 @@ fn multiple_return_values() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, Some(vec![100, 101, 102, 103, 104, 105]));
 
@@ -538,7 +538,7 @@ fn multiple_return_values_update_and_init() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(
         res,
@@ -592,7 +592,7 @@ fn multiple_return_values_as_args() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, Some(vec![(10 * 4) - (2 * 4)]));
 
@@ -640,7 +640,7 @@ fn multiple_return_values_as_args_complex() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(
         res,
@@ -689,7 +689,7 @@ fn multiple_return_swap_params() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, Some(vec![0xbb, 0xaa]));
 
@@ -729,7 +729,7 @@ fn compile_loop() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, Some(vec![10]));
 }
@@ -768,7 +768,7 @@ fn compile_loop_shadow_label() {
 
     let mut vm = Vm::new(asm, vec![]);
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res, Some(vec![10]));
 }
@@ -821,7 +821,7 @@ fn compile_atoi() {
 
     let mut vm = Vm::new(asm, b"1234567".into());
 
-    let res = vm.run().unwrap();
+    let res = vm.run_raw().unwrap();
 
     assert_eq!(res.unwrap(), 1234567_u64.to_be_bytes());
 }

@@ -729,7 +729,7 @@ mod tests {
 
         let mut vm = Vm::new(asm, vec![]);
 
-        let res = vm.run().unwrap();
+        let res = vm.run_raw().unwrap();
 
         match res {
             Some(res) => {
@@ -762,7 +762,7 @@ mod tests {
 
         let mut vm = Vm::new(asm, vec![]);
 
-        let res = vm.run().unwrap();
+        let res = vm.run_raw().unwrap();
 
         match res {
             Some(res) => {

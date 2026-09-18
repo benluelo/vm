@@ -39,7 +39,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 hook: (),
                 pc: 0,
             },
-            |vm| black_box(black_box(vm).run()).unwrap(),
+            |vm| black_box(black_box(vm).run_raw()).unwrap(),
             BatchSize::SmallInput,
         );
     });
@@ -59,7 +59,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 hook: (),
                 pc: 0,
             },
-            |vm| black_box(black_box(vm).run()).unwrap(),
+            |vm| black_box(black_box(vm).run_raw()).unwrap(),
             BatchSize::SmallInput,
         );
     });
@@ -99,7 +99,7 @@ fn op_bench(group: &mut BenchmarkGroup<'_, WallTime>, name: &str, op: Op) {
                 hook: (),
                 pc: 0,
             },
-            |vm| black_box(black_box(vm).run()).unwrap(),
+            |vm| black_box(black_box(vm).run_raw()).unwrap(),
             BatchSize::SmallInput,
         );
     });

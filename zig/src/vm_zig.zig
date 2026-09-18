@@ -11,73 +11,10 @@ const zig = @import("zig");
 //     @trap();
 // }
 
-// pub fn main(init: std.process.Init) !void {
-//     // This is appropriate for anything that lives as long as the process.
-//     const arena: std.mem.Allocator = std.heap.brk_allocator;
-
-//     // In order to do I/O operations need an `Io` instance.
-//     const io = init.io;
-
-//     // Accessing command line arguments:
-//     const args = try init.minimal.args.toSlice(arena);
-//     const file_path = args[1];
-//     const file = try std.Io.Dir.cwd().readFileAlloc(io, file_path, arena, Io.Limit.unlimited);
-//     defer arena.free(file);
-//     const input_file = args[2];
-//     const input = try std.Io.Dir.cwd().readFileAlloc(io, input_file, arena, Io.Limit.unlimited);
-//     defer arena.free(input);
-//     // const is_hex = args.len == 4 and std.mem.eql(u8, args[3], "--hex");
-//     // std.log.info("file_path: {s}, file: {s}, input: {s}, is_hex: {}", .{ file_path, file, input, is_hex });
-
-//     var vm = Vm.init(arena, file, input);
-
-//     // Stdout is for the actual output of your application, for example if you
-//     // are implementing gzip, then only the compressed bytes should be sent to
-//     // stdout, not any debugging messages.
-//     var stdout_buffer: [1024]u8 = undefined;
-//     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
-//     const stdout_writer = &stdout_file_writer.interface;
-
-//     const start = Io.Clock.real.now(init.io);
-//     const cycles, const res = try vm.run();
-//     const end = Io.Clock.real.now(init.io);
-//     const duration = std.Io.Timestamp.durationTo(start, end);
-
-//     switch (res) {
-//         .done => {},
-//         .eof => {
-//             try stdout_writer.print("eof\n", .{});
-//         },
-//         .trap => |code| {
-//             try stdout_writer.print("trap: {}\n", .{code});
-//         },
-//         .exit => |bz| {
-//             try stdout_writer.print("{x}\n", .{bz});
-//         },
-//     }
-//     try stdout_writer.print("time: {}ms\n", .{duration.toMilliseconds()});
-//     try stdout_writer.print("total cycles: {}", .{cycles});
-
-//     try stdout_writer.flush(); // Don't forget to flush!
-// }
-
 pub export fn zig_allocator() *anyopaque {
     return @constCast(&std.heap.brk_allocator);
 }
 
-// b09c0cabaaaa0000
-// c800000000000000
-// e0f2feffffff0000
-// d044e0aaaaaa0000
-// 48f3feffffff0000
-// 80f2feffffff0000
-// 9848feaaaaaa0000
-// 48f3feffffff0000
-// 80f2feffffff0000
-// 6400000000000000
-// 80f2feffffff0000
-// 6400000000000000
-// f0f3feff
 pub const Vm = struct {
     gpa: std.mem.Allocator,
     code: [*]u8,
@@ -89,12 +26,12 @@ pub const Vm = struct {
     pc: usize,
     cycles: u64,
 
-    inline fn getMut(self: *Vm, n: usize) Error!*u64 {
+    inline fn getMut(self: *Vm, n: usize, comptime err: Error) Error!*u64 {
         @setRuntimeSafety(false);
 
-        if (self.stack.items.len < n) {
+        if (self.stack.items.len <= n) {
             @branchHint(.cold);
-            return Error.StackEmpty;
+            return err;
         } else {
             return &self.stack.items.ptr[(self.stack.items.len - 1) - n];
         }
@@ -103,7 +40,7 @@ pub const Vm = struct {
     inline fn get(self: *Vm, n: usize) Error!u64 {
         @setRuntimeSafety(false);
 
-        if (self.stack.items.len < n) {
+        if (self.stack.items.len <= n) {
             @branchHint(.cold);
             return Error.StackEmpty;
         } else {
@@ -147,7 +84,7 @@ pub const Vm = struct {
 
         const value = try self.pop();
         const ptr = try asPtr(try self.pop());
-        try checkBounds(self.memory.items.len, ptr + n);
+        try checkBounds(self.memory.items.len, try tryAdd(ptr, n, Error.InvalidStackValue));
         var bytes: [n]u8 = undefined;
         std.mem.writeInt(@Int(.unsigned, n * 8), &bytes, @truncate(value), .big);
         @memcpy(self.memory.items.ptr[ptr..][0..n], &bytes);
@@ -156,9 +93,9 @@ pub const Vm = struct {
     inline fn read_n(self: *Vm, comptime n: usize) Error!void {
         @setRuntimeSafety(false);
 
-        const top: *u64 = try self.getMut(0);
+        const top: *u64 = try self.getMut(0, Error.StackEmpty);
         const ptr = try asPtr(top.*);
-        try checkBounds(self.memory.items.len, ptr + n);
+        try checkBounds(self.memory.items.len, try tryAdd(ptr, n, Error.InvalidStackValue));
         const res = self.memory.items.ptr[ptr..][0..n];
         top.* = u64_from_bytes(n, res.*);
     }
@@ -166,9 +103,9 @@ pub const Vm = struct {
     inline fn dread_n(self: *Vm, comptime n: usize) Error!void {
         @setRuntimeSafety(false);
 
-        const top = try self.getMut(0);
+        const top = try self.getMut(0, Error.StackEmpty);
         const ptr = try asPtr(top.*);
-        try checkBounds(self.data_len, ptr + n);
+        try checkBounds(self.data_len, try tryAdd(ptr, n, Error.InvalidStackValue));
         const res = self.data[ptr..][0..n];
         top.* = u64_from_bytes(n, res.*);
     }
@@ -178,6 +115,8 @@ pub const Vm = struct {
 
         if (self.pc + n > self.code_len) {
             @branchHint(.cold);
+            // incomplete cycle
+            self.cycles -= 1;
             return Error.Eof;
         }
         try self.push(u64_from_bytes(n, self.code[self.pc..][0..n].*));
@@ -206,8 +145,10 @@ pub const Vm = struct {
 
         if (self.pc >= self.code_len) {
             @branchHint(.cold);
-            return .eof;
+            return .done;
         }
+
+        self.cycles += 1;
 
         const op = self.code[self.pc];
 
@@ -224,27 +165,27 @@ pub const Vm = struct {
             Op.PUSH7 => try self.push_n(7),
             Op.PUSH8 => try self.push_n(8),
             Op.DUP => {
-                const idx = try self.getMut(0);
-                const stack_idx = try tryAdd(try asPtr(idx.*), 1);
+                const idx = try self.getMut(0, Error.StackEmpty);
+                const stack_idx = try tryAdd(try asPtr(idx.*), 1, Error.InvalidStackIdx);
 
-                idx.* = (try self.getMut(stack_idx)).*;
+                idx.* = (try self.getMut(stack_idx, Error.InvalidStackIdx)).*;
             },
             Op.DUP0 => try self.push(try self.get(0)),
             Op.SWAP => {
-                const idx = try tryAdd(try asPtr(try self.pop()), 1);
+                const idx = try tryAdd(try asPtr(try self.pop()), 2, Error.InvalidStackValue);
                 const len = self.stack.items.len;
                 if (len < idx) {
                     @branchHint(.cold);
                     return Error.InvalidStackIdx;
                 }
                 const a_idx = len - 1;
-                const b_idx = a_idx - idx;
+                const b_idx = len - idx;
                 std.mem.swap(u64, &self.stack.items.ptr[a_idx], &self.stack.items.ptr[b_idx]);
             },
             Op.SWAP0 => {
                 if (self.stack.items.len < 2) {
                     @branchHint(.cold);
-                    return Error.InvalidStackIdx;
+                    return Error.StackEmpty;
                 }
                 std.mem.swap(u64, &self.stack.items.ptr[self.stack.items.len - 2], &self.stack.items.ptr[self.stack.items.len - 1]);
             },
@@ -345,13 +286,13 @@ pub const Vm = struct {
             Op.LT => try self.binop(Op.lt),
             Op.GT => try self.binop(Op.gt),
             Op.NOT => {
-                const a = try self.getMut(0);
+                const a = try self.getMut(0, Error.StackEmpty);
                 a.* = Op.not(a.*);
             },
             Op.SHR => try self.binop(Op.shr),
             Op.SHL => try self.binop(Op.shl),
             Op.NEG => {
-                const a = try self.getMut(0);
+                const a = try self.getMut(0, Error.StackEmpty);
                 a.* = Op.neg(a.*);
             },
             Op.OR => try self.binop(Op.or_),
@@ -379,7 +320,7 @@ pub const Vm = struct {
                 }
             },
             Op.CALL => {
-                const top = try self.getMut(0);
+                const top = try self.getMut(0, Error.StackEmpty);
                 const address = try asPtr(top.*);
                 top.* = @intCast(self.pc);
                 self.pc = address;
@@ -400,6 +341,8 @@ pub const Vm = struct {
             },
             else => {
                 @branchHint(.cold);
+                // incomplete cycle
+                self.cycles -= 1;
                 return Error.UnknownOp;
             },
         }
@@ -437,17 +380,15 @@ export fn zig_run(self: *Vm) RunResult {
             };
         };
 
-        self.cycles += 1;
-
         switch (res) {
             .stepped => {
                 @branchHint(.likely);
             },
-            .eof => {
+            .done => {
                 @branchHint(.cold);
                 return .{
                     .cycles = self.cycles,
-                    .tag = .eof,
+                    .tag = .done,
                     .data = undefined,
                 };
             },
@@ -517,23 +458,22 @@ inline fn u64_from_bytes(comptime n: usize, arr: [n]u8) u64 {
 
 const StepResultTag = enum {
     stepped,
-    eof,
+    done,
     trap,
     exit,
 };
 const StepResult = union(StepResultTag) {
     stepped: void,
-    eof: void,
+    done: void,
     trap: u64,
     exit: []const u8,
 };
 
 const RunResultTag = enum(u8) {
-    done,
-    eof,
-    trap,
-    exit,
-    err,
+    done = 0,
+    trap = 1,
+    exit = 2,
+    err = 3,
 };
 const RunResultUnion = extern union {
     trap: u64,
@@ -576,14 +516,14 @@ inline fn asPtr(val: u64) !usize {
     }
 }
 
-inline fn tryAdd(val: usize, n: usize) !usize {
+inline fn tryAdd(val: usize, n: usize, comptime err: Error) Error!usize {
     @setRuntimeSafety(false);
 
     const res, const overflow = @addWithOverflow(val, n);
 
     if (overflow != 0) {
         @branchHint(.cold);
-        return Error.InvalidStackValue;
+        return err;
     }
 
     return res;

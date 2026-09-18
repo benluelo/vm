@@ -60,10 +60,10 @@ typedef struct Vm {
   uint64_t cycles;
 } Vm;
 
-VmResult step_vm(Vm *vm);
-
 VmResult run_vm(Vm *vm);
 
 Vm new_vm(Fat code, Fat data);
+
+void drop_vm(Vm *vm);
 
 Fat new_fat(uint8_t const *ptr, size_t len);

@@ -29,23 +29,27 @@
 // #include <assert.h>
 // #define bail(err) assert(err)
 
-#define ensure_stack(n)                                                        \
+#define ensure_stack(n, err)                                                   \
   {                                                                            \
     if (unlikely(vm->stack.len < (n))) {                                       \
-      bail(VM_ERR_STACK_EMPTY);                                                \
+      bail(err);                                                               \
     }                                                                          \
   }
 
 #define ensure_memory(ptr, n)                                                  \
   {                                                                            \
-    if (unlikely(vm->memory.size < ((ptr) + (n)))) {                           \
+    uint64_t idx;                                                              \
+    try_add(&idx, (ptr), (n), VM_ERR_INVALID_STACK_VALUE);                     \
+    if (unlikely(vm->memory.size < idx)) {                                     \
       bail(VM_ERR_SEGFAULT);                                                   \
     }                                                                          \
   }
 
 #define ensure_data(ptr, n)                                                    \
   {                                                                            \
-    if (unlikely(vm->data.len < ((ptr) + (n)))) {                              \
+    uint64_t idx;                                                              \
+    try_add(&idx, (ptr), (n), VM_ERR_INVALID_STACK_VALUE);                     \
+    if (unlikely(vm->data.len < idx)) {                                        \
       bail(VM_ERR_SEGFAULT);                                                   \
     }                                                                          \
   }
@@ -53,6 +57,7 @@
 #define ensure_code(n)                                                         \
   {                                                                            \
     if (unlikely(vm->code.len < (vm->pc + (n)))) {                             \
+      vm->cycles--;                                                            \
       bail(VM_ERR_EOF);                                                        \
     }                                                                          \
   }
@@ -92,7 +97,7 @@
 #define read_n(n)                                                              \
   {                                                                            \
     debug("READ%d\n", (n));                                                    \
-    ensure_stack(1);                                                           \
+    ensure_stack(1, VM_ERR_STACK_EMPTY);                                       \
     size_t *top = &vm->stack.data[vm->stack.len - 1];                          \
     uint64_t ptr = *top;                                                       \
     ensure_memory(ptr, (n));                                                   \
@@ -103,7 +108,7 @@
 #define dread_n(n)                                                             \
   {                                                                            \
     debug("DREAD%d\n", (n));                                                   \
-    ensure_stack(1);                                                           \
+    ensure_stack(1, VM_ERR_STACK_EMPTY);                                       \
     uint64_t *top = &vm->stack.data[vm->stack.len - 1];                        \
     uint64_t ptr = *top;                                                       \
     ensure_data(ptr, (n));                                                     \
@@ -114,7 +119,7 @@
 #define write_n(n)                                                             \
   {                                                                            \
     debug("WRITE%d\n", (n));                                                   \
-    ensure_stack(2);                                                           \
+    ensure_stack(2, VM_ERR_STACK_EMPTY);                                       \
     uint64_t value = vm->stack.data[vm->stack.len - 1];                        \
     size_t ptr = vm->stack.data[vm->stack.len - 2];                            \
     ensure_memory(ptr, (n));                                                   \
@@ -122,10 +127,10 @@
     vm->stack.len -= 2;                                                        \
   }
 
-#define try_add(res, val, n)                                                   \
+#define try_add(res, val, n, err)                                              \
   {                                                                            \
     if (unlikely(ckd_add((res), (val), (n)))) {                                \
-      bail(VM_ERR_INVALID_STACK_IDX);                                          \
+      bail(err);                                                               \
     };                                                                         \
   }
 
@@ -204,7 +209,7 @@ static inline VmResult pop_stack(Stack *stack, uint64_t *value) {
   return VM_OK;
 }
 
-inline VmResult step_vm(Vm *vm) {
+inline VmResult run_vm(Vm *vm) {
   static void *ops_table[256] = {
       [0 ... 255] = &&unknown_op,
       [0x00] = &&_PUSH0,
@@ -272,14 +277,12 @@ inline VmResult step_vm(Vm *vm) {
       [0xa5] = &&_TRAP,
   };
 
-  if (unlikely(vm->pc >= vm->code.len)) {
-    return VM_STEP_RESULT_EOF;
-  }
-
   uint8_t op;
 
 #define DISPATCH()                                                             \
   {                                                                            \
+    if (vm->pc >= vm->code.len)                                                \
+      return VM_STEP_RESULT_EOF;                                               \
     op = vm->code.ptr[vm->pc];                                                 \
     vm->cycles++;                                                              \
     vm->pc++;                                                                  \
@@ -329,18 +332,18 @@ _PUSH8:
   DISPATCH();
 _DUP: {
   debug("DUP\n");
-  ensure_stack(1);
+  ensure_stack(1, VM_ERR_STACK_EMPTY);
   uint64_t *idx = &vm->stack.data[vm->stack.len - 1];
   uint64_t stack_idx;
-  try_add(&stack_idx, *idx, 1);
+  try_add(&stack_idx, *idx, 1, VM_ERR_INVALID_STACK_IDX);
   debug("idx: %lu\n", *idx);
-  ensure_stack(stack_idx);
+  ensure_stack(stack_idx + 1, VM_ERR_INVALID_STACK_IDX);
   *idx = vm->stack.data[(vm->stack.len - 1) - stack_idx];
   DISPATCH();
 };
 _DUP0: {
   // debug("DUP0\n");
-  ensure_stack(1);
+  ensure_stack(1, VM_ERR_STACK_EMPTY);
   try(push_stack(&vm->stack, vm->stack.data[vm->stack.len - 1]));
   DISPATCH();
 };
@@ -348,13 +351,13 @@ _SWAP: {
   // debug("SWAP\n");
   uint64_t idx = 0;
   try(pop_stack(&vm->stack, &idx));
-  try_add(&idx, idx, 1);
+  try_add(&idx, idx, 2, VM_ERR_INVALID_STACK_VALUE);
   size_t len = vm->stack.len;
   if (unlikely(len < idx)) {
     bail(VM_ERR_INVALID_STACK_IDX);
   }
   size_t a_idx = len - 1;
-  size_t b_idx = a_idx - idx;
+  size_t b_idx = len - idx;
   uint64_t a = vm->stack.data[a_idx];
   vm->stack.data[a_idx] = vm->stack.data[b_idx];
   vm->stack.data[b_idx] = a;
@@ -362,7 +365,7 @@ _SWAP: {
 };
 _SWAP0: {
   // debug("SWAP0\n");
-  ensure_stack(2);
+  ensure_stack(2, VM_ERR_STACK_EMPTY);
   uint64_t a = vm->stack.data[vm->stack.len - 1];
   vm->stack.data[vm->stack.len - 1] = vm->stack.data[vm->stack.len - 2];
   vm->stack.data[vm->stack.len - 2] = a;
@@ -370,7 +373,7 @@ _SWAP0: {
 };
 _POP: {
   // debug("POP\n");
-  ensure_stack(1);
+  ensure_stack(1, VM_ERR_STACK_EMPTY);
   vm->stack.len--;
   DISPATCH();
 };
@@ -526,7 +529,7 @@ _GT:
   binop(op_gt);
 _NOT: {
   // debug("NOT\n");
-  ensure_stack(1);
+  ensure_stack(1, VM_ERR_STACK_EMPTY);
   uint64_t *a = &vm->stack.data[vm->stack.len - 1];
   *a = op_not(*a);
   DISPATCH();
@@ -537,7 +540,7 @@ _SHR:
   binop(op_shr);
 _NEG: {
   // debug("NEG\n");
-  ensure_stack(1);
+  ensure_stack(1, VM_ERR_STACK_EMPTY);
   uint64_t *a = &vm->stack.data[vm->stack.len - 1];
   *a = op_neg(*a);
   DISPATCH();
@@ -556,7 +559,7 @@ _JUMP: {
 _JNZ: {
   // debug("JNZ\n");
 
-  ensure_stack(2);
+  ensure_stack(2, VM_ERR_STACK_EMPTY);
 
   uint64_t dst = vm->stack.data[vm->stack.len - 1];
   uint64_t value = vm->stack.data[vm->stack.len - 2];
@@ -571,7 +574,7 @@ _JNZ: {
 _CALL: {
   // debug("CALL\n");
 
-  ensure_stack(1);
+  ensure_stack(1, VM_ERR_STACK_EMPTY);
 
   uint64_t *top = &vm->stack.data[vm->stack.len - 1];
   uint64_t address = *top;
@@ -581,7 +584,7 @@ _CALL: {
 };
 _EXIT: {
   // debug("EXIT\n");
-  ensure_stack(2);
+  ensure_stack(2, VM_ERR_STACK_EMPTY);
 
   // debug("memory: ");
   // for (int i; i < vm->memory.size; i++) {
@@ -593,35 +596,27 @@ _EXIT: {
   uint64_t ptr = vm->stack.data[vm->stack.len - 2];
   vm->stack.len -= 2;
 
+  size_t out_ptr;
+  if (ptr > vm->memory.size)
+    return VM_ERR_SEGFAULT;
+  try_add(&out_ptr, ptr, len, VM_ERR_INVALID_STACK_VALUE);
+  if (out_ptr > vm->memory.size)
+    return VM_ERR_SEGFAULT;
   vm->out.exit = new_fat(vm->memory.data + ptr, len);
   return VM_STEP_RESULT_EXIT;
 };
 _TRAP: {
   debug("TRAP\n");
-  ensure_stack(1);
+  ensure_stack(1, VM_ERR_STACK_EMPTY);
   vm->stack.len--;
   vm->out.trap = vm->stack.data[vm->stack.len];
   return VM_STEP_RESULT_TRAP;
 };
 unknown_op:
+  // DISPATCH() eagerly increments the cycle count
+  vm->cycles--;
   debug("unknown op %02x\n", op);
   bail(VM_ERR_UNKNOWN_OP);
-
-  return VM_OK;
-}
-
-VmResult run_vm(Vm *vm) {
-  int cycles = 0;
-  while (likely(vm->pc < vm->code.len)) {
-    // debug("\n[%d] ", cycles);
-    VmResult res = step_vm(vm);
-    cycles++;
-
-    // switch (__builtin_expect(res.tag, STEP_RESULT_STEPPED)) {
-    if (res) {
-      return res;
-    }
-  }
 
   return VM_OK;
 }
@@ -630,20 +625,29 @@ Vm new_vm(Fat code, Fat data) {
   return (Vm){
       .code = code,
       .data = data,
-      .memory =
-          {
-              .data = 0,
-              .size = 0,
-          },
       .stack =
           {
               .data = 0,
               .capacity = 0,
               .len = 0,
           },
+      .memory =
+          {
+              .data = 0,
+              .size = 0,
+          },
       .pc = 0,
-      .out = {0},
+      .out =
+          {
+              .trap = 0,
+          },
+      .cycles = 0,
   };
+}
+
+void drop_vm(Vm *vm) {
+  free(vm->stack.data);
+  free(vm->memory.data);
 }
 
 Fat new_fat(uint8_t const *ptr, size_t len) {

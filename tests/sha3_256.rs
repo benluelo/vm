@@ -118,7 +118,7 @@ fn nist_vectors() {
         for (i, (len, msg, md)) in load_nist_vectors(file_name).into_iter().enumerate() {
             let mut vm = Vm::new(asm.clone(), msg[0..(len / 8)].to_vec());
 
-            let res = vm.run().unwrap().unwrap();
+            let res = vm.run_raw().unwrap().unwrap();
 
             assert_eq!(res, md, "[{i}] failed: {}", const_hex::encode(msg));
 
@@ -133,7 +133,7 @@ fn nist_vectors() {
             for _ in 0..1000 {
                 let mut vm = Vm::new(asm.clone(), seed.clone());
 
-                let res = vm.run().unwrap().unwrap();
+                let res = vm.run_raw().unwrap().unwrap();
 
                 seed = res;
             }

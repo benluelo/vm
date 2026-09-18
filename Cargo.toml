@@ -1,10 +1,13 @@
+[workspace]
+members = [".", "fuzz"]
+
 [package]
 name = "vm"
 version = "0.1.0"
 edition = "2024"
 
 [profile.release]
-lto = "fat"
+# lto = "fat"
 
 [profile.profiling]
 inherits = "release"
@@ -13,6 +16,7 @@ lto = "fat"
 
 [dependencies]
 anyhow = "1.0.102"
+arbitrary = { version = "1.4.2", features = ["derive"] }
 argh = "0.1.16"
 ariadne = "0.6.0"
 chumsky = "0.12.0"

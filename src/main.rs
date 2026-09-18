@@ -32,7 +32,7 @@ use ratatui::{
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
-    CycleCountHook, CycleCountVm, Error, Hook, Op, StepResult, Vm,
+    CycleCountHook, CycleCountVm, Error, Hook, Op, StepResult, Vm, VmRunResult,
     assembler::parse_asm,
     ffi,
     mir::{
@@ -340,32 +340,28 @@ fn do_run(mut vm: impl CycleCountVm) {
     let now = Instant::now();
     let res = vm.run();
     let elapsed = now.elapsed();
+    println!("time: {}", elapsed.as_secs_f64());
+    println!("total cycles: {}", vm.cycles());
+    // println!("binary size: {}", vm.code.len());
+    // println!("data size: {}", vm.data.len());
     match res {
-        Ok(res) => {
-            println!("time: {}", elapsed.as_secs_f64());
-            println!("total cycles: {}", vm.cycles());
-            // println!("binary size: {}", vm.code.len());
-            // println!("data size: {}", vm.data.len());
-            match res {
-                Some(res) => {
-                    println!(
-                        "output: {}",
-                        res.encode_hex()
-                            .chars()
-                            .collect::<Vec<_>>()
-                            .chunks(8)
-                            .map(|s| s.iter().collect::<String>())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    );
-                }
-                None => {
-                    println!("output: <no output>");
-                }
-            }
+        VmRunResult::Exit(exit) => {
+            println!(
+                "output: {}",
+                exit.encode_hex()
+                    .chars()
+                    .collect::<Vec<_>>()
+                    .chunks(8)
+                    .map(|s| s.iter().collect::<String>())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
         }
-        Err(err) => {
-            println!("err: {err}");
+        VmRunResult::Done => {
+            println!("output: <no output>");
+        }
+        err => {
+            println!("err: {err:?}");
             // println!("cycles: {}", vm.cycles);
 
             // println!("{}", const_hex::encode(vm.memory));
@@ -763,6 +759,7 @@ impl App {
                 Err(err) => {
                     // self.should_quit = true;
                     match err {
+                        Error::OutOfMemory => {}
                         Error::StackEmpty => {}
                         Error::InvalidStackIdx => {}
                         Error::Segfault => {}

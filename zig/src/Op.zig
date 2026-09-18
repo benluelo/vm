@@ -256,12 +256,12 @@ pub inline fn mul(a: u64, b: u64) u64 {
 }
 
 pub inline fn div(a: u64, b: u64) !u64 {
-    // if (b == 0) {
-    //     @branchHint(.cold);
-    //     return Error.DivideByZero;
-    // } else {
-    return a / b;
-    // }
+    if (b == 0) {
+        @branchHint(.cold);
+        return error.DivideByZero;
+    } else {
+        return a / b;
+    }
 }
 
 pub inline fn not(a: u64) u64 {
@@ -285,12 +285,12 @@ pub inline fn eq(a: u64, b: u64) u64 {
 }
 
 pub inline fn mod(a: u64, b: u64) !u64 {
-    // if (b == 0) {
-    //     @branchHint(.cold);
-    //     return Error.DivideByZero;
-    // } else {
-    return a % b;
-    // }
+    if (b == 0) {
+        @branchHint(.cold);
+        return error.DivideByZero;
+    } else {
+        return a % b;
+    }
 }
 
 pub inline fn and_(a: u64, b: u64) u64 {

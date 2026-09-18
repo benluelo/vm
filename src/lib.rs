@@ -22,9 +22,30 @@ pub mod zig;
 mod vm_tests;
 
 pub trait VmT {
-    type Error: core::error::Error;
+    fn run(&mut self) -> VmRunResult;
+}
 
-    fn run(&mut self) -> Result<Option<Vec<u8>>, Self::Error>;
+#[derive(Debug, Clone, PartialEq)]
+pub enum VmRunResult {
+    Done,
+    Trap(u64),
+    Exit(Vec<u8>),
+
+    StackEmpty,
+    InvalidStackIdx,
+    Segfault,
+    Eof,
+    DivideByZero,
+    InvalidStackValue,
+    UnknownOp,
+    OutOfMemory,
+    PointerTooBig,
+}
+
+impl VmRunResult {
+    pub fn try_into_exit(self) -> Result<Vec<u8>, Self> {
+        if let Self::Exit(v) = self { Ok(v) } else { Err(self) }
+    }
 }
 
 pub trait CycleCountVm: VmT {
@@ -40,11 +61,21 @@ pub struct Vm<H: Hook = ()> {
     pub pc: usize,
 }
 
-impl<H: Hook> VmT for Vm<H> {
-    type Error = Error<H>;
-
-    fn run(&mut self) -> Result<Option<Vec<u8>>, Self::Error> {
-        Vm::run(self)
+impl<H: Hook<Error = !>> VmT for Vm<H> {
+    fn run(&mut self) -> VmRunResult {
+        match Vm::run_raw(self) {
+            Ok(Some(exit)) => VmRunResult::Exit(exit),
+            Ok(None) => VmRunResult::Done,
+            Err(Error::OutOfMemory) => VmRunResult::OutOfMemory,
+            Err(Error::StackEmpty) => VmRunResult::StackEmpty,
+            Err(Error::InvalidStackIdx) => VmRunResult::InvalidStackIdx,
+            Err(Error::Segfault) => VmRunResult::Segfault,
+            Err(Error::Eof) => VmRunResult::Eof,
+            Err(Error::DivideByZero) => VmRunResult::DivideByZero,
+            Err(Error::InvalidStackValue) => VmRunResult::InvalidStackValue,
+            Err(Error::Trap(code)) => VmRunResult::Trap(code),
+            Err(Error::UnknownOp(_)) => VmRunResult::UnknownOp,
+        }
     }
 }
 
@@ -103,7 +134,7 @@ impl<H: Hook> Vm<H> {
         Self { code, data, stack: vec![], memory: vec![], hook, pc: 0 }
     }
 
-    pub fn run(&mut self) -> Result<Option<Vec<u8>>, Error<H>> {
+    pub fn run_raw(&mut self) -> Result<Option<Vec<u8>>, Error<H>> {
         trace!("data: {}", self.data.encode_hex());
 
         loop {
@@ -118,6 +149,16 @@ impl<H: Hook> Vm<H> {
             }
 
             // std::thread::sleep(std::time::Duration::from_millis(1000));
+        }
+    }
+
+    fn push_stack(&mut self, value: u64) -> bool {
+        match self.stack.try_reserve(1) {
+            Ok(()) => {
+                self.stack.push(value);
+                true
+            }
+            Err(_) => false,
         }
     }
 
@@ -159,6 +200,12 @@ impl<H: Hook> Vm<H> {
             }};
         }
 
+        macro_rules! try_add {
+            ($a:expr, $b:expr) => {
+                ok_or!(($a).checked_add($b), Error::<H>::InvalidStackValue)
+            };
+        }
+
         macro_rules! last {
             () => {
                 ok_or!(self.stack.last_mut(), Error::<H>::StackEmpty)
@@ -174,7 +221,9 @@ impl<H: Hook> Vm<H> {
                 let n = u64::from_be_bytes(v);
                 trace!("push{} {n:x}", $n);
                 hook!($op(*v.rsplit_array_ref::<$n>().1));
-                self.stack.push(n);
+                if !self.push_stack(n) {
+                    return Err(Error::<H>::OutOfMemory);
+                }
             }};
         }
 
@@ -194,7 +243,7 @@ impl<H: Hook> Vm<H> {
                     self.stack.set_len(ptr_idx);
                     trace!("{value:x} @ {ptr:x}");
                     let bytes = value.to_be_bytes();
-                    ok_or!(self.memory.get_mut(ptr..ptr + $n), Error::<H>::Segfault)
+                    ok_or!(self.memory.get_mut(ptr..try_add!(ptr, $n)), Error::<H>::Segfault)
                         .copy_from_slice(&bytes[8 - $n..]);
                 }
             }};
@@ -207,19 +256,19 @@ impl<H: Hook> Vm<H> {
                 let top = last!();
                 let ptr = as_ptr!(*top);
                 trace!("ptr: {ptr:x}");
-                let res = ok_or!(self.memory.get(ptr..ptr + $n), Error::<H>::Segfault);
+                let res = ok_or!(self.memory.get(ptr..try_add!(ptr, $n)), Error::<H>::Segfault);
                 *top = u64_from_bytes(res);
             }};
         }
 
         macro_rules! dread_n {
             ($op:ident, $n:literal) => {{
-                trace!("dread{}", $n);
+                // trace!("dread{}", $n);
                 hook!($op);
                 let top = last!();
                 let ptr = as_ptr!(*top);
                 trace!("ptr: {ptr:x}");
-                let res = ok_or!(self.data.get(ptr..ptr + $n), Error::<H>::Segfault);
+                let res = ok_or!(self.data.get(ptr..try_add!(ptr, $n)), Error::<H>::Segfault);
                 *top = u64_from_bytes(res);
             }};
         }
@@ -259,7 +308,7 @@ impl<H: Hook> Vm<H> {
             raw::PUSH0 => {
                 hook!(PUSH0);
                 trace!("push0");
-                self.stack.push(0);
+                self.push_stack(0);
             }
             raw::PUSH1 => push_n!(PUSH1, 1),
             raw::PUSH2 => push_n!(PUSH2, 2),
@@ -287,16 +336,16 @@ impl<H: Hook> Vm<H> {
             raw::DUP0 => {
                 trace!("dup0");
                 hook!(DUP0);
-                let stack_idx =
-                    ok_or!(self.stack.len().checked_sub(1), Error::<H>::InvalidStackIdx);
+                let stack_idx = ok_or!(self.stack.len().checked_sub(1), Error::<H>::StackEmpty);
 
-                self.stack.push(*ok_or!(self.stack.get(stack_idx), Error::<H>::InvalidStackIdx))
+                // SAFETY: Len is at least 1 as per above
+                self.push_stack(unsafe { *self.stack.get_unchecked(stack_idx) });
             }
             raw::SWAP => {
                 trace!("swap");
                 hook!(SWAP);
                 let idx = as_ptr!(pop!());
-                let idx = ok_or!(idx.checked_add(1), Error::<H>::InvalidStackValue);
+                let idx = ok_or!(idx.checked_add(2), Error::<H>::InvalidStackValue);
                 let len = self.stack.len();
                 if len < idx {
                     return Err(Error::<H>::InvalidStackIdx);
@@ -304,13 +353,13 @@ impl<H: Hook> Vm<H> {
                 // SAFETY: Len is at least 1 as per above
                 let a_idx = unsafe { len.unchecked_sub(1) };
                 // SAFETY: Len is at least idx as per above
-                let b_idx = unsafe { a_idx.unchecked_sub(idx) };
+                let b_idx = unsafe { len.unchecked_sub(idx) };
                 self.stack.swap(a_idx, b_idx);
             }
             raw::SWAP0 => {
                 trace!("swap0");
                 hook!(SWAP0);
-                let b_idx = ok_or!(self.stack.len().checked_sub(2), Error::<H>::InvalidStackIdx);
+                let b_idx = ok_or!(self.stack.len().checked_sub(2), Error::<H>::StackEmpty);
                 // SAFETY: Len is at least 2 as per above
                 let a_idx = unsafe { self.stack.len().unchecked_sub(1) };
                 self.stack.swap(a_idx, b_idx);
@@ -324,6 +373,9 @@ impl<H: Hook> Vm<H> {
                 trace!("alloc");
                 hook!(ALLOC);
                 let size = as_ptr!(pop!());
+                if self.memory.try_reserve(size).is_err() {
+                    return Err(Error::<H>::OutOfMemory);
+                }
                 self.memory.extend(vec![0; size]);
             }
 
@@ -382,7 +434,7 @@ impl<H: Hook> Vm<H> {
             raw::DLEN => {
                 trace!("dlen");
                 hook!(DLEN);
-                self.stack.push(self.data.len() as u64);
+                self.push_stack(self.data.len() as u64);
             }
 
             raw::ADD => binop!(ADD, "add", add),
@@ -688,7 +740,7 @@ macro_rules! op {
     (pub enum $Op:ident {
         $($(#[$meta:meta])* $Variant:ident $(($tt:tt))* = $value:literal,)+
     }) => {
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, PartialEq, Clone, Copy, arbitrary::Arbitrary)]
         #[repr(u8)]
         pub enum $Op {
             $($(#[$meta])* $Variant $(($tt))* = $value,)+
@@ -1168,6 +1220,10 @@ impl Op {
 
 #[derive(PartialEq, thiserror::Error)]
 pub enum Error<H: Hook = ()> {
+    /// Memory allocation failed.
+    #[error("out of memory")]
+    OutOfMemory,
+
     /// Attempted to pop off of an empty stack.
     #[error("stack empty")]
     StackEmpty,
@@ -1210,6 +1266,7 @@ pub enum Error<H: Hook = ()> {
 impl<H: Hook<Error: Debug>> Debug for Error<H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::OutOfMemory => write!(f, "OutOfMemory"),
             Self::StackEmpty => write!(f, "StackEmpty"),
             Self::InvalidStackIdx => write!(f, "InvalidStackIdx"),
             Self::Segfault => write!(f, "Segfault"),
@@ -1228,6 +1285,7 @@ impl<H: Hook<Error: Debug>> Debug for Error<H> {
 impl<H: Hook<Error: Clone>> Clone for Error<H> {
     fn clone(&self) -> Self {
         match self {
+            Self::OutOfMemory => Self::OutOfMemory,
             Self::StackEmpty => Self::StackEmpty,
             Self::InvalidStackIdx => Self::InvalidStackIdx,
             Self::Segfault => Self::Segfault,
@@ -1246,6 +1304,7 @@ impl<H: Hook<Error: Clone>> Clone for Error<H> {
 impl Error<()> {
     pub fn widen<H: Hook>(self) -> Error<H> {
         match self {
+            Error::OutOfMemory => Error::OutOfMemory,
             Error::StackEmpty => Error::StackEmpty,
             Error::InvalidStackIdx => Error::InvalidStackIdx,
             Error::Segfault => Error::Segfault,
