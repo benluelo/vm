@@ -1,4 +1,4 @@
 :start
-        push2 0xcfcf
-        not
+        push7 0x00000020200056
+        dlen
         call

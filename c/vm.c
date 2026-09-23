@@ -185,6 +185,7 @@ static inline VmResult push_stack(Stack *RESTRICT stack, uint64_t value) {
 
 static inline VmResult alloc_memory(Memory *RESTRICT memory,
                                     size_t additional) {
+  if (additional == 0) return VM_OK;
   uint8_t *ptr = (uint8_t *)realloc(memory->data, memory->size + additional);
   if (unlikely(ptr == NULL)) {
     return VM_ERR_OUT_OF_MEMORY;
@@ -210,6 +211,8 @@ static inline VmResult pop_stack(Stack *stack, uint64_t *value) {
 }
 
 inline VmResult run_vm(Vm *vm) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winitializer-overrides"
   static void *ops_table[256] = {
       [0 ... 255] = &&unknown_op,
       [0x00] = &&_PUSH0,
@@ -276,6 +279,7 @@ inline VmResult run_vm(Vm *vm) {
       [0xa4] = &&_EXIT,
       [0xa5] = &&_TRAP,
   };
+#pragma clang diagnostic pop
 
   uint8_t op;
 
@@ -335,10 +339,10 @@ _DUP: {
   ensure_stack(1, VM_ERR_STACK_EMPTY);
   uint64_t *idx = &vm->stack.data[vm->stack.len - 1];
   uint64_t stack_idx;
-  try_add(&stack_idx, *idx, 1, VM_ERR_INVALID_STACK_IDX);
+  try_add(&stack_idx, *idx, 2, VM_ERR_INVALID_STACK_IDX);
   debug("idx: %lu\n", *idx);
-  ensure_stack(stack_idx + 1, VM_ERR_INVALID_STACK_IDX);
-  *idx = vm->stack.data[(vm->stack.len - 1) - stack_idx];
+  ensure_stack(stack_idx, VM_ERR_INVALID_STACK_IDX);
+  *idx = vm->stack.data[vm->stack.len - stack_idx];
   DISPATCH();
 };
 _DUP0: {
@@ -467,16 +471,39 @@ _DCOPY: {
     bail(VM_ERR_STACK_EMPTY);
   }
 
-  size_t len = vm->stack.data[vm->stack.len - 1];
-  size_t dst = vm->stack.data[vm->stack.len - 2];
-  size_t src = vm->stack.data[vm->stack.len - 3];
+  uint64_t len = vm->stack.data[vm->stack.len - 1];
+  uint64_t dst = vm->stack.data[vm->stack.len - 2];
+  uint64_t src = vm->stack.data[vm->stack.len - 3];
 
-  ensure_data(src, len);
-  ensure_memory(dst, len);
+  debug("len: %lx, dst: %lx, src: %lx\n", len, dst, src);
+
+  {
+    uint64_t dst_idx;
+    try_add(&dst_idx, dst, len, VM_ERR_INVALID_STACK_VALUE);
+    debug("dst len: %lx\n", dst_idx);
+
+    uint64_t src_idx;
+    try_add(&src_idx, src, len, VM_ERR_INVALID_STACK_VALUE);
+    debug("src len: %lx\n", src_idx);
+
+    if (unlikely(vm->data.len < src_idx)) {
+      bail(VM_ERR_SEGFAULT);
+    }
+    if (unlikely(vm->memory.size < dst_idx)) {
+      bail(VM_ERR_SEGFAULT);
+    }
+  }
 
   vm->stack.len -= 3;
 
-  memcpy(vm->memory.data + dst, vm->data.ptr + src, len);
+  uint64_t memory_ptr;
+  try_add(&memory_ptr, (size_t)vm->memory.data, dst,
+          VM_ERR_INVALID_STACK_VALUE);
+
+  uint64_t data_ptr;
+  try_add(&data_ptr, (size_t)vm->data.ptr, src, VM_ERR_INVALID_STACK_VALUE);
+
+  memcpy((void *)memory_ptr, (void *)data_ptr, len);
   DISPATCH();
 };
 _DLEN: {
@@ -526,6 +553,7 @@ _NEQ:
 _LT:
   binop(op_lt);
 _GT:
+  debug("GT\n");
   binop(op_gt);
 _NOT: {
   // debug("NOT\n");
@@ -597,8 +625,6 @@ _EXIT: {
   vm->stack.len -= 2;
 
   size_t out_ptr;
-  if (ptr > vm->memory.size)
-    return VM_ERR_SEGFAULT;
   try_add(&out_ptr, ptr, len, VM_ERR_INVALID_STACK_VALUE);
   if (out_ptr > vm->memory.size)
     return VM_ERR_SEGFAULT;

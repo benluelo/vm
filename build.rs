@@ -20,28 +20,34 @@ fn main() {
     println!("cargo:rerun-if-changed=c/");
     println!("cargo:rerun-if-changed=zig/");
 
+    let fuzzing = std::env::var("CARGO_CFG_FUZZING").is_ok();
+
     run(
         "clang",
         &[
-            &"-O3",
-            // &"-fsanitize=fuzzer",
-            // &"-flto=full",
-            &"-static",
-            &"-fPIC",
-            &"-fsanitize=address",
-            &"-static-libasan",
-            &"-Wl,-fsanitize=address",
-            // &"-Wl,-Bsymbolic",
-            &"-DDO_RESTRICT",
-            &"-g",
-            &"-c",
-            &"-o",
-            &outdir.join("vm.o"),
-            &"./c/vm.c",
+            if fuzzing {
+                &[&"-fsanitize=address", &"-Wl,-fsanitize=address", &"-static-libasan"]
+            } else {
+                &[
+                    // &"-flto=full"
+                ]
+            },
+            &[
+                &"-O3",
+                &"-static",
+                &"-fPIC",
+                &"-DDO_RESTRICT",
+                // &"-DDEBUG",
+                &"-g",
+                &"-c",
+                &"-o",
+                &outdir.join("vm.o"),
+                &"./c/vm.c",
+            ],
         ],
     );
 
-    run("ar", &[&"crs", &outdir.join("libvm.a"), &outdir.join("vm.o")]);
+    run("ar", &[&[&"crs", &outdir.join("libvm.a"), &outdir.join("vm.o")]]);
     // run("llvm-ranlib", &[&outdir.join("libvm.a")]);
 
     let bindings = bindgen::Builder::default()
@@ -56,22 +62,30 @@ fn main() {
     run(
         "zig",
         &[
-            &"build-lib",
-            &"./zig/src/vm_zig.zig",
-            &"-fsingle-threaded",
-            &"-static",
-            &"-fPIC",
-            &"-Ofast",
-            &format!("-femit-bin={}", outdir.join("libvm_zig.a").to_str().unwrap()),
-            // &"-flto",
+            &[
+                &"build-lib",
+                &"./zig/src/vm_zig.zig",
+                &"-fsingle-threaded",
+                &"-static",
+                &"-fPIC",
+                &"-Ofast",
+                &format!("-femit-bin={}", outdir.join("libvm_zig.a").to_str().unwrap()),
+            ],
+            if fuzzing {
+                &[]
+            } else {
+                &[
+                // &"-flto"
+            ]
+            },
         ],
     );
 }
 
 #[track_caller]
-fn run(cmd: impl AsRef<OsStr>, args: &[&dyn AsRef<OsStr>]) {
+fn run(cmd: impl AsRef<OsStr>, args: &[&[&dyn AsRef<OsStr>]]) {
     if !Command::new(cmd)
-        .args(args)
+        .args(args.iter().cloned().flatten())
         .stderr(Stdio::inherit())
         .stdout(Stdio::inherit())
         .output()

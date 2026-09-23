@@ -239,12 +239,15 @@ pub const Vm = struct {
                 const dst = try asPtr(self.stack.items.ptr[self.stack.items.len - 2]);
                 const src = try asPtr(self.stack.items.ptr[self.stack.items.len - 3]);
 
-                try checkBounds(self.data_len, src + len);
-                try checkBounds(self.memory.items.len, dst + len);
+                const data_end = try tryAdd(src, len, Error.InvalidStackValue);
+                const memory_end = try tryAdd(dst, len, Error.InvalidStackValue);
+
+                try checkBounds(self.data_len, data_end);
+                try checkBounds(self.memory.items.len, memory_end);
 
                 self.stack.items.len -= 3;
 
-                @memcpy(self.memory.items.ptr[dst..(dst + len)], self.data[src..(src + len)]);
+                @memcpy(self.memory.items.ptr[dst..][0..len], self.data[src..][0..len]);
             },
 
             Op.DLEN => try self.push(@intCast(self.data_len)),
@@ -330,7 +333,7 @@ pub const Vm = struct {
                 const len = try self.pop();
                 const ptr = try self.pop();
 
-                try checkBounds(self.memory.items.len, ptr + len);
+                try checkBounds(self.memory.items.len, try tryAdd(ptr, len, Error.InvalidStackValue));
 
                 return StepResult{ .exit = self.memory.items.ptr[ptr..][0..len] };
             },

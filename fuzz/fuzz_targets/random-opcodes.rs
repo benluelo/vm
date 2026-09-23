@@ -10,7 +10,8 @@ fn go(input: (Vec<Op>, &[u8])) -> Corpus {
     if obj.iter().any(|s| {
         matches!(
             s,
-            Op::PUSH0
+            Op::ALLOC
+                | Op::PUSH0
                 | Op::PUSH1([0])
                 | Op::PUSH2([0, 0])
                 | Op::PUSH3([0, 0, 0])

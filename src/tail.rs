@@ -127,9 +127,11 @@ fn dispatch<H: Hook>(vm: &mut Vm<H>) -> VmResult<H> {
     };
 
     let index = vm.pc;
-    vm.pc += 1;
     match vm.code.get(index) {
-        Some(op) => become table[(*op) as usize](vm),
+        Some(op) => {
+            vm.pc += 1;
+            become table[(*op) as usize](vm)
+        }
         None => Ok(None),
     }
 }
@@ -291,7 +293,7 @@ macro_rules! do_op {
 
 do_op! {
     fn unknown_op<H>(vm) {
-        return Err(Error::<H>::UnknownOp(vm.code[vm.pc]))
+        return Err(Error::<H>::UnknownOp(vm.code[vm.pc - 1]))
     }
 
     fn do_push0<H>(vm) {
@@ -594,8 +596,14 @@ do_op! {
 
         trace!("len: {len:x}, dst: {dst:x}, src: {src:x}");
 
-        ok_or!(vm.memory.get_mut(dst..dst + len), Error::<H>::Segfault)
-            .copy_from_slice(ok_or!(vm.data.get(src..src + len), Error::<H>::Segfault));
+        let dst_end = try_add!(dst, len);
+        trace!("dst_end: {dst_end:x}");
+
+        let src_end = try_add!(src, len);
+        trace!("src_end: {src_end:x}");
+
+        ok_or!(vm.memory.get_mut(dst..dst_end), Error::<H>::Segfault)
+            .copy_from_slice(ok_or!(vm.data.get(src..src_end), Error::<H>::Segfault));
 
         become dispatch(vm)
     }
@@ -764,7 +772,7 @@ do_op! {
         let ptr = as_ptr!(pop!(vm));
 
         return Ok(Some(
-            ok_or!(vm.memory.get(ptr..ptr + len), Error::<H>::Segfault).to_vec(),
+            ok_or!(vm.memory.get(ptr..try_add!(ptr, len)), Error::<H>::Segfault).to_vec(),
         ));
     }
 

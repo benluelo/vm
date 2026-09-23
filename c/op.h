@@ -99,8 +99,8 @@ inline uint64_t op_expmod(uint64_t a, uint64_t b) {
     return 1;
   }
 
-  uint64_t acc = 1;
-  __int128 base = (__int128)a;
+  __uint128_t acc = 1;
+  __uint128_t base = (__uint128_t)a;
   uint64_t exp = b;
 
   for (;;) {
@@ -108,7 +108,7 @@ inline uint64_t op_expmod(uint64_t a, uint64_t b) {
       acc = (acc * base) % 0xFFFFFFFFFFFFFFFF;
       // since exp!=0, finally the exp must be 1.
       if (exp == 1) {
-        return acc;
+        return (uint64_t)acc;
       }
     }
     exp >>= 1;
@@ -118,10 +118,12 @@ inline uint64_t op_expmod(uint64_t a, uint64_t b) {
 
 inline uint64_t op_shr(uint64_t a, uint64_t shift) {
   // return std.math.shr(u64, a, shift);
+  if (shift >= 64) return 0;
   return a >> shift;
 }
 
 inline uint64_t op_shl(uint64_t a, uint64_t shift) {
   // return std.math.shl(u64, a, shift);
+  if (shift >= 64) return 0;
   return a << shift;
 }

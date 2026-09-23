@@ -229,7 +229,11 @@
                 # llvmPackages_latest.clang
               ]);
               LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang.lib}/lib";
-              CUSTOM_LIBFUZZER_PATH = "${pkgs.llvmPackages_latest.compiler-rt}/lib/linux/libclang_rt.fuzzer-aarch64.a";
+              CUSTOM_LIBFUZZER_PATH =
+                if pkgs.stdenv.hostPlatform.isx86_64 then
+                  "${pkgs.llvmPackages_latest.compiler-rt}/lib/linux/libclang_rt.fuzzer-x86_64.a"
+                else
+                  "${pkgs.llvmPackages_latest.compiler-rt}/lib/linux/libclang_rt.fuzzer-aarch64.a";
               nativeBuildInputs = [
                 pkgs.pkg-config
                 pkgs.rustPlatform.bindgenHook

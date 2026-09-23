@@ -427,8 +427,14 @@ impl<H: Hook> Vm<H> {
 
                 trace!("len: {len:x}, dst: {dst:x}, src: {src:x}");
 
-                ok_or!(self.memory.get_mut(dst..dst + len), Error::<H>::Segfault)
-                    .copy_from_slice(ok_or!(self.data.get(src..src + len), Error::<H>::Segfault));
+                let dst_end = try_add!(dst, len);
+                trace!("dst_end: {dst_end:x}");
+
+                let src_end = try_add!(src, len);
+                trace!("src_end: {src_end:x}");
+
+                ok_or!(self.memory.get_mut(dst..dst_end), Error::<H>::Segfault)
+                    .copy_from_slice(ok_or!(self.data.get(src..src_end), Error::<H>::Segfault));
             }
 
             raw::DLEN => {
@@ -525,7 +531,7 @@ impl<H: Hook> Vm<H> {
                 let ptr = as_ptr!(pop!());
 
                 return Ok(StepResult::Exit(
-                    ok_or!(self.memory.get(ptr..ptr + len), Error::<H>::Segfault).to_vec(),
+                    ok_or!(self.memory.get(ptr..try_add!(ptr, len)), Error::<H>::Segfault).to_vec(),
                 ));
             }
             raw::TRAP => {

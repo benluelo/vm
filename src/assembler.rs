@@ -527,7 +527,9 @@ fn parse_op<'a>() -> impl Parser<'a, &'a str, AsmOp<'a>, extra::Err<Rich<'a, cha
             keyword("pushl").padded().ignore_then(ref_().map(|s| AsmOp::PUSHL(s.into()))),
         )),
         keyword("dup").padded().to(AsmOp::DUP),
+        keyword("dup0").padded().to(AsmOp::DUP0),
         keyword("swap").padded().to(AsmOp::SWAP),
+        keyword("swap0").padded().to(AsmOp::SWAP0),
         keyword("pop").padded().to(AsmOp::POP),
         keyword("alloc").padded().to(AsmOp::ALLOC),
         choice((
