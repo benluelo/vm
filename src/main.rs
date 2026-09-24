@@ -32,7 +32,7 @@ use ratatui::{
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::{
-    CycleCountHook, CycleCountVm, Error, Hook, Op, StepResult, Vm, VmRunResult,
+    CycleCountHook, CycleCountVm, Error, Hook, Op, StepResult, Vm, VmRunResult, VmT,
     assembler::parse_asm,
     ffi,
     mir::{
@@ -133,6 +133,10 @@ pub struct RunCmd {
     /// which implementation to use.
     #[argh(option, short = 'i', default = "Implementation::Rust")]
     pub implementation: Implementation,
+
+    /// max memory.
+    #[argh(option, short = 'm', default = "usize::MAX")]
+    pub max_memory: usize,
 }
 
 #[derive(FromArgValue, PartialEq, Debug)]
@@ -246,7 +250,16 @@ fn main() -> anyhow::Result<()> {
             let out = out.unwrap_or(file.with_extension("o"));
             fs::write(out, obj)?;
         }
-        Cmd::Run(RunCmd { file, asm, obj, input, input_file, input_hex, implementation }) => {
+        Cmd::Run(RunCmd {
+            file,
+            asm,
+            obj,
+            input,
+            input_file,
+            input_hex,
+            implementation,
+            max_memory,
+        }) => {
             if obj && asm {
                 bail!("--asm is incompatible with --obj")
             }
@@ -282,17 +295,17 @@ fn main() -> anyhow::Result<()> {
 
             match implementation {
                 Implementation::Rust => {
-                    do_run(Vm::new_with(obj, data, CycleCountHook::new()));
+                    do_run(Vm::new_with(obj, data, max_memory, CycleCountHook::new()));
                 }
                 Implementation::RustTailCall => {
-                    do_run(TcVm::new(Vm::new_with(obj, data, CycleCountHook::new())));
+                    do_run(TcVm::new(Vm::new_with(obj, data, max_memory, CycleCountHook::new())));
                 }
                 Implementation::C => bail!("not implemented, use --c-computed-goto"),
                 Implementation::CComputedGoto => {
-                    do_run(ffi::Vm::new(obj, data));
+                    do_run(ffi::Vm::new(obj, data, max_memory));
                 }
                 Implementation::Zig => {
-                    do_run(zig::Vm::new(obj, data));
+                    do_run(zig::Vm::new(obj, data, max_memory));
                 }
             }
         }
@@ -311,7 +324,7 @@ fn main() -> anyhow::Result<()> {
                 ops: vec![],
             };
 
-            let vm = Vm::new_with(obj, data, hook);
+            let vm = Vm::new_with(obj, data, usize::MAX, hook);
 
             // let res = std::thread::spawn(move || vm.run());
 

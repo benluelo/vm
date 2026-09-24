@@ -1,6 +1,7 @@
 #![feature(slice_swap_unchecked, never_type, split_array)]
 // #![warn(clippy::panic, clippy::unwrap_in_result)]
 #![feature(generic_const_items, explicit_tail_calls)]
+#![allow(incomplete_features)]
 
 use std::{
     error::Error as StdError,
@@ -22,6 +23,8 @@ pub mod zig;
 mod vm_tests;
 
 pub trait VmT {
+    fn new(code: Vec<u8>, data: Vec<u8>, max_memory: usize) -> Self;
+
     fn run(&mut self) -> VmRunResult;
 }
 
@@ -59,9 +62,14 @@ pub struct Vm<H: Hook = ()> {
     pub memory: Vec<u8>,
     pub hook: H,
     pub pc: usize,
+    pub max_memory: usize,
 }
 
-impl<H: Hook<Error = !>> VmT for Vm<H> {
+impl<H: Hook<Error = !> + Default> VmT for Vm<H> {
+    fn new(code: Vec<u8>, data: Vec<u8>, max_memory: usize) -> Self {
+        Self::new_with(code, data, max_memory, H::default())
+    }
+
     fn run(&mut self) -> VmRunResult {
         match Vm::run_raw(self) {
             Ok(Some(exit)) => VmRunResult::Exit(exit),
@@ -124,14 +132,14 @@ macro_rules! as_ptr {
 }
 
 impl Vm {
-    pub fn new(code: Vec<u8>, data: Vec<u8>) -> Self {
-        Self::new_with(code, data, ())
+    pub fn new(code: Vec<u8>, data: Vec<u8>, max_memory: usize) -> Self {
+        Self::new_with(code, data, max_memory, ())
     }
 }
 
 impl<H: Hook> Vm<H> {
-    pub fn new_with(code: Vec<u8>, data: Vec<u8>, hook: H) -> Self {
-        Self { code, data, stack: vec![], memory: vec![], hook, pc: 0 }
+    pub fn new_with(code: Vec<u8>, data: Vec<u8>, max_memory: usize, hook: H) -> Self {
+        Self { code, data, stack: vec![], memory: vec![], hook, pc: 0, max_memory }
     }
 
     pub fn run_raw(&mut self) -> Result<Option<Vec<u8>>, Error<H>> {
@@ -373,6 +381,16 @@ impl<H: Hook> Vm<H> {
                 trace!("alloc");
                 hook!(ALLOC);
                 let size = as_ptr!(pop!());
+                match size.checked_add(self.memory.len()) {
+                    Some(new_size) => {
+                        if new_size > self.max_memory {
+                            return Err(Error::<H>::OutOfMemory);
+                        }
+                    }
+                    None => {
+                        return Err(Error::<H>::InvalidStackValue);
+                    }
+                }
                 if self.memory.try_reserve(size).is_err() {
                     return Err(Error::<H>::OutOfMemory);
                 }

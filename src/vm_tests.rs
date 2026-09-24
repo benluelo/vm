@@ -38,7 +38,7 @@ macro_rules! test_cases {
                     $($tt)*
                     ..Default::default()
                 };
-                let mut vm = Vm::new(code, data);
+                let mut vm = Vm::new(code, data, usize::MAX);
                 vm.stack = before_stack;
                 vm.memory = before_memory;
                 vm.pc = before_pc;

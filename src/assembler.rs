@@ -729,7 +729,7 @@ mod tests {
 
         println!("{}", asm.encode_hex());
 
-        let mut vm = Vm::new(asm, vec![]);
+        let mut vm = Vm::new(asm, vec![], usize::MAX);
 
         let res = vm.run_raw().unwrap();
 
@@ -762,7 +762,7 @@ mod tests {
 
         println!("{}", asm.encode_hex());
 
-        let mut vm = Vm::new(asm, vec![]);
+        let mut vm = Vm::new(asm, vec![], usize::MAX);
 
         let res = vm.run_raw().unwrap();
 

@@ -100,7 +100,7 @@ fn blake3_vectors() {
         let input = make_test_input(case.input_len);
         let expected = const_hex::decode(case.hash).unwrap();
 
-        let mut vm = ffi::Vm::new(asm.clone(), input);
+        let mut vm = ffi::Vm::new(asm.clone(), input, usize::MAX);
 
         let res = vm.run().try_into_exit().unwrap();
 

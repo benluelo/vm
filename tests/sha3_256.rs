@@ -116,7 +116,7 @@ fn nist_vectors() {
     let run_tests = |file_name| {
         println!("{file_name}");
         for (i, (len, msg, md)) in load_nist_vectors(file_name).into_iter().enumerate() {
-            let mut vm = Vm::new(asm.clone(), msg[0..(len / 8)].to_vec());
+            let mut vm = Vm::new(asm.clone(), msg[0..(len / 8)].to_vec(), usize::MAX);
 
             let res = vm.run_raw().unwrap().unwrap();
 
@@ -131,7 +131,7 @@ fn nist_vectors() {
         let (mut seed, mds) = load_monte_vectors(file_name);
         for (i, md) in mds.into_iter().enumerate() {
             for _ in 0..1000 {
-                let mut vm = Vm::new(asm.clone(), seed.clone());
+                let mut vm = Vm::new(asm.clone(), seed.clone(), usize::MAX);
 
                 let res = vm.run_raw().unwrap().unwrap();
 

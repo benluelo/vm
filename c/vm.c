@@ -185,7 +185,8 @@ static inline VmResult push_stack(Stack *RESTRICT stack, uint64_t value) {
 
 static inline VmResult alloc_memory(Memory *RESTRICT memory,
                                     size_t additional) {
-  if (additional == 0) return VM_OK;
+  if (additional == 0)
+    return VM_OK;
   uint8_t *ptr = (uint8_t *)realloc(memory->data, memory->size + additional);
   if (unlikely(ptr == NULL)) {
     return VM_ERR_OUT_OF_MEMORY;
@@ -385,6 +386,11 @@ _ALLOC: {
   // debug("ALLOC\n");
   uint64_t value = 0;
   try(pop_stack(&vm->stack, &value));
+  size_t new_size;
+  try_add(&new_size, value, vm->memory.size, VM_ERR_INVALID_STACK_VALUE);
+  if (new_size > vm->max_memory) {
+    bail(VM_ERR_OUT_OF_MEMORY);
+  }
   // debug("%lu\n", value);
   try(alloc_memory(&vm->memory, value));
   DISPATCH();
@@ -647,7 +653,7 @@ unknown_op:
   return VM_OK;
 }
 
-Vm new_vm(Fat code, Fat data) {
+Vm new_vm(Fat code, Fat data, size_t max_memory) {
   return (Vm){
       .code = code,
       .data = data,
@@ -668,6 +674,7 @@ Vm new_vm(Fat code, Fat data) {
               .trap = 0,
           },
       .cycles = 0,
+      .max_memory = max_memory,
   };
 }
 

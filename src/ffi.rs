@@ -17,6 +17,22 @@ pub struct Vm {
 }
 
 impl VmT for Vm {
+    fn new(mut code: Vec<u8>, mut data: Vec<u8>, max_memory: usize) -> Self {
+        code.shrink_to_fit();
+        data.shrink_to_fit();
+        let (code_ptr, code_len, _) = code.into_raw_parts();
+        let (data_ptr, data_len, _) = data.into_raw_parts();
+        Self {
+            vm: unsafe {
+                bindings::new_vm(
+                    bindings::new_fat(code_ptr, code_len),
+                    bindings::new_fat(data_ptr, data_len),
+                    max_memory,
+                )
+            },
+        }
+    }
+
     fn run(&mut self) -> VmRunResult {
         match unsafe { bindings::run_vm(&mut self.vm) } {
             bindings::VmResult_VM_OK => VmRunResult::Done,
@@ -64,20 +80,3 @@ impl CycleCountVm for Vm {
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct Error(bindings::VmResult);
-
-impl Vm {
-    pub fn new(mut code: Vec<u8>, mut data: Vec<u8>) -> Self {
-        code.shrink_to_fit();
-        data.shrink_to_fit();
-        let (code_ptr, code_len, _) = code.into_raw_parts();
-        let (data_ptr, data_len, _) = data.into_raw_parts();
-        Self {
-            vm: unsafe {
-                bindings::new_vm(
-                    bindings::new_fat(code_ptr, code_len),
-                    bindings::new_fat(data_ptr, data_len),
-                )
-            },
-        }
-    }
-}

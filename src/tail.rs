@@ -8,7 +8,11 @@ type F<H = ()> = fn(&mut Vm<H>) -> VmResult<H>;
 
 pub struct TcVm<H: Hook>(Vm<H>);
 
-impl<H: Hook<Error = !>> VmT for TcVm<H> {
+impl<H: Hook<Error = !> + Default> VmT for TcVm<H> {
+    fn new(code: Vec<u8>, data: Vec<u8>, max_memory: usize) -> Self {
+        Self(<Vm<H> as VmT>::new(code, data, max_memory))
+    }
+
     fn run(&mut self) -> VmRunResult {
         match self.run_tc() {
             Ok(Some(exit)) => VmRunResult::Exit(exit),
@@ -568,6 +572,16 @@ do_op! {
         hook!(vm, ALLOC);
         let size = as_ptr!(pop!(vm));
         trace!("size: {size}");
+        match size.checked_add(vm.memory.len()) {
+            Some(new_size) => {
+                if new_size > vm.max_memory {
+                    return Err(Error::<H>::OutOfMemory);
+                }
+            }
+            None => {
+                return Err(Error::<H>::InvalidStackValue);
+            }
+        }
         if vm.memory.try_reserve(size).is_err() {
             return Err(Error::<H>::OutOfMemory);
         }
@@ -575,6 +589,7 @@ do_op! {
 
         become dispatch(vm)
     }
+
     fn do_dcopy<H>(vm) {
         trace!("dcopy");
         hook!(vm, DCOPY);

@@ -25,6 +25,7 @@ pub const Vm = struct {
     memory: std.ArrayList(u8),
     pc: usize,
     cycles: u64,
+    max_memory: usize,
 
     inline fn getMut(self: *Vm, n: usize, comptime err: Error) Error!*u64 {
         @setRuntimeSafety(false);
@@ -199,6 +200,10 @@ pub const Vm = struct {
             },
             Op.ALLOC => {
                 const size = try self.pop();
+                const new_size = try tryAdd(size, self.memory.items.len, Error.InvalidStackValue);
+                if (new_size > self.max_memory) {
+                    return Error.OutOfMemory;
+                }
                 try self.memory.appendNTimes(self.gpa, 0, size);
             },
 
@@ -428,7 +433,7 @@ export fn zig_run(self: *Vm) RunResult {
     };
 }
 
-export fn zig_init(gpa_any: *anyopaque, code: [*]u8, code_len: usize, data: [*]const u8, data_len: usize) *allowzero Vm {
+export fn zig_init(gpa_any: *anyopaque, code: [*]u8, code_len: usize, data: [*]const u8, data_len: usize, max_memory: usize) *allowzero Vm {
     const gpa = @as(*std.mem.Allocator, @ptrCast(@alignCast(@constCast(gpa_any))));
     const vm = gpa.create(Vm) catch {
         return @ptrFromInt(0);
@@ -445,6 +450,7 @@ export fn zig_init(gpa_any: *anyopaque, code: [*]u8, code_len: usize, data: [*]c
     vm.memory = .empty;
     vm.pc = 0;
     vm.cycles = 0;
+    vm.max_memory = max_memory;
 
     return vm;
 }

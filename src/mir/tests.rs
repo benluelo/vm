@@ -22,7 +22,7 @@ fn reverse_list() {
     ] {
         let ops = reverse_list_ops(list.len());
         // dbg!(&ops);
-        let mut vm = Vm::new(Object::from_ops(ops).assemble(), vec![]);
+        let mut vm = Vm::new(Object::from_ops(ops).assemble(), vec![], usize::MAX);
         vm.stack = list.clone();
         vm.run_raw().unwrap();
         list.reverse();
@@ -52,7 +52,7 @@ fn compile_expr() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -98,7 +98,7 @@ fn compile_if() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -139,7 +139,7 @@ fn compile_if_else_if_branch() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -180,7 +180,7 @@ fn compile_if_else_else_branch() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -223,7 +223,7 @@ fn compile_if_else_if() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -268,7 +268,7 @@ fn compile_def_single_arg() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -302,7 +302,7 @@ fn compile_def_multiple_args() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -345,7 +345,7 @@ fn fib_recursive() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -405,7 +405,7 @@ fn compile_def_shadowing() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, b"123".to_vec());
+    let mut vm = Vm::new(asm, b"123".to_vec(), usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -440,7 +440,7 @@ fn multiple_if_statements() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -490,7 +490,7 @@ fn multiple_return_values() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -536,7 +536,7 @@ fn multiple_return_values_update_and_init() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -590,7 +590,7 @@ fn multiple_return_values_as_args() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -638,7 +638,7 @@ fn multiple_return_values_as_args_complex() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -687,7 +687,7 @@ fn multiple_return_swap_params() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -727,7 +727,7 @@ fn compile_loop() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -766,7 +766,7 @@ fn compile_loop_shadow_label() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, vec![]);
+    let mut vm = Vm::new(asm, vec![], usize::MAX);
 
     let res = vm.run_raw().unwrap();
 
@@ -819,7 +819,7 @@ fn compile_atoi() {
 
     let asm = obj.assemble();
 
-    let mut vm = Vm::new(asm, b"1234567".into());
+    let mut vm = Vm::new(asm, b"1234567".into(), usize::MAX);
 
     let res = vm.run_raw().unwrap();
 

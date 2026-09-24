@@ -58,11 +58,12 @@ typedef struct Vm {
     Fat exit;
   } out;
   uint64_t cycles;
+  size_t max_memory;
 } Vm;
 
 VmResult run_vm(Vm *vm);
 
-Vm new_vm(Fat code, Fat data);
+Vm new_vm(Fat code, Fat data, size_t max_memory);
 
 void drop_vm(Vm *vm);
 

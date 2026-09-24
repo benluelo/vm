@@ -64,6 +64,7 @@ unsafe extern "C" {
         code_len: usize,
         data: *const u8,
         data_len: usize,
+        max_memory: usize,
     ) -> *mut c_void;
     fn zig_drop(vm: *mut c_void);
     fn zig_run(vm: *mut c_void) -> RunResult;
@@ -79,23 +80,21 @@ pub struct Vm {
     data_len: usize,
 }
 
-impl Vm {
-    pub fn new(mut code: Vec<u8>, mut data: Vec<u8>) -> Self {
+impl VmT for Vm {
+    fn new(mut code: Vec<u8>, mut data: Vec<u8>, max_memory: usize) -> Self {
         code.shrink_to_fit();
         data.shrink_to_fit();
         let (code_ptr, code_len, _) = code.into_raw_parts();
         let (data_ptr, data_len, _) = data.into_raw_parts();
         let gpa = unsafe { zig_allocator() };
         // dbg!(&gpa);
-        let ptr = unsafe { zig_init(gpa, code_ptr, code_len, data_ptr, data_len) };
+        let ptr = unsafe { zig_init(gpa, code_ptr, code_len, data_ptr, data_len, max_memory) };
         // unsafe {
         //     println!("{}", const_hex::encode(slice::from_raw_parts(ptr.cast::<u8>(), 100)));
         // }
         Self { ptr, gpa, code_ptr, code_len, data_ptr, data_len }
     }
-}
 
-impl VmT for Vm {
     fn run(&mut self) -> VmRunResult {
         let res = unsafe { zig_run(self.ptr) };
         match res.tag {
